@@ -1,0 +1,189 @@
+@startuml database-schema
+skinparam linetype ortho
+skinparam entityBackgroundColor #FAFAFA
+skinparam entityBorderColor #555
+skinparam entityFontSize 13
+skinparam entityAttributeFontSize 12
+skinparam ArrowColor #444
+skinparam packageBackgroundColor #F0F4FF
+skinparam packageBorderColor #7090C0
+skinparam titleFontSize 18
+
+title Restaurant Kitchen Management System - Database Schema
+
+' ─────────────────────────────────────────
+'  USER MANAGEMENT
+' ─────────────────────────────────────────
+package "User Management" {
+  entity "User" as user {
+    * id : INT <<PK>>
+    --
+    * username : VARCHAR(50)
+    * password_hash : VARCHAR(255)
+    * full_name : VARCHAR(100)
+    * role : ENUM(admin, waiter, cook, warehouse_manager)
+    * is_active : BOOLEAN
+    * created_at : TIMESTAMP
+  }
+}
+
+' ─────────────────────────────────────────
+'  MENU MANAGEMENT
+' ─────────────────────────────────────────
+package "Menu Management" {
+  entity "Category" as category {
+    * id : INT <<PK>>
+    --
+    * name : VARCHAR(50)
+  }
+
+  entity "Dish" as dish {
+    * id : INT <<PK>>
+    --
+    * name : VARCHAR(100)
+    description : TEXT
+    * price : DECIMAL(8,2)
+    * category_id : INT <<FK>>
+    * is_available : BOOLEAN
+    prep_time_minutes : INT
+    image_url : VARCHAR(255)
+    * created_at : TIMESTAMP
+  }
+}
+
+' ─────────────────────────────────────────
+'  RECIPE & INGREDIENTS
+' ─────────────────────────────────────────
+package "Recipe & Ingredients" {
+  entity "Ingredient" as ingredient {
+    * id : INT <<PK>>
+    --
+    * name : VARCHAR(100)
+    * unit : ENUM(kg, liter, piece)
+    * current_stock : DECIMAL(10,3)
+    * min_stock_threshold : DECIMAL(10,3)
+    * created_at : TIMESTAMP
+    * updated_at : TIMESTAMP
+  }
+
+  entity "RecipeIngredient" as recipe_ingredient {
+    * dish_id : INT <<PK>> <<FK>>
+    * ingredient_id : INT <<PK>> <<FK>>
+    --
+    * unit : ENUM(kg, liter, piece)
+    * quantity : DECIMAL(10,3)
+  }
+}
+
+' ─────────────────────────────────────────
+'  TABLE & ORDER MANAGEMENT
+' ─────────────────────────────────────────
+package "Table & Order Management" {
+  entity "RestaurantTable" as table {
+    * id : INT <<PK>>
+    --
+    * table_number : INT
+    * capacity : INT
+    * status : ENUM(available, occupied, reserved)
+  }
+
+  entity "Order" as order {
+    * id : INT <<PK>>
+    --
+    * table_id : INT <<FK>>
+    * waiter_id : INT <<FK>>
+    * status : ENUM(pending, in_preparation, ready, served, closed)
+    * created_at : TIMESTAMP
+    closed_at : TIMESTAMP
+    total_amount : DECIMAL(10,2)
+  }
+
+  entity "OrderItem" as order_item {
+    * id : INT <<PK>>
+    --
+    * order_id : INT <<FK>>
+    * dish_id : INT <<FK>>
+    * quantity : INT
+    * status : ENUM(pending, in_preparation, ready)
+    notes : TEXT
+    cook_id : INT <<FK>>
+  }
+}
+
+' ─────────────────────────────────────────
+'  INVENTORY
+' ─────────────────────────────────────────
+package "Inventory" {
+  entity "StockMovement" as stock_movement {
+    * id : INT <<PK>>
+    --
+    * ingredient_id : INT <<FK>>
+    * movement_type : ENUM(purchase, consumption, waste, adjustment)
+    * quantity_change : DECIMAL(10,3)
+    reference_id : INT
+    * performed_by : INT <<FK>>
+    * timestamp : TIMESTAMP
+    notes : TEXT
+  }
+}
+
+' ─────────────────────────────────────────
+'  AI FEATURES
+' ─────────────────────────────────────────
+package "AI Features" {
+  entity "AIRecipeSuggestion" as ai_suggestion {
+    * id : INT <<PK>>
+    --
+    * requested_by : INT <<FK>>
+    * prompt_used : TEXT
+    * generated_recipe : JSON
+    * ingredients_snapshot : JSON
+    * created_at : TIMESTAMP
+  }
+
+  entity "AIChatSession" as ai_session {
+    * id : INT <<PK>>
+    --
+    * user_id : INT <<FK>>
+    * title : VARCHAR(200)
+    * created_at : TIMESTAMP
+  }
+
+  entity "AIChatMessage" as ai_message {
+    * id : INT <<PK>>
+    --
+    * session_id : INT <<FK>>
+    * role : ENUM(user, assistant)
+    * content : TEXT
+    * created_at : TIMESTAMP
+  }
+}
+
+' ─────────────────────────────────────────
+'  RELATIONSHIPS
+' ─────────────────────────────────────────
+
+' Menu
+category ||--o{ dish : "has"
+
+' Recipe
+dish ||--o{ recipe_ingredient : "requires"
+ingredient ||--o{ recipe_ingredient : "used in"
+
+' Orders
+table ||--o{ order : "has"
+user ||--o{ order : "places (waiter)"
+order ||--o{ order_item : "contains"
+dish ||--o{ order_item : "ordered as"
+user |o--o{ order_item : "prepares (cook)"
+
+' Inventory
+ingredient ||--o{ stock_movement : "tracked by"
+user ||--o{ stock_movement : "performed by"
+
+' AI
+user ||--o{ ai_suggestion : "requests"
+user ||--o{ ai_session : "owns"
+ai_session ||--o{ ai_message : "contains"
+
+@enduml
