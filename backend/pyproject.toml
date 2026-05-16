@@ -1,0 +1,14 @@
+[project]
+name = "restaurant-kitchen-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "dependency-injector>=4.41.0",
+    "pyyaml>=6.0",
+    "loguru>=0.7.0",
+]
+
+[tool.uv]
+package = false
