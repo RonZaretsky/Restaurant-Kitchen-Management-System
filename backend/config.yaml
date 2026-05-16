@@ -1,11 +1,18 @@
 app:
-  debug: false
+  debug: ${APP_DEBUG: false}
 
 server:
-  host: "0.0.0.0"
-  port: 8000
+  host: ${SERVER_HOST: "0.0.0.0"}
+  port: ${SERVER_PORT: 8000}
+
+database:
+  host: ${DB_HOST: "localhost"}
+  port: ${DB_PORT: 5432}
+  user: ${DB_USER: "kitchen"}
+  password: ${DB_PASSWORD: "kitchen"}
+  name: ${DB_NAME: "kitchen"}
 
 logging:
-  level: "INFO"
-  colorize: true
+  level: ${LOG_LEVEL: "INFO"}
+  colorize: ${LOG_COLORIZE: true}
   format: "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>"
