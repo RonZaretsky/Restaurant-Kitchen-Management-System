@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
 
@@ -7,11 +9,22 @@ from api.router import router
 
 container = Container()
 container.config.from_yaml(SETTINGS.CONFIG_PATH)
-container.init_resources()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    container.init_resources()
+    yield
+    container.shutdown_resources()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title=SETTINGS.APP_NAME, version=SETTINGS.APP_VERSION, debug=container.config.app.debug())
+    app = FastAPI(
+        title=SETTINGS.APP_NAME,
+        version=SETTINGS.APP_VERSION,
+        debug=container.config.app.debug(),
+        lifespan=lifespan,
+    )
     app.container = container
     app.include_router(router)
     return app
