@@ -14,9 +14,9 @@ container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    container.init_resources()
+    await container.init_resources()
     yield
-    container.shutdown_resources()
+    await container.shutdown_resources()
 
 
 def create_app() -> FastAPI:
