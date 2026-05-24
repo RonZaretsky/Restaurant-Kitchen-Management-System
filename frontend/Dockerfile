@@ -5,9 +5,15 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 COPY . .
+
+ARG VITE_API_BASE_URL=http://localhost:8000
+ARG VITE_API_TIMEOUT_MS=5000
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_API_TIMEOUT_MS=$VITE_API_TIMEOUT_MS
+
 RUN pnpm build
 
 FROM nginx:alpine

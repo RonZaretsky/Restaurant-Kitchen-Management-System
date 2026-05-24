@@ -8,9 +8,24 @@ A full-stack application for managing restaurant kitchen operations.
 
 ```
 .
-├── backend/     # FastAPI Python server
-└── frontend/    # React TypeScript client
+├── backend/          # FastAPI Python server
+├── frontend/         # React TypeScript client
+└── docker-compose.yml
 ```
+
+---
+
+## Run everything with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| API Docs | http://localhost:8000/docs |
 
 ---
 
