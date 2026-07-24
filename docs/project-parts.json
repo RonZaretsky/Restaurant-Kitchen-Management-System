@@ -1,0 +1,31 @@
+{
+  "repository_type": "multi-part",
+  "parts": [
+    {
+      "part_id": "backend",
+      "part_name": "Backend",
+      "project_type_id": "backend",
+      "root_path": "backend/",
+      "primary_language": "Python",
+      "tech_stack": "FastAPI, dependency-injector, SQLAlchemy(asyncio), asyncpg, loguru, uv",
+      "entry_point": "backend/main.py"
+    },
+    {
+      "part_id": "frontend",
+      "part_name": "Frontend",
+      "project_type_id": "web",
+      "root_path": "frontend/",
+      "primary_language": "TypeScript",
+      "tech_stack": "React 19, Vite 6, pnpm",
+      "entry_point": "frontend/src/main.tsx"
+    }
+  ],
+  "integration_points": [
+    {
+      "from": "frontend",
+      "to": "backend",
+      "type": "REST API (planned, not yet implemented)",
+      "details": "frontend/src/config/config.ts defines VITE_API_BASE_URL/VITE_API_TIMEOUT_MS; no HTTP client code exists in frontend/src/services/ (empty); backend has no CORS middleware configured and no business endpoints beyond GET /health"
+    }
+  ]
+}
