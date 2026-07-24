@@ -5,17 +5,18 @@ from fastapi import FastAPI
 
 from constants import SETTINGS
 from container import Container
+from utils import load_config
 from api.router import router
 
 container = Container()
-container.config.from_yaml(SETTINGS.CONFIG_PATH)
+container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    container.init_resources()
+    await container.init_resources()
     yield
-    container.shutdown_resources()
+    await container.shutdown_resources()
 
 
 def create_app() -> FastAPI:
