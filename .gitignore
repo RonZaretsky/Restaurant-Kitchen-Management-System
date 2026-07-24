@@ -25,6 +25,11 @@ ENV/
 .env
 .env.*
 
+# Secrets / private material (API keys, restricted course/client material, etc.)
+# Never push this directory — see secrets/README.md, which is the one file kept tracked.
+/secrets/*
+!/secrets/README.md
+
 # IDEs
 .idea/
 .vscode/
