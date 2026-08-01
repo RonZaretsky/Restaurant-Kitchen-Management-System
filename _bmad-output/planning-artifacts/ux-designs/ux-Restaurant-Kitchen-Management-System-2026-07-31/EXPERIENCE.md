@@ -1,6 +1,6 @@
 ---
 name: 'Restaurant-Kitchen-Management-System'
-status: draft
+status: final
 sources:
   - '_bmad-output/planning-artifacts/prds/prd-Restaurant-Kitchen-Management-System-2026-07-24/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-Restaurant-Kitchen-Management-System-2026-07-24/addendum.md'
@@ -26,23 +26,23 @@ Content density is dense throughout: tables and lists over cards-with-whitespace
 
 ## Information Architecture
 
-13 surfaces across four roles, confirmed with Ofek during Discovery.
+13 surfaces across four roles, confirmed with Ofek during Discovery. Every surface has a key-screen mock in `mockups/`, linked below. The mock illustrates; this table and the rest of the spine govern. Mocks and spine win on conflict, never the other way around, stated once here for the whole file.
 
-| Surface | Reached from | Purpose |
-|---|---|---|
-| Login | App open | JWT auth, redirects to the role's home surface |
-| **Waiter:** Tables | Login / nav | Grid of all tables (available/occupied/reserved), Maya's home |
-| **Waiter:** Table / Order detail | Tap a table | Open table, add dishes (qty + notes), edit/cancel pending items, mark served |
-| **Cook:** Kitchen Display | Login / nav | The board, items grouped by table, pick up to in-prep to ready, Amir's home |
-| **Cook:** Dishes (view-only) | Nav | Browse dish catalog + recipe/plating notes for context, no write access |
-| **Cook:** Smart Chef | Nav | Request a recipe suggestion, chat to iterate |
-| **Warehouse Manager:** Ingredients | Login / nav | List of all ingredients vs. threshold, Noa's home |
-| **Warehouse Manager:** Ingredient detail | Tap an ingredient | Stock, threshold, movement history, log purchase/waste/adjustment |
-| **Warehouse Manager:** Alerts | Persistent nav badge | Standing list of active shortages |
-| **Admin:** Menu Management | Login / nav | Dishes + categories + recipes, availability, price |
-| **Admin:** Recipe Suggestions | Nav | Review Cook-requested AI suggestions, confirm into a live Dish |
-| **Admin:** Users | Nav | Create/edit role/deactivate/reactivate staff |
-| **Admin:** Tables setup | Nav | Add/configure physical tables |
+| Surface | Reached from | Purpose | Mockup |
+|---|---|---|---|
+| Login | App open | JWT auth, redirects to the role's home surface | [key-login.html](mockups/key-login.html) |
+| **Waiter:** Tables | Login / nav | Grid of all tables (available/occupied/reserved), Maya's home | [key-tables.html](mockups/key-tables.html) |
+| **Waiter:** Table / Order detail | Tap a table | Open table, add dishes (qty + notes), edit/cancel pending items, mark served, close the table (view total, checkout) | [key-table-order-detail.html](mockups/key-table-order-detail.html) |
+| **Cook:** Kitchen Display | Login / nav | The board, items grouped by table, pick up to in-prep to ready, Amir's home | [key-kitchen-display.html](mockups/key-kitchen-display.html) |
+| **Cook:** Dishes (view-only) | Nav | Browse dish catalog + recipe/plating notes for context, no write access | [key-cook-dishes.html](mockups/key-cook-dishes.html) |
+| **Cook:** Smart Chef | Nav | Request a recipe suggestion, optionally with a custom direction (e.g. "something for dessert"), chat to iterate | [key-smart-chef.html](mockups/key-smart-chef.html) |
+| **Warehouse Manager:** Ingredients | Login / nav | List of all ingredients vs. threshold, Noa's home | [key-ingredients.html](mockups/key-ingredients.html) |
+| **Warehouse Manager:** Ingredient detail | Tap an ingredient | Stock, threshold, movement history, log purchase/waste/adjustment | [key-ingredient-detail.html](mockups/key-ingredient-detail.html) |
+| **Warehouse Manager:** Alerts | Persistent nav badge | Standing list of active shortages | [key-alerts.html](mockups/key-alerts.html) |
+| **Admin:** Menu Management | Login / nav | Dishes + categories + recipes, availability, price | [key-menu-management.html](mockups/key-menu-management.html) |
+| **Admin:** Recipe Suggestions | Nav | Review Cook-requested AI suggestions, confirm into a live Dish | [key-recipe-suggestions.html](mockups/key-recipe-suggestions.html) |
+| **Admin:** Users | Nav | Create/edit role/deactivate/reactivate staff | [key-users.html](mockups/key-users.html) |
+| **Admin:** Tables setup | Nav | Add/configure physical tables | [key-tables-setup.html](mockups/key-tables-setup.html) |
 
 Every Waiter sees every Table and every Order (no per-waiter filtering, per FR-6/AD-9); every Cook sees every Chat Session and Recipe Suggestion, with the current Cook's own items sorted first as a display default, not an access boundary (AD-10). There is no cross-role navigation: each role's nav only lists that role's own surfaces, plus the shared Login entry point.
 
@@ -67,15 +67,20 @@ Behavioral rules. Visual specs live in `DESIGN.md.Components` under the matching
 
 | Component | Use | Behavioral rules |
 |---|---|---|
-| Table tile | Tables | Click opens Table/Order detail. Status shown via `{components.status-badge}` (available/occupied/reserved has its own neutral rendering, distinct from OrderItem status). Once the table's open Order has an item at `ready`, the tile switches to `{components.table-tile.attention-state}` regardless of which table Maya is currently viewing, this is the Waiter attention cue (see below). |
+| Status badge (order/table) | Everywhere a status appears | Purely presentational, driven by the underlying record's state, never a control a user directly toggles. `{components.status-badge}` renders OrderItem/Order status; `{components.table-status-badge}` renders Table status, a separate dimension. Both are always color plus icon plus spelled-out label, per the Accessibility Floor, and both update the instant the underlying state changes (WebSocket push, no manual refresh). |
+| Table tile | Tables | Click opens Table/Order detail. Base status shown via `{components.table-status-badge}` (available/occupied/reserved), a different dimension from OrderItem status. Once the table's open Order has an item at `ready`, the tile additionally switches to `{components.table-tile.attention-state}` regardless of which table Maya is currently viewing, this is the Waiter attention cue (see below), layered on top of the base table-status badge, not replacing it. |
 | Order Item row | Table/Order detail, Kitchen Display card | Status via `{components.status-badge}`. Edit (quantity/note) and pick-up/mark-ready are each one click while the precondition holds (edit only while `pending`; pick-up only while `pending`; mark-ready only while `in_preparation`). Cancel is available while `pending` or `in_preparation` (Waiter, Cook, or Admin) but is gated behind a confirm step: for an `in_preparation` item, the confirm dialog states plainly that stock already deducted for it will not be reversed (AD-11), so the acting user isn't surprised later. |
+| Order total / Close action | Table/Order detail | The total (sum of non-cancelled Order Items' stored `price_at_add x quantity`, per AD-7, never a live Dish-price lookup) is visible on Table/Order detail at all times, not just at close. Close is only enabled once every item is `served`; clicking it moves the Order to `closed` and the Table back to `available` (FR-8) in one action, no separate confirm step (unlike Cancel, this isn't a data-loss risk). |
 | Kitchen Display card | Kitchen Display | One card per table, grouping that table's Order Items. One click advances a card's item from `pending` to `in_preparation` (pick-up, records the acting Cook) or from `in_preparation` to `ready`. No drag, no multi-select, no reverse transition, a mis-pick is corrected via the Order Item row's cancel path, not an undo (matches AD-6/FR-10). |
 | Ingredient row | Ingredients | Below-threshold rows are visually distinct (`{components.ingredient-row.in-shortage}`) *and* sorted to the top of the list, not just flagged in place. Click opens Ingredient detail. |
 | Alert row | Alerts | One row per Ingredient currently in shortage (never more than one active alert per ingredient, per FR-14). Never auto-dismisses and carries no dismiss control of its own; it drops off the list only when a Stock Movement brings that Ingredient back at or above threshold. Click opens Ingredient detail to log the resolving movement. |
 | Recipe Suggestion card | Recipe Suggestions | Shows the requesting Cook and the ingredients the suggestion drew on. Exactly two actions: Confirm into Dish (routes into Menu Management to complete the Dish/Recipe, per FR-19) or Dismiss. |
+| Recipe request bar | Smart Chef | One optional free-text field (e.g. "something for dessert," "want it spicy") alongside the Request button. When filled in, it's incorporated into the generated prompt alongside the stock snapshot. It steers the suggestion but does not override the stock-snapshot constraint (FR-18 still only draws on currently-available Ingredients). Left blank, generation behaves exactly as before, system's own pick from what's at risk of waste. The field clears once a request is sent; it is not itself persisted as a separate field, it becomes part of the Recipe Suggestion's already-persisted `prompt_used` (FR-18). |
 | Nav badge, Alerts | Warehouse Manager nav (Noa) | Persistent count of active alerts, visible from anywhere in her role's UI. No toast, she's frequently not looking at the screen when a shortage occurs (UJ-3). Clears only as individual alerts resolve, never a manual "mark read." |
 | Nav badge / counter, tables needing attention | Waiter nav + Table/Order detail (Maya) | Persistent "N tables need attention" counter, visible from the Tables grid and from inside any Table/Order detail screen, not just the grid. Clears automatically, one at a time, as each Order is marked `served` (FR-11). No separate dismiss action. |
 | Theme toggle | App bar, every surface | One click toggles light/dark. Persists per browser/terminal (see Foundation). |
+| Movement type chip | Ingredient detail | A plain MUI `Chip` per Stock Movement (`purchase`/`consumption`/`waste`/`adjustment`), neutral color scheme distinct from the traffic-light convention on purpose, these are categories, not an urgency signal. No icon required. |
+| Availability gate control | Menu Management | A Dish's availability toggle is disabled, with an inline reason ("Cannot mark available, recipe has no ingredients"), while its Recipe has zero `RecipeIngredient` lines (AD-8). Re-enables the instant a first ingredient line is added, no page reload needed. |
 
 **Resolved:** Dismissing a Recipe Suggestion sets a persisted dismissed status on it (a small addition to `AIRecipeSuggestion`, not defined by FR-18/FR-19 as written), so it leaves the active Recipe Suggestions list but is retained for audit, consistent with this system's audit-everything ethos elsewhere (Stock Movements, cancelled Order Items). Not a UI-only, unpersisted dismiss. This is a minor data-model note for whoever builds FR-18/FR-19's stories, not a new FR.
 
@@ -91,7 +96,7 @@ Every one of the 13 IA surfaces, minimum cold-load / empty / error coverage.
 | Empty | Table/Order detail | "No items added yet." |
 | Unavailable-dish block | Table/Order detail | "Rejected, dish unavailable." Inline at the add-item control, not a toast (realizes UJ-1's edge case). |
 | Empty | Kitchen Display | "No orders in the queue." |
-| Reconnecting | Kitchen Display (and globally) | "Reconnecting..." Retries automatically. Most time-critical here, since this is the surface furthest from a keyboard/mouse to manually refresh. |
+| Reconnecting | All 13 surfaces (most time-critical on Kitchen Display, furthest from a keyboard/mouse to manually refresh) | "Reconnecting..." Retries automatically. |
 | Empty | Dishes (view-only) | "No dishes on the menu yet." |
 | Empty | Smart Chef | "No recipe suggestions yet." / "No chat sessions yet." |
 | Generating | Smart Chef | Explicit in-flight indicator, distinguishable from both the empty state and the error state (FR-21). A second request while one is in flight for the same Cook is rejected inline, not queued. |
@@ -118,7 +123,7 @@ Mouse and keyboard only, no touch surface anywhere in this system.
 
 - Standard click-to-act everywhere: open a tile, pick up an item, confirm a dialog.
 - No drag, no multi-select, anywhere, most notably on the Kitchen Display where a drag-based ticket rail would be the obvious pattern to reach for and is deliberately rejected (keeps the one-click-per-transition model simple and matches AD-6's guarded, single-step transitions).
-- No custom keyboard shortcuts beyond what the browser already provides (Tab, Enter, Esc on dialogs, browser back). This was an explicit scope cut for a three-week build, not an oversight, a Drift-style vim-nav layer is out of scope for v1.
+- No custom keyboard shortcuts beyond what the browser already provides (Tab, Enter, Esc on dialogs, browser back). This was an explicit scope cut for a three-week build, not an oversight, a vim-style keyboard-navigation layer is out of scope for v1.
 - Standard MUI focus and hover behavior; no custom hover-reveal affordances given there's no touch fallback to design around.
 
 ## Accessibility Floor
@@ -131,11 +136,21 @@ Behavioral. Visual contrast values live in `DESIGN.md.Colors`.
 - Logical tab order matching visual/reading order on every surface.
 - No screen-reader-specific work beyond this baseline. This is a stated scope line, not a silent gap: given the three-week academic build window and desktop-only staff usage, dedicated screen-reader optimization (live-region announcements, custom ARIA beyond framework defaults) is out of scope for v1.
 
+## Inspiration & Anti-patterns
+
+No named reference product drove this system's shape (single-surface internal tool, MUI inherited almost wholesale), so this section is short: what was explicitly considered and rejected during Discovery, gathered here rather than left scattered.
+
+- **Rejected: a warm, kitchen-themed accent color** (fire/wood/harvest tones) in favor of the cool blue/teal `{colors.accent}` actually chosen. The system reads as "clean back-office software," not "restaurant app," on purpose (see `DESIGN.md.Brand & Style`).
+- **Rejected: a drag-based ticket rail on the Kitchen Display**, the obvious pattern for a screen replacing paper tickets. Kept to the simpler one-click-per-transition model instead, matching AD-6's guarded, single-step status transitions, a mis-pick is corrected via cancel, not an undo-by-drag.
+- **Rejected: a vim-style keyboard-navigation layer.** An explicit scope cut for a three-week build, not an oversight, revisit post-v1 if it turns out to matter to Waiter/Cook throughput.
+
 ## Key Flows
 
 Retold from the PRD's UJ-1 through UJ-5 at screen-level detail. Protagonists and beats are verbatim from PRD §2.3; the steps below are new, translating each into clicks against the surfaces and components named above.
 
 ### Flow 1, UJ-1: Maya opens a table and gets an order into the kitchen
+
+Mockups: [key-tables.html](mockups/key-tables.html), [key-table-order-detail.html](mockups/key-table-order-detail.html)
 
 Maya is a waiter mid-shift during dinner service, working from a shared terminal near the host stand. Table 12 just sat down.
 
@@ -150,6 +165,8 @@ Maya is a waiter mid-shift during dinner service, working from a shared terminal
 
 ### Flow 2, UJ-2: Amir works the pass in real time
 
+Mockup: [key-kitchen-display.html](mockups/key-kitchen-display.html)
+
 Amir is the cook on the line, watching the Kitchen Display instead of a paper ticket rail.
 
 1. Amir is on the Kitchen Display. Table 12's card appears the instant Maya submits (continuing Flow 1), showing two `pending` Order Item rows.
@@ -158,10 +175,13 @@ Amir is the cook on the line, watching the Kitchen Display instead of a paper ti
 4. He preps it, then clicks mark-ready. The row moves to `ready`, a pure status change, no further stock movement.
 5. **Climax:** the deduction happened the moment he picked the item up, not when he passed it, so the system's inventory already reflects reality while the food is still on the pan.
 6. He repeats for the second item. Once both are `ready`, the Order's derived status (FR-12) reads `ready` on Maya's screen; her Table 12 tile switches to the attention-state treatment (green plus check). She marks it `served` once delivered (FR-11), clearing the attention cue.
+7. Once every item on the Order is `served`, Table/Order detail's Close action becomes enabled. Maya opens Table 12, sees the total (the two items' stored `price_at_add x quantity`, summed per AD-7), and clicks Close. The Order moves to `closed`, Table 12 returns to `available` on the Tables grid, and Maya's session with this table ends the way it started, at the grid (FR-8).
 
 **Edge case named by the PRD (not a hard failure):** if picking up an item would deduct more of an ingredient than is currently in stock, the pick-up still succeeds (food gets made regardless, per AD-16, stock is never floor-capped at zero), but the resulting below-threshold stock immediately surfaces a Low-Stock Alert, Flow 3 picks up from exactly this point.
 
 ### Flow 3, UJ-3: Noa catches a shortage before it stalls the kitchen
+
+Mockups: [key-alerts.html](mockups/key-alerts.html), [key-ingredient-detail.html](mockups/key-ingredient-detail.html)
 
 Noa is the warehouse manager, primarily doing physical stock work, not watching a screen.
 
@@ -177,6 +197,8 @@ Noa is the warehouse manager, primarily doing physical stock work, not watching 
 
 ### Flow 4, UJ-4: David sets up a new hire and adjusts the menu
 
+Mockups: [key-users.html](mockups/key-users.html), [key-menu-management.html](mockups/key-menu-management.html)
+
 David is the admin, doing back-of-house administration between services.
 
 1. David opens Users. He creates a new account: username, full name, role `cook`.
@@ -188,9 +210,11 @@ David is the admin, doing back-of-house administration between services.
 
 ### Flow 5, UJ-5: Amir turns a surplus ingredient into tonight's special via Smart Chef
 
+Mockups: [key-smart-chef.html](mockups/key-smart-chef.html), [key-recipe-suggestions.html](mockups/key-recipe-suggestions.html)
+
 Amir, still acting as cook, notices via his Kitchen Display or Noa's stock view that an ingredient is high in stock and close to needing to move.
 
-1. He opens Smart Chef and requests a recipe suggestion.
+1. He opens Smart Chef and requests a recipe suggestion, leaving the optional direction field blank this time since he's happy to let the system pick from what's surplus. (The same field also accepts a specific ask, "something for dessert," "want it spicy," when Amir already knows what kind of dish he's after, that direction gets folded into the generation alongside the stock snapshot.)
 2. A Recipe Suggestion card appears, generated from a snapshot of currently-available stock, showing the ingredients it drew on.
 3. He doesn't love the plating description, so he opens a Chat Session tied to that suggestion and asks the Smart Assistant for a simpler plating and an adjusted portion size.
 4. **Climax:** the assistant responds with a revised version of the same suggestion, explicitly referencing the original, a usable draft special arrived at through conversation rather than a single one-shot generation.

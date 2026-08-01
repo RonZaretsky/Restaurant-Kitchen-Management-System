@@ -1,0 +1,249 @@
+<title>Dishes (view-only) — Cook (Amir)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Brand & Style (light mode default: only Kitchen Display defaults dark, every other role/surface, incl. this one, defaults light)
+- DESIGN.md Typography (dense-row: body2/caption text inside size="small" density), Layout & Spacing (dense-row-height 36px)
+- DESIGN.md Shapes/Elevation (4px corners, elevation-1 rows), Colors (accent #0B6E8F on active nav only, never on read-only content)
+- EXPERIENCE.md Information Architecture ("Cook: Dishes (view-only)" surface — browse dish catalog + recipe/plating notes for context, no write access)
+- EXPERIENCE.md Voice and Tone (plain factual labels, no marketing copy)
+- EXPERIENCE.md State Patterns (Empty state noted, not primary render here)
+- Explicit constraint: no edit/create/delete controls anywhere on this surface (Cook cannot modify Dishes, per PRD FR scope / architecture)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1440px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1440px; min-height: 860px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+.page-header {
+  padding: 18px 24px 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+.readonly-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #616161;
+  background: #eceff1;
+  border: 1px solid #cfd8dc;
+  border-radius: 4px;
+  padding: 5px 10px;
+}
+
+.category-block { padding: 0 24px; margin-bottom: 22px; }
+.category-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #455a64;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 10px 0 6px;
+  border-bottom: 1px solid #e0e0e0;
+  margin-bottom: 2px;
+}
+
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: #757575;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e0e0e0;
+}
+tbody tr { height: 36px; border-bottom: 1px solid #eeeeee; }
+tbody tr:hover { background: #f5f5f5; }
+tbody td { padding: 4px 10px; font-size: 12.5px; color: #212121; vertical-align: middle; }
+.dish-name { font-weight: 500; }
+.prep-time { color: #616161; white-space: nowrap; }
+.recipe-list { color: #616161; }
+.recipe-list .ing { color: #212121; }
+.unavailable-tag {
+  display: inline-block;
+  font-size: 10px;
+  color: #9e9e9e;
+  border: 1px solid #d4d4d4;
+  border-radius: 10px;
+  padding: 1px 7px;
+  margin-left: 8px;
+}
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/cook/dishes</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a href="#">Kitchen Display</a>
+        <a class="active" href="#">Dishes</a>
+        <a href="#">Smart Chef</a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">Amir · Cook</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <div>
+        <h1>Dishes</h1>
+        <div class="subtitle">9 dishes · reference only</div>
+      </div>
+      <div class="readonly-note"><span>&#128065;</span>View-only, dishes are managed by an Admin</div>
+    </div>
+
+    <div class="category-block">
+      <div class="category-title">Starters</div>
+      <table>
+        <thead>
+          <tr><th style="width:22%">Dish</th><th style="width:46%">Recipe</th><th style="width:16%">Prep time</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="dish-name">Bruschetta</td>
+            <td class="recipe-list"><span class="ing">Baguette</span>, <span class="ing">Tomato</span>, <span class="ing">Garlic</span>, <span class="ing">Basil</span>, <span class="ing">Olive Oil</span></td>
+            <td class="prep-time">6 min</td>
+          </tr>
+          <tr>
+            <td class="dish-name">Caesar Salad</td>
+            <td class="recipe-list"><span class="ing">Romaine Lettuce</span>, <span class="ing">Parmesan</span>, <span class="ing">Croutons</span>, <span class="ing">Caesar Dressing</span></td>
+            <td class="prep-time">8 min</td>
+          </tr>
+          <tr>
+            <td class="dish-name">Minestrone Soup<span class="unavailable-tag">Unavailable</span></td>
+            <td class="recipe-list"><span class="ing">Mixed Vegetables</span>, <span class="ing">Tomato</span>, <span class="ing">Cannellini Beans</span>, <span class="ing">Pasta</span></td>
+            <td class="prep-time">18 min</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="category-block">
+      <div class="category-title">Mains</div>
+      <table>
+        <thead>
+          <tr><th style="width:22%">Dish</th><th style="width:46%">Recipe</th><th style="width:16%">Prep time</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="dish-name">Margherita Pizza</td>
+            <td class="recipe-list"><span class="ing">Pizza Dough</span>, <span class="ing">Tomato</span>, <span class="ing">Mozzarella</span>, <span class="ing">Basil</span></td>
+            <td class="prep-time">12 min</td>
+          </tr>
+          <tr>
+            <td class="dish-name">Spaghetti Carbonara</td>
+            <td class="recipe-list"><span class="ing">Spaghetti</span>, <span class="ing">Egg</span>, <span class="ing">Pancetta</span>, <span class="ing">Parmesan</span>, <span class="ing">Black Pepper</span></td>
+            <td class="prep-time">14 min</td>
+          </tr>
+          <tr>
+            <td class="dish-name">Mushroom Risotto</td>
+            <td class="recipe-list"><span class="ing">Arborio Rice</span>, <span class="ing">Mushroom</span>, <span class="ing">Parmesan</span>, <span class="ing">Butter</span>, <span class="ing">White Wine</span></td>
+            <td class="prep-time">22 min</td>
+          </tr>
+          <tr>
+            <td class="dish-name">Grilled Salmon</td>
+            <td class="recipe-list"><span class="ing">Salmon Fillet</span>, <span class="ing">Lemon</span>, <span class="ing">Asparagus</span>, <span class="ing">Olive Oil</span></td>
+            <td class="prep-time">15 min</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="category-block">
+      <div class="category-title">Desserts</div>
+      <table>
+        <thead>
+          <tr><th style="width:22%">Dish</th><th style="width:46%">Recipe</th><th style="width:16%">Prep time</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="dish-name">Tiramisu</td>
+            <td class="recipe-list"><span class="ing">Mascarpone</span>, <span class="ing">Espresso</span>, <span class="ing">Ladyfingers</span>, <span class="ing">Cocoa Powder</span></td>
+            <td class="prep-time">10 min</td>
+          </tr>
+          <tr>
+            <td class="dish-name">Panna Cotta</td>
+            <td class="recipe-list"><span class="ing">Cream</span>, <span class="ing">Sugar</span>, <span class="ing">Gelatin</span>, <span class="ing">Vanilla</span></td>
+            <td class="prep-time">8 min</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>

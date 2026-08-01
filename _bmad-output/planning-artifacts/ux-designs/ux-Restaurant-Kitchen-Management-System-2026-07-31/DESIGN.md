@@ -1,7 +1,7 @@
 ---
 name: 'Restaurant-Kitchen-Management-System'
 description: 'Internal, role-gated staff tool for a restaurant kitchen (Waiter, Cook, Warehouse Manager, Admin) plus the Smart Chef AI assistant. MUI defaults, one cool accent layered on top, no restaurant branding.'
-status: draft
+status: final
 sources:
   - '_bmad-output/planning-artifacts/prds/prd-Restaurant-Kitchen-Management-System-2026-07-24/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-Restaurant-Kitchen-Management-System-2026-07-24/addendum.md'
@@ -80,6 +80,16 @@ components:
   nav-badge-attention:
     color: '{components.status-badge.ready.color}'
     foreground: '{colors.accent-foreground}'
+  table-status-badge:
+    available:
+      color: 'success.light (MUI default palette, inherited)'
+      icon: 'EventSeatIcon'
+    occupied:
+      color: 'grey.700 (MUI default palette, inherited)'
+      icon: 'PeopleAltIcon'
+    reserved:
+      color: 'info.main (MUI default palette, inherited)'
+      icon: 'BookmarkIcon'
   button-primary:
     background: '{colors.accent}'
     background-dark: '{colors.accent-dark}'
@@ -95,7 +105,7 @@ updated: '2026-07-31'
 
 This is a shift-speed back-office tool for four roles who are not looking at it for pleasure: Maya is mid-rush, Amir is watching a board instead of a paper ticket rail, Noa is often not looking at the screen at all, David is doing admin between services. There is no diner-facing surface anywhere in the system, so there is no reason to dress it up for one. No restaurant branding, no warm hospitality voice, no marketing copy, no illustration. The aesthetic posture is "clean back-office software," not "restaurant app."
 
-Concretely, that means inheriting MUI's defaults almost entirely and adding exactly one deliberate layer on top: a single cool accent color for primary actions and highlights (per architecture AD-13, MUI is the only UI library in this system). Everything else, MUI's neutral surfaces, its semantic error/warning/success/info palette, its type ramp, its shadows, its corners, is used as shipped. The discipline here is the same one Drift-style shadcn products use: if the interface can't justify overriding a default, it doesn't override it. The one place this system does invent real visual vocabulary is the traffic-light status convention (Colors, below) and its pairing with icons and labels, because that convention carries real operational weight (colorblind legibility at the kitchen display) rather than being decorative.
+Concretely, that means inheriting MUI's defaults almost entirely and adding exactly one deliberate layer on top: a single cool accent color for primary actions and highlights (per architecture AD-13, MUI is the only UI library in this system). Everything else, MUI's neutral surfaces, its semantic error/warning/success/info palette, its type ramp, its shadows, its corners, is used as shipped. The discipline here is the same one any product built by inheriting a component library's defaults wholesale should use: if the interface can't justify overriding a default, it doesn't override it. The one place this system does invent real visual vocabulary is the traffic-light status convention (Colors, below) and its pairing with icons and labels, because that convention carries real operational weight (colorblind legibility at the kitchen display) rather than being decorative.
 
 The system is genuinely theme-aware: every screen supports a real light/dark toggle, not a per-role hardcoded look. The Kitchen Display initializes in dark mode by default (glare and distance-legibility at the pass), every other role's home surface initializes in light mode, and any user can flip either way at any time.
 
@@ -118,6 +128,10 @@ The palette is MUI's default light/dark palette plus one accent pair and one sta
 
   The same red token (`{components.status-badge.cancelled.color}`) is reused for the Ingredient-in-shortage state and the Alert row, since both represent the same "needs action, uncorrected" meaning as a cancelled item, just in the inventory domain instead of the order domain.
 
+  These are MUI's own semantic tokens (`warning.main`, `success.main`, etc.), inherited wholesale, not independently re-measured here. MUI documents its Material palette as WCAG AA-compliant in both its light and dark themes; that inherited guarantee is what this system relies on, including for the Kitchen Display's dark-mode rendering, which is the one surface where this matters most. If a specific pairing is later found non-compliant during implementation, that is a bug against this spine's Do's and Don'ts, not an accepted exception.
+
+- **Table status (a separate status dimension from OrderItem/Order status, above)** uses its own token, `{components.table-status-badge}`: `available` (`{components.table-status-badge.available.color}`, a free table, positive/neutral), `occupied` (`{components.table-status-badge.occupied.color}`, in use, not itself a problem so it deliberately does not reuse the order-status amber/warning tone), and `reserved` (`{components.table-status-badge.reserved.color}`, upcoming). Same rule as above: color is paired with an icon and a label, never color alone. This is distinct from, and can coexist on the same Table tile with, the Waiter attention-cue treatment (`{components.table-tile.attention-state}`) described below, which overlays on top of `occupied` when that table's order has an item ready to serve.
+
 Avoid: a second brand color, warm/kitchen-themed accents (fire, wood, harvest tones were explicitly rejected in favor of a cool blue/teal, per the Discovery decision log), decorative gradients, and color-only status indication anywhere.
 
 ## Typography
@@ -138,16 +152,18 @@ Inherits MUI's default corner radius (`{rounded.DEFAULT}`, 4px) everywhere, butt
 
 ## Components
 
-Everything not listed below is used as MUI ships it: `Button`, `TextField`, `Select`, `Dialog`, `Table`, `List`, `AppBar`, `Drawer`, `Skeleton`, `Snackbar`/`Alert`. The delta components are the ones carrying this system's status-color convention and its two attention-cue mechanisms.
+All 13 IA surfaces have a key-screen mock in `mockups/`, linked from `EXPERIENCE.md.Information Architecture`, showing these components applied together. Everything not listed below is used as MUI ships it, including `Button`'s non-primary variants, `TextField`, `Select`, `Dialog`, `Table`, `List`, `AppBar`, `Drawer`, `Skeleton`, `Snackbar`/`Alert`. The delta components are the ones carrying this system's status-color convention and its two attention-cue mechanisms.
 
-- **Status badge (`{components.status-badge}`)**, the shared atom behind every status rendering in the system. Built on MUI `Chip`: colored fill or outline per the status-color table above, plus the matching icon, plus the text label spelled out (never abbreviated to a color swatch alone). Used inside Table tile, Order Item row, Kitchen Display card, and Order/table detail.
-- **Table tile (`{components.table-tile}`)**, MUI `Card`, default surface in its normal state. In its attention state (an occupied table has an item ready to serve), it takes on `{components.table-tile.attention-state}`, the same green-plus-check treatment as the `ready` status badge, applied at the tile level rather than a new color, so the visual vocabulary stays consistent with the rest of the traffic-light convention.
-- **Kitchen Display card (`{components.kitchen-display-card}`)**, MUI `Paper`/`Card` at elevation 1, rendered on the dark-theme background by default. One card per table, grouping that table's Order Items. Each item's advance-status control is a single large click target (no drag, no multi-select), sized generously given this surface is read from a short distance.
-- **Order Item row (`{components.order-item-row}`)**, status badge plus dish name, quantity, and note. The cancel action is a destructive-variant MUI button gated behind a confirm step (see Component Patterns in EXPERIENCE.md for the behavioral rule this protects, AD-11's no-auto-reversal invariant). Pick-up and mark-ready are each a single click, no confirm step.
+- **Button, primary variant (`{components.button-primary}`)**, the one MUI `Button` delta in the system: its background resolves through the overridden theme `primary` slot (`{colors.accent}` / `{colors.accent-dark}`, see Colors above), not MUI's stock blue. Every other `Button` variant (outlined, text, destructive/error) is unmodified MUI.
+- **Status badge (`{components.status-badge}`)**, the shared atom behind every OrderItem/Order status rendering in the system. Built on MUI `Chip`: colored fill or outline per the status-color table above, plus the matching icon, plus the text label spelled out (never abbreviated to a color swatch alone). Used inside Order Item row, Kitchen Display card, and Order/table detail. Behavioral rule (state-driven, never manually toggled) lives in `EXPERIENCE.md.Component Patterns`.
+- **Table status badge (`{components.table-status-badge}`)**, the equivalent atom for a Table's own status (`available`/`occupied`/`reserved`), a distinct dimension from OrderItem/Order status. Same `Chip`-plus-icon-plus-label construction as `{components.status-badge}`, deliberately a separate token set since a Table's status and its Order's status are different things that can both be visible on the same Table tile.
+- **Table tile (`{components.table-tile}`)**, MUI `Card`, showing `{components.table-status-badge}` in its normal state. In its attention state (an occupied table has an item ready to serve), it additionally takes on `{components.table-tile.attention-state}`, the same green-plus-check treatment as the `ready` status badge, layered on top of (not replacing) the table-status badge, so the visual vocabulary stays consistent with the rest of the traffic-light convention.
+- **Kitchen Display card (`{components.kitchen-display-card}`)**, MUI `Paper`/`Card` at elevation 1, rendered on the dark-theme background by default. One card per table, grouping that table's Order Items. Each item's advance-status control is a single large click target, sized generously given this surface is read from a short distance. Behavioral rule lives in `EXPERIENCE.md.Component Patterns`.
+- **Order Item row (`{components.order-item-row}`)**, status badge plus dish name, quantity, and note. The cancel action is a destructive-variant MUI button. Behavioral rule (confirm step, AD-11's no-auto-reversal invariant) lives in `EXPERIENCE.md.Component Patterns`.
 - **Ingredient row (`{components.ingredient-row}`)**, default MUI table row; an in-shortage row switches to the same red token as a cancelled OrderItem (`{components.ingredient-row.in-shortage.color}`) plus a warning icon, and is sorted to the top of the list, not just color-flagged in place.
-- **Alert row (`{components.alert-row}`)**, same red-plus-icon treatment as an in-shortage Ingredient row. Deliberately has no dismiss control in its own right; it only leaves the list when the underlying shortage is resolved via a Stock Movement.
+- **Alert row (`{components.alert-row}`)**, same red-plus-icon treatment as an in-shortage Ingredient row. Behavioral rule (no manual dismiss) lives in `EXPERIENCE.md.Component Patterns`.
 - **Recipe Suggestion card (`{components.recipe-suggestion-card}`)**, MUI `Card`, default surface. Shows the requesting Cook and the ingredients the suggestion drew on. Exactly two actions: Confirm into Dish (`{components.button-primary}`, the only accent-colored action on this card) and Dismiss (plain outlined/text button, no override).
-- **Nav badges (`{components.nav-badge-alerts}`, `{components.nav-badge-attention}`)**, both are MUI `Badge` on a nav item. The Alerts badge (Noa) uses the same red token as a cancelled/in-shortage state, since it signals an unresolved problem. The "tables need attention" counter (Maya) uses the same green token as a `ready` status, since it signals a positive, actionable state (food is up), not a fault. Neither clears via a dismiss action, only via the underlying event resolving (see EXPERIENCE.md State Patterns).
+- **Nav badges (`{components.nav-badge-alerts}`, `{components.nav-badge-attention}`)**, both are MUI `Badge` on a nav item. The Alerts badge (Noa) uses the same red token as a cancelled/in-shortage state, since it signals an unresolved problem. The "tables need attention" counter (Maya) uses the same green token as a `ready` status, since it signals a positive, actionable state (food is up), not a fault. Behavioral rule lives in `EXPERIENCE.md.State Patterns`.
 - **Theme toggle (`{components.theme-toggle}`)**, MUI `IconButton` default, present in the app bar on every surface. No custom iconography beyond MUI's own sun/moon icons.
 
 ## Do's and Don'ts

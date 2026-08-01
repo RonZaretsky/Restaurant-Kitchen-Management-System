@@ -1,0 +1,339 @@
+<title>Smart Chef — Cook (Amir)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Brand & Style (light mode default), Colors (accent #0B6E8F for the request/send primary actions, ready-green not used here since this isn't an order status)
+- DESIGN.md Components (recipe-suggestion-card: MUI Card default surface, showing requesting Cook + ingredients drawn on, exactly two actions Confirm/Dismiss)
+- EXPERIENCE.md Information Architecture ("Cook: Smart Chef" — request a recipe suggestion, chat to iterate)
+- EXPERIENCE.md Component Patterns (Recipe Suggestion card: two actions, Confirm into Dish / Dismiss)
+- EXPERIENCE.md Key Flows, Flow 5 UJ-5 (Amir requests a suggestion from surplus stock, then iterates via chat for simpler plating + adjusted portion size, assistant responds referencing the original)
+- EXPERIENCE.md State Patterns (Generating..., a small annotated secondary state here per instructions, not the primary render; Generation failed state referenced in Voice and Tone style)
+- EXPERIENCE.md Voice and Tone (plain, factual assistant/system copy, no exclamation points)
+- FR-18/FR-19/FR-20/FR-21, AD-14 (one generation in flight per Cook, no half-written suggestion on failure)
+- EXPERIENCE.md Component Patterns (Recipe request bar: optional free-text direction field, folded into the prompt alongside the stock snapshot, does not override it)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1440px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1440px; min-height: 900px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+.page-header { padding: 18px 24px 14px; }
+.page-header h1 { font-size: 20px; font-weight: 500; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: 20px;
+  padding: 0 24px 28px;
+  align-items: start;
+}
+
+.request-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 14px 18px;
+  margin-bottom: 4px;
+}
+.request-bar .copy { font-size: 13px; color: #616161; white-space: nowrap; }
+.direction-input {
+  flex: 1;
+  height: 36px;
+  border: 1px solid #c7c7c7;
+  border-radius: 4px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #212121;
+}
+.direction-input::placeholder { color: #9e9e9e; }
+.btn-primary {
+  background: #0B6E8F;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 9px 18px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-outlined {
+  background: transparent;
+  color: #0B6E8F;
+  border: 1px solid #0B6E8F;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+/* Recipe Suggestion card */
+.card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  padding: 18px 20px;
+}
+.card-title { font-size: 15px; font-weight: 500; margin-bottom: 2px; }
+.card-meta { font-size: 11.5px; color: #757575; margin-bottom: 14px; }
+.card-meta b { color: #455a64; font-weight: 500; }
+.section-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #757575;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 12px 0 6px;
+}
+.ing-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ing-chip {
+  font-size: 11.5px;
+  color: #455a64;
+  background: #eceff1;
+  border: 1px solid #cfd8dc;
+  border-radius: 12px;
+  padding: 3px 10px;
+}
+.plating-text { font-size: 12.5px; color: #424242; line-height: 1.6; margin-top: 4px; }
+.card-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #eeeeee;
+}
+
+.chat-panel {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  height: 560px;
+}
+.chat-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #eeeeee;
+  font-size: 13px;
+  font-weight: 500;
+  color: #212121;
+}
+.chat-header .sub { font-size: 11px; color: #9e9e9e; font-weight: 400; margin-top: 1px; }
+.chat-body { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.msg { max-width: 82%; font-size: 12.5px; line-height: 1.55; padding: 9px 12px; border-radius: 4px; }
+.msg.user { align-self: flex-end; background: #e1f0f5; color: #0B4A5F; }
+.msg.assistant { align-self: flex-start; background: #f5f5f5; color: #212121; border: 1px solid #eeeeee; }
+.msg .who { font-size: 10.5px; color: #9e9e9e; margin-bottom: 3px; font-weight: 500; }
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid #eeeeee;
+}
+.chat-input {
+  flex: 1;
+  height: 38px;
+  border: 1px solid #c7c7c7;
+  border-radius: 4px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #212121;
+}
+.btn-send {
+  background: #0B6E8F;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.annotation-block {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.annotation-label {
+  font-size: 11px;
+  color: #9e9e9e;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.generating-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: #f5f5f5;
+  border: 1px dashed #bdbdbd;
+  border-radius: 16px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #616161;
+}
+.generating-pill .spin { font-size: 13px; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/cook/smart-chef</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a href="#">Kitchen Display</a>
+        <a href="#">Dishes</a>
+        <a class="active" href="#">Smart Chef</a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">Amir · Cook</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <h1>Smart Chef</h1>
+      <div class="subtitle">1 recipe suggestion</div>
+    </div>
+
+    <div class="layout">
+
+      <div class="request-bar">
+        <div class="copy">Generated from current stock.</div>
+        <input class="direction-input" type="text" placeholder="Optional: add direction, e.g. &quot;something for dessert&quot;, &quot;want it spicy&quot;" />
+        <button class="btn-primary">Request suggestion</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Roasted Zucchini &amp; Pancetta Flatbread</div>
+        <div class="card-meta">Requested by <b>Amir</b> · generated 6:42 PM</div>
+
+        <div class="section-label">Ingredients drawn on</div>
+        <div class="ing-chips">
+          <span class="ing-chip">Zucchini, 1.2 kg</span>
+          <span class="ing-chip">Pizza Dough, 2 units</span>
+          <span class="ing-chip">Pancetta, 0.3 kg</span>
+          <span class="ing-chip">Parmesan, 0.15 kg</span>
+          <span class="ing-chip">Olive Oil, 60 ml</span>
+        </div>
+
+        <div class="section-label">Suggested plating</div>
+        <div class="plating-text">Thin-sliced zucchini and pancetta layered on flatbread, finished with shaved parmesan and a drizzle of olive oil. Cut into 6 pieces, served on a wooden board.</div>
+
+        <div class="card-actions">
+          <button class="btn-primary">Confirm into Dish</button>
+          <button class="btn-outlined" style="border-color:#bdbdbd; color:#616161;">Dismiss</button>
+        </div>
+      </div>
+
+      <div class="chat-panel">
+        <div class="chat-header">
+          Iterate on this suggestion
+          <div class="sub">Chat session tied to the suggestion above</div>
+        </div>
+        <div class="chat-body">
+          <div class="msg user">
+            <div class="who">Amir</div>
+            Can you simplify the plating and cut the portion down for a shared appetizer instead of a main?
+          </div>
+          <div class="msg assistant">
+            <div class="who">Smart Chef</div>
+            Revised version of the same suggestion: skip the board presentation, serve on a single plate cut into 4 pieces instead of 6, and drop the parmesan garnish to a light dusting. Portion is now sized for sharing rather than a single-guest main.
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <input class="chat-input" type="text" value="Ask a follow-up..." readonly />
+          <button class="btn-send">Send</button>
+        </div>
+      </div>
+
+      <div class="annotation-block">
+        <span class="annotation-label">Secondary state, in-flight generation</span>
+        <span class="generating-pill"><span class="spin">&#8635;</span>Generating suggestion...</span>
+        <span style="font-size:11px; color:#9e9e9e;">Distinct from the empty and error states per FR-21. A second request while this is in flight is rejected inline, not queued (AD-14).</span>
+      </div>
+
+    </div>
+  </div>
+</div>

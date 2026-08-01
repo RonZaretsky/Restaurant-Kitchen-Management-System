@@ -1,0 +1,293 @@
+<title>Users — Admin (David)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Components (button-primary on New user; dense row height 36px / size="small" table density)
+- EXPERIENCE.md Information Architecture (Admin: Users — create/edit/role/deactivate/reactivate staff)
+- EXPERIENCE.md Key Flows, Flow 4 UJ-4 step 1 and failure path (David creates a Cook account; last-Admin lockout)
+- EXPERIENCE.md State Patterns ("Rejected, at least one admin must stay active" inline on the deactivate/demote action, AD-15) and ("Rejected, username/table number/ingredient name already exists" inline on create, FR-3)
+- Architecture AD-15 (Last-Admin lockout guard) — rendered as an annotated secondary state on one row, not the primary render
+- EXPERIENCE.md Voice and Tone (plain, factual microcopy, no exclamation points)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1440px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1440px; min-height: 820px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+.page-header {
+  padding: 18px 24px 6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; color: #212121; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+.btn-primary {
+  background: #0B6E8F;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.panel {
+  margin: 14px 24px 20px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+table.user-table { width: 100%; border-collapse: collapse; }
+table.user-table th {
+  text-align: left;
+  font-size: 11px;
+  color: #9e9e9e;
+  font-weight: 500;
+  padding: 6px 16px;
+  border-bottom: 1px solid #eee;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+table.user-table td {
+  font-size: 13px;
+  padding: 0 16px;
+  height: 36px;
+  border-bottom: 1px solid #f2f2f2;
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+
+.username-cell { color: #616161; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+.name-cell { font-weight: 500; color: #212121; }
+
+.role-chip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: #ede7f6;
+  color: #5e35b1;
+  border: 1px solid #d1c4e9;
+}
+.role-chip.waiter { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+.role-chip.cook { background: #fff3e0; color: #e65100; border-color: #ffcc80; }
+.role-chip.warehouse { background: #e0f2f1; color: #00695c; border-color: #80cbc4; }
+.role-chip.admin { background: #ede7f6; color: #5e35b1; border-color: #d1c4e9; }
+
+.status-chip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 12px;
+}
+.status-active { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+.status-inactive { background: #f5f5f5; color: #9e9e9e; border: 1px solid #d6d6d6; }
+
+.row-actions { display: flex; gap: 12px; justify-content: flex-end; }
+.link-btn { font-size: 12px; color: #0B6E8F; cursor: pointer; background: none; border: none; padding: 0; }
+.link-btn.danger { color: #d32f2f; }
+.link-btn.muted { color: #9e9e9e; }
+
+.annotation-row td {
+  background: #fdedec;
+  border-bottom: 1px solid #f2c1bd;
+  padding: 10px 16px;
+}
+.annotation {
+  font-size: 12px;
+  color: #616161;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.annotation .label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9e9e9e;
+  background: #fff;
+  border: 1px solid #ddd;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.annotation .msg { color: #b3271c; font-weight: 500; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/admin/users</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a href="#">Menu Management</a>
+        <a href="#">Recipe Suggestions</a>
+        <a class="active" href="#">Users</a>
+        <a href="#">Tables setup</a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">David · Admin</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <div>
+        <h1>Users</h1>
+        <div class="subtitle">7 staff accounts · 5 active</div>
+      </div>
+      <div class="btn-primary">+ New user</div>
+    </div>
+
+    <div class="panel">
+      <table class="user-table">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Full name</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th style="text-align:right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="username-cell">david.admin</td>
+            <td class="name-cell">David Cohen</td>
+            <td><span class="role-chip admin">Admin</span></td>
+            <td><span class="status-chip status-active">Active</span></td>
+            <td><div class="row-actions"><button class="link-btn">Edit</button><span class="link-btn muted">This is you</span></div></td>
+          </tr>
+          <tr>
+            <td class="username-cell">ron.admin</td>
+            <td class="name-cell">Ron Azoulay</td>
+            <td><span class="role-chip admin">Admin</span></td>
+            <td><span class="status-chip status-active">Active</span></td>
+            <td><div class="row-actions"><button class="link-btn">Edit</button><button class="link-btn danger">Deactivate</button></div></td>
+          </tr>
+          <tr>
+            <td colspan="5" style="padding:0;">
+              <table class="user-table" style="width:100%;">
+                <tr class="annotation-row">
+                  <td colspan="5">
+                    <div class="annotation">
+                      <span class="label">Example</span>
+                      David clicks Deactivate on Ron, the only other active Admin:
+                      <span class="msg">Rejected, at least one admin must stay active.</span>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="username-cell">maya.w</td>
+            <td class="name-cell">Maya Levi</td>
+            <td><span class="role-chip waiter">Waiter</span></td>
+            <td><span class="status-chip status-active">Active</span></td>
+            <td><div class="row-actions"><button class="link-btn">Edit</button><button class="link-btn danger">Deactivate</button></div></td>
+          </tr>
+          <tr>
+            <td class="username-cell">amir.cook</td>
+            <td class="name-cell">Amir Malka</td>
+            <td><span class="role-chip cook">Cook</span></td>
+            <td><span class="status-chip status-active">Active</span></td>
+            <td><div class="row-actions"><button class="link-btn">Edit</button><button class="link-btn danger">Deactivate</button></div></td>
+          </tr>
+          <tr>
+            <td class="username-cell">dana.cook</td>
+            <td class="name-cell">Dana Peretz</td>
+            <td><span class="role-chip cook">Cook</span></td>
+            <td><span class="status-chip status-active">Active</span></td>
+            <td><div class="row-actions"><button class="link-btn">Edit</button><button class="link-btn danger">Deactivate</button></div></td>
+          </tr>
+          <tr>
+            <td class="username-cell">noa.wh</td>
+            <td class="name-cell">Noa Ben-David</td>
+            <td><span class="role-chip warehouse">Warehouse Manager</span></td>
+            <td><span class="status-chip status-active">Active</span></td>
+            <td><div class="row-actions"><button class="link-btn">Edit</button><button class="link-btn danger">Deactivate</button></div></td>
+          </tr>
+          <tr>
+            <td class="username-cell">yossi.w</td>
+            <td class="name-cell">Yossi Har-Even</td>
+            <td><span class="role-chip waiter">Waiter</span></td>
+            <td><span class="status-chip status-inactive">Inactive</span></td>
+            <td><div class="row-actions"><button class="link-btn">Edit</button><button class="link-btn">Reactivate</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

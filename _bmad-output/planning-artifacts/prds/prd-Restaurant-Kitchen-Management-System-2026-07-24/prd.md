@@ -2,7 +2,7 @@
 title: Restaurant Kitchen Management System
 status: final
 created: 2026-07-24
-updated: 2026-07-24
+updated: 2026-07-31
 ---
 
 # PRD: Restaurant Kitchen Management System
@@ -283,12 +283,13 @@ A Warehouse Manager can view all Ingredients with their current stock, threshold
 
 #### FR-18: Generate a recipe suggestion from current stock
 
-A Cook can request an AI-generated recipe/special suggestion, generated using a snapshot of currently-available Ingredient stock (prioritizing ingredients at risk of waste). The request, the resulting suggestion, and the stock snapshot it was based on are persisted as a Recipe Suggestion.
+A Cook can request an AI-generated recipe/special suggestion, generated using a snapshot of currently-available Ingredient stock (prioritizing ingredients at risk of waste), optionally steered by a short free-text direction the Cook supplies (e.g. "something for dessert," "want it spicy"). The request, the resulting suggestion, and the stock snapshot it was based on are persisted as a Recipe Suggestion.
 
 **Consequences (testable):**
 - A stored Recipe Suggestion retains the exact prompt used and the stock snapshot at generation time, so it can be audited/reproduced later (matches the existing `AIRecipeSuggestion` schema).
-- The generated suggestion references only ingredients that were in stock at generation time. `[ASSUMPTION: enforced by prompt construction, not independently validated post-generation — see §9.]`
-- A second FR-18 request from the same Cook while an earlier one for them is still in flight is rejected rather than queued — at most one generation in flight per Cook at a time. `[ASSUMPTION: reject-not-queue is the simpler default — not directly confirmed — see §9.]`
+- The generated suggestion references only ingredients that were in stock at generation time. `[ASSUMPTION: enforced by prompt construction, not independently validated post-generation, see §9.]`
+- A second FR-18 request from the same Cook while an earlier one for them is still in flight is rejected rather than queued, at most one generation in flight per Cook at a time. `[ASSUMPTION: reject-not-queue is the simpler default, not directly confirmed, see §9.]`
+- When a Cook supplies a free-text direction, it is folded into the generation prompt alongside the stock snapshot and steers the suggestion, but never overrides the stock-availability constraint above, a direction toward a dessert or a specific flavor profile still only draws on ingredients that were actually in stock at generation time. The direction text itself is not a separate persisted field, it becomes part of the already-persisted `prompt_used`.
 
 #### FR-19: Recipe Suggestion requires admin confirmation to become a menu item
 

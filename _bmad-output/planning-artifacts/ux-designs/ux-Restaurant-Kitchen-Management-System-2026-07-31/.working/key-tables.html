@@ -1,0 +1,326 @@
+<title>Tables — Waiter (Maya)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Colors (table-status-badge: available/occupied/reserved), Brand & Style (light mode default for non-Kitchen-Display roles), accent color on active nav
+- DESIGN.md Components (table-tile, table-tile.attention-state, nav-badge-attention, theme-toggle)
+- EXPERIENCE.md Component Patterns (Table tile row, Nav badge/counter "tables needing attention" row)
+- EXPERIENCE.md State Patterns (Cold load / Empty are noted but not the primary render here; primary render shows populated grid)
+- EXPERIENCE.md Key Flows, Flow 1 UJ-1 step 1 and step 6 (Tables grid as Maya's home surface, before/after opening Table 12)
+- EXPERIENCE.md Voice and Tone ("Table 12, occupied" style labels, no exclamation points)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1360px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1360px; min-height: 820px; background: #fafafa; }
+
+/* App bar */
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.attention-counter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #2e7d32;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 12px;
+}
+.attention-counter .dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+/* Page body */
+.page-header {
+  padding: 18px 24px 6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; color: #212121; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+
+.legend {
+  display: flex;
+  gap: 18px;
+  padding: 0 24px 14px;
+  font-size: 12px;
+  color: #616161;
+}
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 10px; height: 10px; border-radius: 3px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  padding: 0 24px 28px;
+}
+
+.table-tile {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  padding: 14px 14px 12px;
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  cursor: pointer;
+  position: relative;
+}
+.table-tile.attention {
+  border: 2px solid #2e7d32;
+  box-shadow: 0 0 0 3px rgba(46,125,50,0.12), 0 1px 2px rgba(0,0,0,0.08);
+}
+.table-tile .table-num { font-size: 15px; font-weight: 500; color: #212121; }
+.table-tile .table-num small { font-weight: 400; color: #9e9e9e; font-size: 11px; display: block; margin-top: 1px; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px 3px 7px;
+  border-radius: 12px;
+  width: fit-content;
+}
+.badge .ic { font-size: 12px; line-height: 1; }
+
+.badge-available { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+.badge-occupied { background: #eceff1; color: #455a64; border: 1px solid #cfd8dc; }
+.badge-reserved { background: #e1f5fe; color: #0288d1; border: 1px solid #81d4fa; }
+
+.attention-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: #2e7d32;
+  color: #fff;
+  width: fit-content;
+  margin-top: 6px;
+}
+
+.tile-footer {
+  font-size: 11px;
+  color: #9e9e9e;
+}
+.tile-footer.hot { color: #2e7d32; font-weight: 500; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/waiter/tables</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a class="active" href="#">Tables</a>
+      </nav>
+      <div class="right">
+        <div class="attention-counter"><span class="dot"></span>2 tables need attention</div>
+        <div class="user-chip">Maya · Waiter</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <div>
+        <h1>Tables</h1>
+        <div class="subtitle">14 tables</div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div class="item"><span class="swatch" style="background:#2e7d32"></span>Available</div>
+      <div class="item"><span class="swatch" style="background:#455a64"></span>Occupied</div>
+      <div class="item"><span class="swatch" style="background:#0288d1"></span>Reserved</div>
+      <div class="item"><span class="swatch" style="background:#2e7d32;border:2px solid #2e7d32"></span>Needs attention (item ready)</div>
+    </div>
+
+    <div class="grid">
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 1<small>Seats 2</small></div>
+          <div class="badge badge-available"><span class="ic">&#128100;</span>Available</div>
+        </div>
+        <div class="tile-footer">&nbsp;</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 2<small>Seats 4</small></div>
+          <div class="badge badge-reserved"><span class="ic">&#128278;</span>Reserved</div>
+        </div>
+        <div class="tile-footer">19:30, party of 4</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 3<small>Seats 2</small></div>
+          <div class="badge badge-available"><span class="ic">&#128100;</span>Available</div>
+        </div>
+        <div class="tile-footer">&nbsp;</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 4<small>Seats 6</small></div>
+          <div class="badge badge-occupied"><span class="ic">&#128101;</span>Occupied</div>
+        </div>
+        <div class="tile-footer">3 items, pending</div>
+      </div>
+
+      <div class="table-tile attention">
+        <div>
+          <div class="table-num">Table 12<small>Seats 4</small></div>
+          <div class="badge badge-occupied"><span class="ic">&#128101;</span>Occupied</div>
+          <div class="attention-badge"><span class="ic">&#10003;</span>Item ready</div>
+        </div>
+        <div class="tile-footer hot">1 of 2 items ready</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 5<small>Seats 2</small></div>
+          <div class="badge badge-occupied"><span class="ic">&#128101;</span>Occupied</div>
+        </div>
+        <div class="tile-footer">2 items, in preparation</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 6<small>Seats 4</small></div>
+          <div class="badge badge-available"><span class="ic">&#128100;</span>Available</div>
+        </div>
+        <div class="tile-footer">&nbsp;</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 7<small>Seats 2</small></div>
+          <div class="badge badge-reserved"><span class="ic">&#128278;</span>Reserved</div>
+        </div>
+        <div class="tile-footer">20:00, party of 2</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 8<small>Seats 6</small></div>
+          <div class="badge badge-occupied"><span class="ic">&#128101;</span>Occupied</div>
+        </div>
+        <div class="tile-footer">1 item, served</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 9<small>Seats 4</small></div>
+          <div class="badge badge-available"><span class="ic">&#128100;</span>Available</div>
+        </div>
+        <div class="tile-footer">&nbsp;</div>
+      </div>
+
+      <div class="table-tile attention">
+        <div>
+          <div class="table-num">Table 10<small>Seats 2</small></div>
+          <div class="badge badge-occupied"><span class="ic">&#128101;</span>Occupied</div>
+          <div class="attention-badge"><span class="ic">&#10003;</span>Item ready</div>
+        </div>
+        <div class="tile-footer hot">2 of 2 items ready</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 11<small>Seats 4</small></div>
+          <div class="badge badge-available"><span class="ic">&#128100;</span>Available</div>
+        </div>
+        <div class="tile-footer">&nbsp;</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 13<small>Seats 8</small></div>
+          <div class="badge badge-occupied"><span class="ic">&#128101;</span>Occupied</div>
+        </div>
+        <div class="tile-footer">4 items, in preparation</div>
+      </div>
+
+      <div class="table-tile">
+        <div>
+          <div class="table-num">Table 14<small>Seats 2</small></div>
+          <div class="badge badge-available"><span class="ic">&#128100;</span>Available</div>
+        </div>
+        <div class="tile-footer">&nbsp;</div>
+      </div>
+    </div>
+  </div>
+</div>

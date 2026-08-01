@@ -1,0 +1,211 @@
+<title>Alerts — Warehouse Manager (Noa)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Colors (alert-row / ingredient-row.in-shortage reusing the cancelled/error red token, paired with WarningAmberIcon + label)
+- DESIGN.md Components (alert-row, nav-badge-alerts)
+- EXPERIENCE.md Component Patterns (Alert row: one row per ingredient in shortage, no dismiss control, resolves only via Stock Movement; Nav badge, Alerts: persistent count, no toast)
+- EXPERIENCE.md State Patterns (Empty/desired state "No active shortages" noted in comment below, not the primary render)
+- EXPERIENCE.md Key Flows, Flow 3 UJ-3 (Noa's Alerts nav badge increments, opens Alerts, sees "Stock low: {ingredient} ({current stock}{unit} left)")
+- EXPERIENCE.md Voice and Tone ("Stock low: Tomato (3.2kg left)" style copy, no editorializing)
+
+Empty-state variant (not rendered here, per EXPERIENCE.md State Patterns row "Empty (desired state) | Alerts"):
+would show a single plain line, "No active shortages," with the nav badge hidden/zeroed, no celebratory copy.
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1360px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1360px; min-height: 780px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+  position: relative;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #d32f2f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.user-chip { font-size: 13px; opacity: 0.9; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+
+.page-header {
+  padding: 18px 24px 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; color: #212121; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+
+.panel {
+  margin: 14px 24px 20px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
+.alert-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #f2e0df;
+  background: #fdedec;
+  gap: 16px;
+}
+.alert-row:last-child { border-bottom: none; }
+.alert-row:first-child { border-radius: 4px 4px 0 0; }
+.alert-row:last-child { border-radius: 0 0 4px 4px; }
+
+.alert-main { display: flex; align-items: center; gap: 10px; }
+.alert-icon { color: #d32f2f; font-size: 15px; }
+.alert-text { font-size: 13px; color: #7f1d16; }
+.alert-text strong { color: #b3271c; font-weight: 600; }
+
+.alert-meta { font-size: 11px; color: #a34840; }
+
+.chip-open {
+  font-size: 11px;
+  color: #0B6E8F;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.section-label {
+  padding: 14px 24px 0;
+  font-size: 12px;
+  color: #9e9e9e;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/warehouse/alerts</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a href="#">Ingredients</a>
+        <a class="active" href="#">Alerts<span class="nav-badge">3</span></a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">Noa · Warehouse Manager</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <div>
+        <h1>Alerts</h1>
+        <div class="subtitle">3 active shortages</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="alert-row">
+        <div class="alert-main">
+          <span class="alert-icon">&#9888;</span>
+          <span class="alert-text">Stock low: <strong>Tomato</strong> (3.2kg left)</span>
+        </div>
+        <div class="alert-meta" style="display:flex; align-items:center; gap:14px;">
+          <span>Threshold 5kg · triggered by consumption</span>
+          <span class="chip-open">Open ingredient</span>
+        </div>
+      </div>
+      <div class="alert-row">
+        <div class="alert-main">
+          <span class="alert-icon">&#9888;</span>
+          <span class="alert-text">Stock low: <strong>Halloumi Cheese</strong> (0.8kg left)</span>
+        </div>
+        <div class="alert-meta" style="display:flex; align-items:center; gap:14px;">
+          <span>Threshold 2kg · triggered by consumption</span>
+          <span class="chip-open">Open ingredient</span>
+        </div>
+      </div>
+      <div class="alert-row">
+        <div class="alert-main">
+          <span class="alert-icon">&#9888;</span>
+          <span class="alert-text">Stock low: <strong>Lemon</strong> (1.1kg left)</span>
+        </div>
+        <div class="alert-meta" style="display:flex; align-items:center; gap:14px;">
+          <span>Threshold 3kg · triggered by waste</span>
+          <span class="chip-open">Open ingredient</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

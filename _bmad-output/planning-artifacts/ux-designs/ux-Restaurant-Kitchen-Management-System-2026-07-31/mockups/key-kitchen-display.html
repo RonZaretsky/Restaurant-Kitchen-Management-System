@@ -1,0 +1,374 @@
+<title>Kitchen Display — Cook (Amir)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Brand & Style (Kitchen Display initializes dark mode by default)
+- DESIGN.md Colors (status-badge: pending/in_preparation/ready traffic-light convention, colorblind-safe icon+label pairing)
+- DESIGN.md Components (kitchen-display-card at elevation 1 on dark background, order-item-row, accent-dark for the pick-up primary action)
+- EXPERIENCE.md Component Patterns (Kitchen Display card row: one card per table, one-click pick-up/mark-ready, no drag/multi-select)
+- EXPERIENCE.md Key Flows, Flow 2 UJ-2 (Amir works the pass: pending -> in_preparation with Cook attribution -> ready)
+- EXPERIENCE.md Voice and Tone (plain status labels, no exclamation points)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #e0e0e0;
+}
+.browser-frame {
+  max-width: 1440px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #121212;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1440px; min-height: 860px; background: #121212; }
+
+.appbar {
+  height: 56px;
+  background: #1d1d1d;
+  border-bottom: 1px solid #2c2c2c;
+  color: #e0e0e0;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; color: #fff; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #b0b0b0;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+}
+.appbar nav a.active { background: rgba(79,195,217,0.16); color: #4FC3D9; font-weight: 500; }
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.user-chip { font-size: 13px; color: #9e9e9e; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #e0e0e0; font-size: 15px;
+  border: 1px solid #3a3a3a;
+}
+
+.page-header {
+  padding: 16px 24px 4px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; color: #fff; }
+.page-header .subtitle { font-size: 12px; color: #8a8a8a; margin-top: 2px; }
+
+.legend {
+  display: flex;
+  gap: 18px;
+  padding: 0 24px 14px;
+  font-size: 12px;
+  color: #9e9e9e;
+}
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 10px; height: 10px; border-radius: 3px; }
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 0 24px 28px;
+}
+
+.kd-card {
+  background: #1e1e1e;
+  border: 1px solid #2c2c2c;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.kd-card-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid #2c2c2c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.kd-card-head .table-name { font-size: 15px; font-weight: 500; color: #fff; }
+.kd-card-head .elapsed { font-size: 11px; color: #8a8a8a; }
+
+.oi-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  min-height: 36px;
+  border-bottom: 1px solid #262626;
+  gap: 10px;
+}
+.oi-row:last-child { border-bottom: none; }
+.oi-main { display: flex; flex-direction: column; gap: 2px; }
+.oi-dish { font-size: 13px; color: #f0f0f0; font-weight: 500; }
+.oi-meta { font-size: 11px; color: #8a8a8a; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px 3px 7px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.badge .ic { font-size: 12px; line-height: 1; }
+
+.badge-pending { background: rgba(117,117,117,0.2); color: #bdbdbd; border: 1px solid #616161; }
+.badge-inprep { background: rgba(237,108,2,0.18); color: #ffb74d; border: 1px solid #ed6c02; }
+.badge-ready { background: rgba(46,125,50,0.2); color: #66bb6a; border: 1px solid #2e7d32; }
+
+.action-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: #4FC3D9;
+  color: #08171B;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.action-btn.outline {
+  background: transparent;
+  color: #4FC3D9;
+  border: 1px solid #4FC3D9;
+}
+.oi-actions { display: flex; align-items: center; gap: 8px; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/cook/kitchen-display</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a class="active" href="#">Kitchen Display</a>
+        <a href="#">Dishes</a>
+        <a href="#">Smart Chef</a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">Amir · Cook</div>
+        <div class="theme-toggle">&#9790;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <div>
+        <h1>Kitchen Display</h1>
+        <div class="subtitle">6 tables in queue</div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div class="item"><span class="swatch" style="background:#bdbdbd"></span>Pending</div>
+      <div class="item"><span class="swatch" style="background:#ffb74d"></span>In preparation</div>
+      <div class="item"><span class="swatch" style="background:#66bb6a"></span>Ready</div>
+    </div>
+
+    <div class="board">
+      <div class="kd-card">
+        <div class="kd-card-head">
+          <div class="table-name">Table 12</div>
+          <div class="elapsed">4 min</div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Shakshuka x1</div>
+            <div class="oi-meta">no onions</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-ready"><span class="ic">&#10003;</span>Ready</span>
+          </div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Grilled Halloumi Salad x1</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-inprep"><span class="ic">&#128293;</span>In preparation</span>
+            <div class="action-btn">Mark ready</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kd-card">
+        <div class="kd-card-head">
+          <div class="table-name">Table 4</div>
+          <div class="elapsed">1 min</div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Beef Kebab Plate x2</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-pending"><span class="ic">&#9711;</span>Pending</span>
+            <div class="action-btn">Pick up</div>
+          </div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Hummus with Pita x1</div>
+            <div class="oi-meta">extra tahini</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-pending"><span class="ic">&#9711;</span>Pending</span>
+            <div class="action-btn">Pick up</div>
+          </div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Lemonade x2</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-pending"><span class="ic">&#9711;</span>Pending</span>
+            <div class="action-btn">Pick up</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kd-card">
+        <div class="kd-card-head">
+          <div class="table-name">Table 5</div>
+          <div class="elapsed">6 min</div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Grilled Salmon x1</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-inprep"><span class="ic">&#128293;</span>In preparation</span>
+            <div class="action-btn">Mark ready</div>
+          </div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Roasted Vegetable Couscous x1</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-inprep"><span class="ic">&#128293;</span>In preparation</span>
+            <div class="action-btn">Mark ready</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kd-card">
+        <div class="kd-card-head">
+          <div class="table-name">Table 13</div>
+          <div class="elapsed">2 min</div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Margherita Pizza x2</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-pending"><span class="ic">&#9711;</span>Pending</span>
+            <div class="action-btn">Pick up</div>
+          </div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Caesar Salad x2</div>
+            <div class="oi-meta">dressing on the side</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-inprep"><span class="ic">&#128293;</span>In preparation</span>
+            <div class="action-btn">Mark ready</div>
+          </div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">French Fries x4</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-pending"><span class="ic">&#9711;</span>Pending</span>
+            <div class="action-btn">Pick up</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kd-card">
+        <div class="kd-card-head">
+          <div class="table-name">Table 8</div>
+          <div class="elapsed">9 min</div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Mushroom Risotto x1</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-ready"><span class="ic">&#10003;</span>Ready</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="kd-card">
+        <div class="kd-card-head">
+          <div class="table-name">Table 10</div>
+          <div class="elapsed">7 min</div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Lamb Tagine x1</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-ready"><span class="ic">&#10003;</span>Ready</span>
+          </div>
+        </div>
+        <div class="oi-row">
+          <div class="oi-main">
+            <div class="oi-dish">Grilled Halloumi Salad x1</div>
+            <div class="oi-meta">&nbsp;</div>
+          </div>
+          <div class="oi-actions">
+            <span class="badge badge-ready"><span class="ic">&#10003;</span>Ready</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

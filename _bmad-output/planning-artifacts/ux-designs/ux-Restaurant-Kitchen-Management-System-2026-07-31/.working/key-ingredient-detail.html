@@ -1,0 +1,326 @@
+<title>Ingredient detail — Tomato — Warehouse Manager (Noa)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Brand & Style (light mode default), Colors (ingredient-row.in-shortage red #d32f2f reused here for the shortage banner; accent #0B6E8F on the Log movement primary action)
+- DESIGN.md Components (button-primary), Typography (dense-row for the movement history list)
+- EXPERIENCE.md Information Architecture ("Warehouse Manager: Ingredient detail" — reached by tapping an ingredient — stock, threshold, movement history, log purchase/waste/adjustment)
+- EXPERIENCE.md Key Flows, Flow 3 UJ-3 steps 4-6 (Noa opens Ingredient detail from an Alert, sees stock/threshold/history, logs a purchase movement, shortage clears)
+- EXPERIENCE.md State Patterns (Empty movement history noted, not primary render here)
+- PRD Stock Movement types: purchase, consumption, waste, adjustment (append-only, auditable log)
+- EXPERIENCE.md Voice and Tone (plain, factual movement descriptions)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1360px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1360px; min-height: 880px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.nav-badge {
+  background: #d32f2f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+.breadcrumb {
+  padding: 14px 24px 0;
+  font-size: 11.5px;
+  color: #9e9e9e;
+}
+.breadcrumb .cur { color: #616161; }
+
+.page-header { padding: 6px 24px 4px; }
+.page-header h1 { font-size: 20px; font-weight: 500; }
+
+.shortage-banner {
+  margin: 10px 24px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fdecea;
+  border: 1px solid #f3b3ac;
+  color: #b71c1c;
+  border-radius: 4px;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 20px;
+  padding: 18px 24px 28px;
+  align-items: start;
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.stat-card .label { font-size: 11px; color: #757575; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
+.stat-card .value { font-size: 22px; font-weight: 500; color: #212121; }
+.stat-card .value.danger { color: #d32f2f; }
+.stat-card .unit { font-size: 13px; color: #9e9e9e; font-weight: 400; }
+.stat-card .value small { font-size: 12px; color: #9e9e9e; font-weight: 400; display: block; margin-top: 2px; }
+
+.log-form {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 16px 18px;
+}
+.log-form .title { font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 11.5px; color: #616161; margin-bottom: 5px; }
+.field select, .field input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid #c7c7c7;
+  border-radius: 4px;
+  padding: 0 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #212121;
+  background: #fff;
+}
+.field input[type="text"].note { height: 60px; padding: 8px 10px; }
+.btn-primary {
+  width: 100%;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 9px 0;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.history-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; }
+.history-card .title { font-size: 13px; font-weight: 500; padding: 14px 18px; border-bottom: 1px solid #eeeeee; }
+table { width: 100%; border-collapse: collapse; }
+thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: #757575;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 7px 18px;
+  background: #fafafa;
+  border-bottom: 1px solid #eeeeee;
+}
+tbody tr { height: 36px; border-bottom: 1px solid #f2f2f2; }
+tbody td { padding: 4px 18px; font-size: 12.5px; vertical-align: middle; }
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 2px 9px;
+}
+.type-purchase { background: #e8f5e9; color: #2e7d32; }
+.type-consumption { background: #e1f5fe; color: #0288d1; }
+.type-waste { background: #fdecea; color: #d32f2f; }
+.type-adjustment { background: #f3e5f5; color: #7b1fa2; }
+.qty-pos { color: #2e7d32; font-weight: 500; }
+.qty-neg { color: #d32f2f; font-weight: 500; }
+.actor { color: #616161; }
+.ts { color: #9e9e9e; white-space: nowrap; }
+.note-col { color: #616161; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/warehouse/ingredients/tomato</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a href="#">Ingredients</a>
+        <a href="#">Alerts <span class="nav-badge">4</span></a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">Noa · Warehouse Manager</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="breadcrumb">Ingredients / <span class="cur">Tomato</span></div>
+    <div class="page-header"><h1>Tomato</h1></div>
+
+    <div class="shortage-banner"><span>&#9888;</span>Stock low: Tomato (3.2 kg left, threshold 5.0 kg)</div>
+
+    <div class="layout">
+      <div>
+        <div class="stat-card">
+          <div class="label">Current stock</div>
+          <div class="value danger">3.2 <span class="unit">kg</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Minimum threshold</div>
+          <div class="value">5.0 <span class="unit">kg</span></div>
+        </div>
+
+        <div class="log-form">
+          <div class="title">Log a movement</div>
+          <div class="field">
+            <label>Type</label>
+            <select>
+              <option>Purchase</option>
+              <option>Waste</option>
+              <option>Adjustment</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Quantity (kg)</label>
+            <input type="text" value="10.0" readonly />
+          </div>
+          <div class="field">
+            <label>Note (optional)</label>
+            <input class="note" type="text" value="Weekly produce delivery, Solomon Farms" readonly />
+          </div>
+          <button class="btn-primary">Log movement</button>
+        </div>
+      </div>
+
+      <div class="history-card">
+        <div class="title">Movement history</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:14%">Type</th>
+              <th style="width:12%">Quantity</th>
+              <th style="width:16%">Recorded by</th>
+              <th style="width:36%">Note</th>
+              <th style="width:22%">When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="type-chip type-consumption">Consumption</span></td>
+              <td class="qty-neg">&minus;0.4 kg</td>
+              <td class="actor">Amir (Cook)</td>
+              <td class="note-col">Order #212, Bruschetta &times;2</td>
+              <td class="ts">Today, 7:05 PM</td>
+            </tr>
+            <tr>
+              <td><span class="type-chip type-consumption">Consumption</span></td>
+              <td class="qty-neg">&minus;0.3 kg</td>
+              <td class="actor">Amir (Cook)</td>
+              <td class="note-col">Order #209, Margherita Pizza &times;1</td>
+              <td class="ts">Today, 6:48 PM</td>
+            </tr>
+            <tr>
+              <td><span class="type-chip type-waste">Waste</span></td>
+              <td class="qty-neg">&minus;0.8 kg</td>
+              <td class="actor">Noa (Warehouse Manager)</td>
+              <td class="note-col">Spoiled, past use-by date</td>
+              <td class="ts">Today, 3:12 PM</td>
+            </tr>
+            <tr>
+              <td><span class="type-chip type-consumption">Consumption</span></td>
+              <td class="qty-neg">&minus;0.6 kg</td>
+              <td class="actor">Amir (Cook)</td>
+              <td class="note-col">Order #198, Minestrone Soup &times;2</td>
+              <td class="ts">Today, 1:20 PM</td>
+            </tr>
+            <tr>
+              <td><span class="type-chip type-adjustment">Adjustment</span></td>
+              <td class="qty-neg">&minus;0.5 kg</td>
+              <td class="actor">Noa (Warehouse Manager)</td>
+              <td class="note-col">Recount correction</td>
+              <td class="ts">Yesterday, 5:40 PM</td>
+            </tr>
+            <tr>
+              <td><span class="type-chip type-purchase">Purchase</span></td>
+              <td class="qty-pos">+15.0 kg</td>
+              <td class="actor">Noa (Warehouse Manager)</td>
+              <td class="note-col">Weekly produce delivery, Solomon Farms</td>
+              <td class="ts">Yesterday, 9:15 AM</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
