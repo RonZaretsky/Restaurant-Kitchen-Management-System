@@ -55,5 +55,6 @@ yarn-error.log*
 
 # Claude
 .claude/
+CLAUDE.md
 
 *.pdf
