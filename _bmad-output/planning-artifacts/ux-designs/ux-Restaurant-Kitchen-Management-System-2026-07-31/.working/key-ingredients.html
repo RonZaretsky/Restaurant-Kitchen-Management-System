@@ -1,0 +1,288 @@
+<title>Ingredients — Warehouse Manager (Noa)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Brand & Style (light mode default, this is Noa's home surface), Colors (accent #0B6E8F on active nav; ingredient-row.in-shortage reuses the cancelled/error red #d32f2f)
+- DESIGN.md Components (ingredient-row: in-shortage rows switch to red + warning icon and sort to top; nav-badge-alerts reusing the same red)
+- EXPERIENCE.md Information Architecture ("Warehouse Manager: Ingredients" — list of all ingredients vs. threshold, Noa's home)
+- EXPERIENCE.md Component Patterns (Ingredient row: below-threshold rows visually distinct AND sorted to top, not just flagged in place; click opens Ingredient detail)
+- EXPERIENCE.md Component Patterns (Nav badge, Alerts: persistent count, no toast, per UJ-3's framing that Noa is often not looking at the screen)
+- EXPERIENCE.md Voice and Tone ("Stock low: Tomato (3.2kg left)" style, plain and factual)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1360px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1360px; min-height: 860px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.nav-badge {
+  background: #d32f2f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+.page-header {
+  padding: 18px 24px 6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+.btn-primary {
+  background: #0B6E8F;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.table-wrap { padding: 14px 24px 28px; }
+table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; }
+thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: #757575;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 8px 14px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e0e0e0;
+}
+tbody tr { height: 36px; border-bottom: 1px solid #eeeeee; cursor: pointer; }
+tbody tr:hover { background: #f5f5f5; }
+tbody tr.shortage { background: #fdecea; }
+tbody tr.shortage:hover { background: #fbdcd9; }
+tbody td { padding: 4px 14px; font-size: 12.5px; vertical-align: middle; }
+.ing-name { font-weight: 500; color: #212121; }
+.shortage .ing-name { color: #b71c1c; display: flex; align-items: center; gap: 6px; }
+.shortage-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #d32f2f;
+  background: #fbdcd9;
+  border: 1px solid #f3b3ac;
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+.stock-val { font-weight: 500; }
+.threshold-val { color: #757575; }
+.section-divider td {
+  background: #fafafa;
+  color: #9e9e9e;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  padding: 6px 14px;
+  cursor: default;
+}
+.section-divider:hover { background: #fafafa; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/warehouse/ingredients</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a class="active" href="#">Ingredients</a>
+        <a href="#">Alerts <span class="nav-badge">4</span></a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">Noa · Warehouse Manager</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <div>
+        <h1>Ingredients</h1>
+        <div class="subtitle">12 ingredients · 4 below threshold</div>
+      </div>
+      <button class="btn-primary">Add ingredient</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:30%">Name</th>
+            <th style="width:12%">Unit</th>
+            <th style="width:18%">Current stock</th>
+            <th style="width:18%">Threshold</th>
+            <th style="width:22%">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="section-divider"><td colspan="5">Below threshold</td></tr>
+          <tr class="shortage">
+            <td class="ing-name">Basil</td>
+            <td>kg</td>
+            <td class="stock-val">0.4 kg</td>
+            <td class="threshold-val">0.5 kg</td>
+            <td><span class="shortage-tag">&#9888; Stock low</span></td>
+          </tr>
+          <tr class="shortage">
+            <td class="ing-name">Mascarpone</td>
+            <td>kg</td>
+            <td class="stock-val">1.0 kg</td>
+            <td class="threshold-val">1.5 kg</td>
+            <td><span class="shortage-tag">&#9888; Stock low</span></td>
+          </tr>
+          <tr class="shortage">
+            <td class="ing-name">Mozzarella</td>
+            <td>kg</td>
+            <td class="stock-val">1.8 kg</td>
+            <td class="threshold-val">3.0 kg</td>
+            <td><span class="shortage-tag">&#9888; Stock low</span></td>
+          </tr>
+          <tr class="shortage">
+            <td class="ing-name">Tomato</td>
+            <td>kg</td>
+            <td class="stock-val">3.2 kg</td>
+            <td class="threshold-val">5.0 kg</td>
+            <td><span class="shortage-tag">&#9888; Stock low</span></td>
+          </tr>
+          <tr class="section-divider"><td colspan="5">All other ingredients</td></tr>
+          <tr>
+            <td class="ing-name">Arborio Rice</td>
+            <td>kg</td>
+            <td class="stock-val">9.0 kg</td>
+            <td class="threshold-val">4.0 kg</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td class="ing-name">Cannellini Beans</td>
+            <td>kg</td>
+            <td class="stock-val">5.0 kg</td>
+            <td class="threshold-val">2.0 kg</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td class="ing-name">Espresso (ground)</td>
+            <td>kg</td>
+            <td class="stock-val">3.0 kg</td>
+            <td class="threshold-val">1.0 kg</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td class="ing-name">Olive Oil</td>
+            <td>L</td>
+            <td class="stock-val">12.0 L</td>
+            <td class="threshold-val">4.0 L</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td class="ing-name">Pancetta</td>
+            <td>kg</td>
+            <td class="stock-val">1.1 kg</td>
+            <td class="threshold-val">1.0 kg</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td class="ing-name">Parmesan</td>
+            <td>kg</td>
+            <td class="stock-val">2.5 kg</td>
+            <td class="threshold-val">2.0 kg</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td class="ing-name">Salmon Fillet</td>
+            <td>kg</td>
+            <td class="stock-val">6.0 kg</td>
+            <td class="threshold-val">3.0 kg</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td class="ing-name">Zucchini</td>
+            <td>kg</td>
+            <td class="stock-val">14.0 kg</td>
+            <td class="threshold-val">3.0 kg</td>
+            <td>&#8212;</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

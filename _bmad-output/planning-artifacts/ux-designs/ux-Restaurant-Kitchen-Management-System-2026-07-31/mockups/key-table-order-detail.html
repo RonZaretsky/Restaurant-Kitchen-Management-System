@@ -1,0 +1,372 @@
+<title>Table 12 / Order — Waiter (Maya)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Colors (status-badge: pending/in_preparation/ready traffic-light convention on Order Item rows)
+- DESIGN.md Components (order-item-row incl. cancel-action behind confirm step, button-primary for add-dish/Close)
+- EXPERIENCE.md Component Patterns (Order Item row: edit/pick-up/cancel gating; Order total / Close action row: total from price_at_add x quantity, Close enabled only once every item is served)
+- EXPERIENCE.md State Patterns (Unavailable-dish block: "Rejected, dish unavailable" inline at add-item control)
+- EXPERIENCE.md Key Flows, Flow 1 UJ-1 (Maya adds two dishes, one with a "no onions" note) and Flow 2 UJ-2 step 7 (Close becomes enabled once every item is served; not yet the case here)
+- EXPERIENCE.md Voice and Tone (plain factual copy)
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1360px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1360px; min-height: 820px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+}
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.attention-counter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #2e7d32;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 12px;
+}
+.attention-counter .dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+.breadcrumb {
+  padding: 14px 24px 0;
+  font-size: 12px;
+  color: #757575;
+}
+.breadcrumb a { color: #0B6E8F; text-decoration: none; }
+
+.page-header {
+  padding: 6px 24px 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; color: #212121; display: flex; align-items: center; gap: 10px; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+
+.badge-occupied-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: #eceff1; color: #455a64; border: 1px solid #cfd8dc;
+}
+
+.panel {
+  margin: 0 24px 20px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+.panel-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.panel-head h2 { font-size: 14px; font-weight: 500; color: #424242; }
+
+.add-dish-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.select-stub {
+  font-size: 12px;
+  color: #757575;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-width: 200px;
+  background: #fff;
+}
+.qty-stub {
+  font-size: 12px;
+  color: #757575;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 6px 10px;
+  width: 54px;
+  background: #fff;
+}
+.note-stub {
+  font-size: 12px;
+  color: #757575;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-width: 160px;
+  background: #fff;
+}
+.btn-primary {
+  background: #0B6E8F;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary.disabled { background: #bdbdbd; color: #f5f5f5; cursor: default; }
+.reject-note {
+  font-size: 11px;
+  color: #d32f2f;
+  padding: 6px 16px 0;
+}
+
+table.oi-table { width: 100%; border-collapse: collapse; }
+table.oi-table th {
+  text-align: left;
+  font-size: 11px;
+  color: #9e9e9e;
+  font-weight: 500;
+  padding: 6px 16px;
+  border-bottom: 1px solid #eee;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+table.oi-table td {
+  font-size: 13px;
+  padding: 0 16px;
+  height: 36px;
+  border-bottom: 1px solid #f2f2f2;
+  vertical-align: middle;
+}
+table.oi-table tr:last-child td { border-bottom: none; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px 3px 7px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.badge .ic { font-size: 12px; line-height: 1; }
+.badge-pending { background: #f5f5f5; color: #757575; border: 1px solid #d6d6d6; }
+.badge-inprep { background: #fff3e0; color: #ed6c02; border: 1px solid #f5c98f; }
+.badge-ready { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+
+.dish-cell { font-weight: 500; color: #212121; }
+.note-cell { color: #757575; font-style: italic; }
+.qty-cell { color: #424242; }
+.price-cell { color: #424242; text-align: right; }
+
+.link-btn {
+  font-size: 12px;
+  color: #0B6E8F;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+.link-btn.danger { color: #d32f2f; }
+.row-actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; }
+
+.confirm-inline {
+  background: #fdedec;
+  border: 1px solid #f2c1bd;
+  border-radius: 4px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #b3271c;
+}
+.confirm-inline .confirm-actions { display: flex; gap: 8px; }
+.confirm-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.confirm-btn.yes { background: #d32f2f; color: #fff; }
+.confirm-btn.no { background: #fff; color: #616161; border: 1px solid #ccc; }
+
+.total-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-top: 1px solid #eee;
+  background: #fafafa;
+}
+.total-label { font-size: 12px; color: #757575; }
+.total-amount { font-size: 18px; font-weight: 500; color: #212121; margin-left: 8px; }
+.close-note { font-size: 11px; color: #9e9e9e; margin-top: 3px; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/waiter/tables/12</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav><a href="#">Tables</a></nav>
+      <div class="right">
+        <div class="attention-counter"><span class="dot"></span>2 tables need attention</div>
+        <div class="user-chip">Maya · Waiter</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="breadcrumb"><a href="#">Tables</a> / Table 12</div>
+
+    <div class="page-header">
+      <div>
+        <h1>Table 12 <span class="badge-occupied-inline">Occupied</span></h1>
+        <div class="subtitle">Order opened 19:41 · Seats 4</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Add dish</h2></div>
+      <div style="padding:12px 16px;">
+        <div class="add-dish-row">
+          <div class="select-stub">Select dish...</div>
+          <div class="qty-stub">Qty: 1</div>
+          <div class="note-stub">Note (optional)</div>
+          <div class="btn-primary">Add to order</div>
+        </div>
+        <div class="reject-note">Rejected, dish unavailable</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Order items</h2></div>
+      <table class="oi-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Dish</th>
+            <th>Note</th>
+            <th>Qty</th>
+            <th style="text-align:right;">Price</th>
+            <th style="text-align:right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge badge-ready"><span class="ic">&#10003;</span>Ready</span></td>
+            <td class="dish-cell">Shakshuka</td>
+            <td class="note-cell">no onions</td>
+            <td class="qty-cell">1</td>
+            <td class="price-cell">42.00 ₪</td>
+            <td>
+              <div class="row-actions">
+                <span style="color:#bdbdbd; font-size:11px;">Mark served pending</span>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge badge-inprep"><span class="ic">&#128293;</span>In preparation</span></td>
+            <td class="dish-cell">Grilled Halloumi Salad</td>
+            <td class="note-cell">&mdash;</td>
+            <td class="qty-cell">1</td>
+            <td class="price-cell">48.00 ₪</td>
+            <td>
+              <div class="row-actions">
+                <button class="link-btn danger">Cancel</button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge badge-pending"><span class="ic">&#9711;</span>Pending</span></td>
+            <td class="dish-cell">Lemonade</td>
+            <td class="note-cell">&mdash;</td>
+            <td class="qty-cell">2</td>
+            <td class="price-cell">28.00 ₪</td>
+            <td>
+              <div class="confirm-inline">
+                Cancel this item?
+                <div class="confirm-actions">
+                  <div class="confirm-btn yes">Yes, cancel</div>
+                  <div class="confirm-btn no">Keep it</div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="total-bar">
+        <div>
+          <span class="total-label">Order total</span><span class="total-amount">118.00 ₪</span>
+          <div class="close-note">Close enabled once every item is served</div>
+        </div>
+        <div class="btn-primary disabled">Close order</div>
+      </div>
+    </div>
+  </div>
+</div>

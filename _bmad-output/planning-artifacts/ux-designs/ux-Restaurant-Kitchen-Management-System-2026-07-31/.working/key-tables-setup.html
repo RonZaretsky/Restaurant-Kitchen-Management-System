@@ -1,0 +1,211 @@
+<title>Tables setup — Admin (David)</title>
+<style>
+/*
+Illustrates:
+- DESIGN.md Components (button-primary on Add table; dense row height 36px / size="small" table density)
+- EXPERIENCE.md Information Architecture (Admin: Tables setup — add/configure physical tables)
+- EXPERIENCE.md State Patterns ("Rejected, username/table number/ingredient name already exists" inline on the create action, FR-24; "No tables configured yet." empty state, noted not shown since this render is populated)
+- EXPERIENCE.md Voice and Tone (plain, factual microcopy, no exclamation points)
+- Kept deliberately short per this surface's simplicity (a plain list plus an add control), no over-building
+*/
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  font-family: Roboto, -apple-system, "Segoe UI", sans-serif;
+  background: #e8eaed;
+  color: #212121;
+}
+.browser-frame {
+  max-width: 1280px;
+  margin: 24px auto;
+  border: 1px solid #c7c7c7;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+  background: #fff;
+}
+.browser-chrome {
+  background: #f1f3f4;
+  border-bottom: 1px solid #d4d4d4;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.browser-dots { display: flex; gap: 6px; }
+.browser-dots span { width: 10px; height: 10px; border-radius: 50%; background: #ccc; display: inline-block; }
+.browser-dots span:nth-child(1) { background: #ec6a5e; }
+.browser-dots span:nth-child(2) { background: #f4bf4f; }
+.browser-dots span:nth-child(3) { background: #61c454; }
+.address-bar {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.app-content { width: 1280px; min-height: 760px; background: #fafafa; }
+
+.appbar {
+  height: 56px;
+  background: #0B6E8F;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 24px;
+}
+.appbar .title { font-size: 18px; font-weight: 500; }
+.appbar nav { display: flex; gap: 4px; flex: 1; }
+.appbar nav a {
+  color: #FFFFFF;
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  opacity: 0.85;
+}
+.appbar nav a.active { background: rgba(255,255,255,0.18); opacity: 1; font-weight: 500; }
+.appbar .right { display: flex; align-items: center; gap: 14px; }
+.theme-toggle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 15px;
+  border: 1px solid rgba(255,255,255,0.4);
+}
+.user-chip { font-size: 13px; opacity: 0.9; }
+
+.page-header {
+  padding: 18px 24px 6px;
+}
+.page-header h1 { font-size: 20px; font-weight: 500; color: #212121; }
+.page-header .subtitle { font-size: 12px; color: #757575; margin-top: 2px; }
+
+.panel {
+  margin: 14px 24px 20px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.panel-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid #eee;
+  font-size: 14px;
+  font-weight: 500;
+  color: #424242;
+}
+.add-row {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stub {
+  font-size: 12px;
+  color: #757575;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 6px 10px;
+  background: #fff;
+}
+.stub.num { width: 100px; }
+.stub.cap { width: 130px; }
+.btn-primary {
+  background: #0B6E8F;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reject-note { font-size: 11px; color: #d32f2f; padding: 0 16px 10px; }
+
+table.table-list { width: 100%; border-collapse: collapse; }
+table.table-list th {
+  text-align: left;
+  font-size: 11px;
+  color: #9e9e9e;
+  font-weight: 500;
+  padding: 6px 16px;
+  border-bottom: 1px solid #eee;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+table.table-list td {
+  font-size: 13px;
+  padding: 0 16px;
+  height: 36px;
+  border-bottom: 1px solid #f2f2f2;
+  vertical-align: middle;
+  color: #212121;
+}
+tr:last-child td { border-bottom: none; }
+.row-actions { text-align: right; }
+.link-btn { font-size: 12px; color: #0B6E8F; cursor: pointer; background: none; border: none; padding: 0; }
+</style>
+
+<div class="browser-frame">
+  <div class="browser-chrome">
+    <div class="browser-dots"><span></span><span></span><span></span></div>
+    <div class="address-bar">rkms.local/admin/tables</div>
+  </div>
+  <div class="app-content">
+    <div class="appbar">
+      <div class="title">RKMS</div>
+      <nav>
+        <a href="#">Menu Management</a>
+        <a href="#">Recipe Suggestions</a>
+        <a href="#">Users</a>
+        <a class="active" href="#">Tables setup</a>
+      </nav>
+      <div class="right">
+        <div class="user-chip">David · Admin</div>
+        <div class="theme-toggle">&#9728;</div>
+      </div>
+    </div>
+
+    <div class="page-header">
+      <h1>Tables setup</h1>
+      <div class="subtitle">14 tables configured</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">Add table</div>
+      <div class="add-row">
+        <div class="stub num">Table number</div>
+        <div class="stub cap">Capacity (seats)</div>
+        <div class="btn-primary">Add table</div>
+      </div>
+      <div class="reject-note">Rejected, table number already exists</div>
+    </div>
+
+    <div class="panel">
+      <table class="table-list">
+        <thead>
+          <tr><th>Table number</th><th>Capacity</th><th class="row-actions">Actions</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Table 1</td><td>2 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 2</td><td>4 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 3</td><td>2 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 4</td><td>6 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 5</td><td>2 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 6</td><td>4 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 7</td><td>2 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 8</td><td>6 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 9</td><td>4 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 10</td><td>2 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 11</td><td>4 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 12</td><td>4 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 13</td><td>8 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+          <tr><td>Table 14</td><td>2 seats</td><td class="row-actions"><button class="link-btn">Edit</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
