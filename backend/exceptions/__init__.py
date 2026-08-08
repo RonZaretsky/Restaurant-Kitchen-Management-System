@@ -42,3 +42,13 @@ class NotAuthenticatedError(AuthError):
     """
 
     detail = "Not authenticated"
+
+
+class ForbiddenError(Exception):
+    """Raised when an authenticated User's Role is not permitted for the attempted action.
+
+    Distinct from AuthError: the caller's identity is already verified,
+    only their Role lacks permission. Maps to 403, never 401.
+    """
+
+    detail = "You do not have permission to perform this action"
