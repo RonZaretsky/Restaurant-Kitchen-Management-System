@@ -5,7 +5,7 @@ sources:
   - '_bmad-output/planning-artifacts/prds/prd-Restaurant-Kitchen-Management-System-2026-07-24/prd.md'
   - '_bmad-output/planning-artifacts/prds/prd-Restaurant-Kitchen-Management-System-2026-07-24/addendum.md'
   - '_bmad-output/planning-artifacts/architecture/architecture-Restaurant-Kitchen-Management-System-2026-07-30/ARCHITECTURE-SPINE.md'
-updated: '2026-07-31'
+updated: '2026-08-02'
 ---
 
 # Restaurant Kitchen Management System, Experience Spine
@@ -41,8 +41,8 @@ Content density is dense throughout: tables and lists over cards-with-whitespace
 | **Warehouse Manager:** Alerts | Persistent nav badge | Standing list of active shortages | [key-alerts.html](mockups/key-alerts.html) |
 | **Admin:** Menu Management | Login / nav | Dishes + categories + recipes, availability, price | [key-menu-management.html](mockups/key-menu-management.html) |
 | **Admin:** Recipe Suggestions | Nav | Review Cook-requested AI suggestions, confirm into a live Dish | [key-recipe-suggestions.html](mockups/key-recipe-suggestions.html) |
-| **Admin:** Users | Nav | Create/edit role/deactivate/reactivate staff | [key-users.html](mockups/key-users.html) |
-| **Admin:** Tables setup | Nav | Add/configure physical tables | [key-tables-setup.html](mockups/key-tables-setup.html) |
+| **Admin:** Users | Nav | Create (incl. initial password) / edit role / reset password / deactivate / reactivate staff | [key-users.html](mockups/key-users.html) |
+| **Admin:** Tables setup | Nav | Add physical tables; edit number/capacity while a table is available (no delete in v1) | [key-tables-setup.html](mockups/key-tables-setup.html) |
 
 Every Waiter sees every Table and every Order (no per-waiter filtering, per FR-6/AD-9); every Cook sees every Chat Session and Recipe Suggestion, with the current Cook's own items sorted first as a display default, not an access boundary (AD-10). There is no cross-role navigation: each role's nav only lists that role's own surfaces, plus the shared Login entry point.
 
@@ -109,7 +109,9 @@ Every one of the 13 IA surfaces, minimum cold-load / empty / error coverage.
 | Empty | Users | "No staff accounts yet." (Should not occur in practice, at least one Admin always exists per AD-15, listed for completeness.) |
 | Rejected (last-admin lockout) | Users | "Rejected, at least one admin must stay active." Inline on the deactivate/demote action (AD-15). |
 | Rejected (duplicate) | Users, Tables setup, Ingredients | "Rejected, username/table number/ingredient name already exists." Inline on the create action (FR-3/FR-24/FR-16). |
+| Rejected (missing password) | Users | "Rejected, password required." Inline on the create action. The Admin sets the new account's initial password directly, there is no self-service signup, no emailed invite, and no auto-generated password (FR-3). |
 | Empty | Tables setup | "No tables configured yet." |
+| Rejected (table in use) | Tables setup | "Rejected, table in use." The Edit control is disabled while a Table is `occupied` or `reserved`, re-enabling the moment it returns to `available` (FR-24). Tables are never deleted, so no delete affordance exists on this surface at all. |
 | Error (generic) | All 13 surfaces | The actual reason, inline, sourced from the architecture spine's error envelope (`detail` as a string or FastAPI's structured validation list). Never a generic "something went wrong." |
 
 **Two attention-cue mechanisms** (both real, product-important, and easy to under-build if treated as generic notifications):
@@ -201,7 +203,7 @@ Mockups: [key-users.html](mockups/key-users.html), [key-menu-management.html](mo
 
 David is the admin, doing back-of-house administration between services.
 
-1. David opens Users. He creates a new account: username, full name, role `cook`.
+1. David opens Users. He creates a new account: username, full name, role `cook`, and an initial password he sets himself and hands to the new hire (there is no self-service signup and no emailed invite, FR-3).
 2. Separately, he opens Menu Management. He marks one dish unavailable (out of season) and edits another dish's price.
 3. **Climax:** the new cook logs in and lands on exactly the Kitchen Display, nothing else, per their role. At the same moment, the now-unavailable dish stops appearing as addable in every Waiter's Table/Order detail (the same "Rejected, dish unavailable" path from Flow 1), while any of its Order Items already queued on open Orders are unaffected and keep moving through the Kitchen Display normally.
 4. Staff roster and menu both now reflect reality, without David touching data directly.

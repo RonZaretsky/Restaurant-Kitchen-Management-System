@@ -1,0 +1,109 @@
+# generated: 2026-08-08
+# last_updated: 2026-08-08
+# project: Restaurant-Kitchen-Management-System
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: {project-root}/_bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog -> in-progress: Automatically when first story is created (via create-story)
+#   - in-progress -> done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; sprint-status surfaces open ones
+#
+# SEQUENCING CONSTRAINTS (from the implementation-readiness gate, 2026-08-02):
+# ===========================================================================
+# Two stories are enabling work with no direct end-user value - the only two in the
+# plan, each marked as such in epics.md. Both gate work that follows them:
+#   - 1-0 (test harness + Alembic baseline) MUST complete before 1-1. Every story's
+#     acceptance criteria are written as assertions with nothing to run until 1-0 lands,
+#     and until the Alembic baseline exists `Base.metadata.create_all` silently ignores
+#     any schema change.
+#   - 1-5 (real-time push transport) MUST complete before 3-3, 4-2, 5-1 and 5-2, which
+#     all emit over its channel and depend on the {domain}.{event} naming it fixes.
+
+generated: 2026-08-08
+last_updated: 2026-08-08
+project: Restaurant-Kitchen-Management-System
+project_key: NOKEY
+tracking_system: file-system
+story_location: "{project-root}/_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic 1: Staff Accounts & Access Control
+  epic-1: backlog
+  1-0-project-foundation-test-harness-and-migration-baseline: backlog
+  1-1-user-login: backlog
+  1-2-role-based-authorization-enforcement: backlog
+  1-3-admin-manages-user-accounts: backlog
+  1-4-application-shell-routing-and-per-role-navigation: backlog
+  1-5-real-time-push-transport: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2: Menu, Recipes, Ingredients & Table Setup
+  epic-2: backlog
+  2-1-create-and-manage-ingredients: backlog
+  2-2-manage-menu-categories-and-dishes: backlog
+  2-3-define-a-dishs-recipe: backlog
+  2-4-manage-restaurant-tables: backlog
+  2-5-cook-browses-the-dish-catalog: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3: Table Service & Order Taking
+  epic-3: backlog
+  3-1-open-a-table-and-start-an-order: backlog
+  3-2-add-items-to-an-order: backlog
+  3-3-view-live-order-and-table-status: backlog
+  3-4-edit-or-cancel-an-order-item: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: Warehouse Inventory Operations & Low-Stock Alerts
+  epic-4: backlog
+  4-1-record-manual-stock-movements: backlog
+  4-2-low-stock-alert: backlog
+  4-3-view-ingredient-stock-levels: backlog
+  epic-4-retrospective: optional
+
+  # Epic 5: Kitchen Fulfillment, Automatic Stock Deduction & Close-Out
+  epic-5: backlog
+  5-1-view-incoming-orders-in-real-time-kitchen-display: backlog
+  5-2-pick-up-and-progress-an-order-item-with-atomic-stock-deduction: backlog
+  5-3-order-status-derives-from-its-items: backlog
+  5-4-mark-an-order-served-and-close-the-table: backlog
+  epic-5-retrospective: optional
+
+  # Epic 6: Smart Chef, Recipe Suggestions & Assistant Chat
+  epic-6: backlog
+  6-1-generate-a-recipe-suggestion-from-current-stock: backlog
+  6-2-confirm-a-recipe-suggestion-into-a-live-dish: backlog
+  6-3-consult-version-and-improve-recipes-via-smart-assistant-chat: backlog
+  epic-6-retrospective: optional

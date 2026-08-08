@@ -2,7 +2,7 @@
 title: Restaurant Kitchen Management System
 status: final
 created: 2026-07-24
-updated: 2026-07-31
+updated: 2026-08-02
 ---
 
 # PRD: Restaurant Kitchen Management System
@@ -12,7 +12,7 @@ updated: 2026-07-31
 
 This PRD is for Ofek and Ron (builders and analysts of this project) and for the BMad workflows that consume it next (`bmad-ux`, `bmad-architecture`, `bmad-create-epics-and-stories`). It is also, deliberately, the primary *source material* for the course-required **OOA** (Analysis) document — but it is not a drop-in substitute for it: §2–§5 here are written capability-first and cover the OOA's required content (problem description in §1, system components in §4's feature groupings, user types and their actions — see the per-Role action table in `addendum.md` — and the flows behind the required Use Case/Activity diagrams in §2.3 and §4). Writing the actual OOA still requires a pass that strips the implementation-adjacent details this PRD intentionally keeps for engineering's benefit (real field names like `password_hash`/`cook_id`, model names like `AIRecipeSuggestion`, and named technology like OpenAI/React) — the OOA must be zero-implementation-detail and readable by a client who "understands nothing about programming," a stricter bar than this PRD holds itself to. The course-required **OOD** (Design) document — Class/Sequence diagrams, layering, design patterns — is downstream of this PRD, produced by `bmad-architecture`; this PRD deliberately stays in capability language and defers technology/pattern choices to `addendum.md` or to that later stage.
 
-Structure: vocabulary is Glossary-anchored (§3) — every FR, UJ, and feature description uses those terms verbatim. Functional Requirements are grouped by feature and numbered globally (FR-1…FR-24) so they stay stable references even if features are reorganized later. Inline `[ASSUMPTION: …]` tags mark places drafted without direct confirmation; all are indexed in §9. Grounding inputs: the existing brownfield codebase scan (`docs/index.md`), the official course final-project guidelines, and the instructor-approved project proposal — the crosswalk between this PRD and those source documents lives in `addendum.md`, not here.
+Structure: vocabulary is Glossary-anchored (§3) — every FR, UJ, and feature description uses those terms verbatim. Functional Requirements are grouped by feature and numbered globally (FR-1…FR-25) so they stay stable references even if features are reorganized later. Inline `[ASSUMPTION: …]` tags mark places drafted without direct confirmation; all are indexed in §9. Grounding inputs: the existing brownfield codebase scan (`docs/index.md`), the official course final-project guidelines, and the instructor-approved project proposal — the crosswalk between this PRD and those source documents lives in `addendum.md`, not here.
 
 ## 1. Vision
 
@@ -131,11 +131,13 @@ The system restricts every state-changing action to the Roles permitted to perfo
 
 #### FR-3: Admin manages user accounts
 
-An Admin can create a User account (username, full name, Role), edit an existing User's Role or full name, deactivate an active User, and reactivate a previously deactivated User.
+An Admin can create a User account (username, full name, Role, **initial password**), edit an existing User's Role or full name, **reset an existing User's password**, deactivate an active User, and reactivate a previously deactivated User.
 
 **Consequences (testable):**
 - A deactivated User cannot log in (FR-1 rejects their credentials) but their historical records (e.g. Order Items they prepared) remain intact and attributed to them.
-- A newly created User can log in immediately with the Role assigned at creation.
+- The Admin sets the account's initial password at creation; it is stored only as a hash (FR-1), never in plaintext, and is never displayed back or retrievable afterward. There is no self-service signup and no auto-generated password.
+- A newly created User can log in immediately with the Role and initial password assigned at creation.
+- An Admin can set a new password on an existing User (the forgotten-password recovery path — there is no self-service reset and no email-based recovery, consistent with the closed-staff, no-diner-PII design). The replacement is hashed on the same path as an initial password; the old hash is overwritten and the previous password stops working immediately.
 - Creating a User with a username that already exists (active or deactivated) is rejected as a duplicate.
 - Editing a User's Role or name does not alter the attribution of that User's historical records — past Order Items, Stock Movements, etc. stay attributed to the account as it existed at the time.
 - Deactivating or demoting the last remaining active Admin account is rejected — the system always keeps at least one Admin able to log in and manage users.
@@ -348,10 +350,23 @@ An Admin can define/edit the set of Recipe Ingredient lines (Ingredient + quanti
 
 #### FR-24: Manage restaurant tables
 
-An Admin can add and configure Restaurant Tables (table number, capacity).
+An Admin can add Restaurant Tables (table number, capacity), and edit an existing Table's number or capacity while that Table is `available`.
 
 **Consequences (testable):**
-- Table numbers are unique; a duplicate table number is rejected.
+- Table numbers are unique; a duplicate table number is rejected, on the edit path as well as on create.
+- Editing a Table whose status is `occupied` or `reserved` is rejected — configuration changes only apply to a free table, so a renumber never lands mid-service on a table with diners at it.
+- The `available` check and the edit are applied together, so a Waiter seating the Table between an Admin loading the form and saving it causes the save to be rejected rather than silently applied.
+- Tables are never deleted or archived in v1 (see §5 Non-Goals) — `table_number` therefore stays globally unique, with no live-only or partial uniqueness rule needed. This resolves former Open Question 2.
+
+#### FR-25: Cook browses the dish catalog
+
+A Cook can browse the Dish catalog read-only — each Dish's details plus the Recipe Ingredient lines that compose it — for preparation context, without any authoring ability.
+
+**Consequences (testable):**
+- The surface exposes no create, edit, availability-toggle, or delete control; menu authoring remains Admin-only via FR-22/FR-23, consistent with FR-2's Role-level permission model.
+- A Cook always sees the currently-defined Recipe for a Dish, never a stale copy — the same live-read guarantee FR-23 gives the deduction path.
+
+**Notes:** Surfaced by the UX spine's Information Architecture (the *Cook: Dishes (view-only)* surface) rather than by the original proposal — an analyst-inferred requirement of the same kind as FR-24: a Cook preparing an unfamiliar dish has to be able to read its recipe somewhere, and no other surface exposes it.
 
 ## 5. Non-Goals (Explicit)
 
@@ -364,6 +379,7 @@ An Admin can add and configure Restaurant Tables (table number, capacity).
 - **No offline mode** — the system assumes continuous connectivity between staff terminals and the backend; no local-first or offline-sync behavior.
 - **No analytics/BI/reporting dashboards** beyond the stock-level view in FR-17 (e.g. no sales trend reports, no staff performance dashboards).
 - **No staff scheduling/shift management.**
+- **No table deletion or archiving** — Restaurant Tables are added and edited, never removed (FR-24). A table pulled from the floor is simply left in place; deleting one would orphan the closed Orders that reference it, the same reason FR-22 implements dish removal as a soft-delete. Resolves former Open Question 2.
 - **No table reservation system** — Table status (`available`/`occupied`/`reserved`) exists in the schema, but a reservation *workflow* (booking ahead, holding a table) is not a v1 feature; `reserved` is a settable state only. `[NOTE FOR PM: this is a real gap between the modeled enum and the built feature set — worth a one-line mention in the OOA problem description so the instructor doesn't read it as an oversight.]`
 - **No automated nutritional/allergen checking of AI-generated recipes** (see FR-19 Out of Scope).
 - **No optimistic locking or conflict UI for simultaneous edits to the same Table/Order** — see NFR-6; a known, explicitly-chosen v1 simplification, not a silent gap.
@@ -372,7 +388,7 @@ An Admin can add and configure Restaurant Tables (table number, capacity).
 
 ### 6.1 In Scope
 
-- FR-1 through FR-24, in full — this is deliberately the entire v1, matching the proposal's "vertical slice" framing rather than a further-trimmed subset. Auth/RBAC (4.1), Table & Order (4.2), Kitchen Display (4.3), Inventory Automation (4.4), Smart Chef (4.5), and Menu & Administration (4.6) are all required for the core order-to-close flow and the AI differentiator to both work end-to-end for the defense demo.
+- FR-1 through FR-25, in full — this is deliberately the entire v1, matching the proposal's "vertical slice" framing rather than a further-trimmed subset. Auth/RBAC (4.1), Table & Order (4.2), Kitchen Display (4.3), Inventory Automation (4.4), Smart Chef (4.5), and Menu & Administration (4.6) are all required for the core order-to-close flow and the AI differentiator to both work end-to-end for the defense demo.
 
 ### 6.2 Out of Scope for MVP
 
@@ -398,8 +414,10 @@ An Admin can add and configure Restaurant Tables (table number, capacity).
 
 ## 8. Open Questions
 
-1. Session/auth mechanism (JWT vs. server-side session, expiry duration) is a technology decision for `bmad-architecture`, but the *behavioral* question — should a session survive a browser refresh mid-shift, and for how long — is a product decision this PRD should eventually pin down.
-2. Does "table_number" uniqueness (FR-24) need to survive a deleted/deactivated table being renumbered, or is table deletion out of scope entirely (tables only ever added, never removed)? No FR currently covers removing or renumbering a table.
+_Both questions originally raised here have since been resolved. Kept with their resolutions rather than deleted, so the reasoning survives into the OOA._
+
+1. ~~Session/auth mechanism and expiry duration.~~ **Resolved 2026-08-02:** JWT with an **8-hour expiry**, matching a work shift so no one is logged out mid-service; on expiry the user returns to Login and re-authenticates, with no refresh-token flow in v1. Recorded in FR-1's implementing story.
+2. ~~Does `table_number` uniqueness need to survive a deleted table being renumbered, or is table deletion out of scope?~~ **Resolved 2026-08-02:** **Table deletion is out of scope entirely** (§5 Non-Goals); Admins add and edit tables but never remove them. `table_number` therefore stays globally unique with no live-only uniqueness rule, and FR-24 gains an explicit edit path gated on the Table being `available`.
 
 ## 9. Assumptions Index
 
