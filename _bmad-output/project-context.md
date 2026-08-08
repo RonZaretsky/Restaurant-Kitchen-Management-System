@@ -26,8 +26,8 @@ manifest in that same change.
 
 | | Installed and usable **now** | Decided, **not yet installed** (adopting story) |
 |---|---|---|
-| **Backend** | fastapi, uvicorn[standard], dependency-injector, pyyaml, loguru, sqlalchemy[asyncio], asyncpg | alembic (Story 1.0) · pytest + pytest-asyncio + httpx (Story 1.0) · a bcrypt/password-hashing lib (Story 1.1) · a JWT lib (Story 1.1) · openai (Story 6.1) |
-| **Frontend** | react 19, react-dom, typescript ~5.7.2, vite ^6, @vitejs/plugin-react | react-router v7 (Story 1.4) · MUI v9 (Story 1.4) · @tanstack/react-query v5 (Story 1.4) · vitest + @testing-library/react (Story 1.0) |
+| **Backend** | fastapi, uvicorn[standard], dependency-injector, pyyaml, loguru, sqlalchemy[asyncio], asyncpg, alembic, pytest + pytest-asyncio + httpx | a bcrypt/password-hashing lib (Story 1.1) · a JWT lib (Story 1.1) · openai (Story 6.1) |
+| **Frontend** | react 19, react-dom, typescript ~5.7.2, vite ^6, @vitejs/plugin-react, vitest + @testing-library/react | react-router v7 (Story 1.4) · MUI v9 (Story 1.4) · @tanstack/react-query v5 (Story 1.4) |
 
 Authoritative manifests: `backend/pyproject.toml` + `backend/uv.lock`, `frontend/package.json` +
 `frontend/pnpm-lock.yaml`. Lockfiles are authoritative — regenerate via `uv sync` / `pnpm install`
@@ -50,6 +50,9 @@ backend/
   constants.py       SETTINGS (app name, version, config path)
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
+  entrypoint.sh       Docker CMD: alembic upgrade head, then the app. Never in the lifespan.
+  alembic/            async-template migration environment; alembic/versions/ has the baseline
+  tests/              pytest suite: conftest.py, test_health.py, test_migrations.py, test_container.py
   api/router.py      ONE router, ONE route: GET /health
   clients/database.py  SessionDep — AsyncSession from the container's session factory
   data_models/       7 ORM modules + base.py — the full schema, already written
@@ -64,6 +67,8 @@ backend/
 **Frontend — scaffold only.** `src/App.tsx`, `src/main.tsx`, `src/config/config.ts`, and four
 intentionally empty folders (`pages/`, `components/`, `services/`, `types/`, each holding a
 `.gitkeep`). No routing, no component library, no state management, no screens.
+`src/setupTests.ts` (jest-dom matchers) and `src/App.test.tsx` (smoke test) exist as the
+harness's proof-of-life; delete or replace the latter once `App` has real content.
 
 ---
 
@@ -77,12 +82,13 @@ These are the ones that cost hours because nothing errors:
    activates it for `auth`. Every later story **appends** its module to `modules=[...]` — never
    replaces the list. A silently truncated list is the classic version of this bug.
 
-2. **`Base.metadata.create_all` still runs on startup** (`container.py`, inside `_init_database`).
-   It only creates *missing* tables. It will not add a column, will not alter a constraint, will not
-   drop anything — and it reports success either way. **Story 1.0 adopts Alembic (async template,
-   `alembic init -t async` — the sync template does not work with asyncpg), generates a baseline,
-   and removes `create_all` from the startup path.** After Story 1.0, every schema change ships its
-   own revision. Before Story 1.0, assume any schema edit you make is not actually applied.
+2. **RESOLVED by Story 1.0.** `create_all` is gone from `container.py`. Alembic (async template)
+   now owns the schema: `backend/alembic/env.py` resolves the connection URL through
+   `utils.load_config` (never hardcoded in `alembic.ini`), and `backend/entrypoint.sh` runs
+   `alembic upgrade head` before the API starts in Docker. **Every schema change from here ships
+   its own revision** (`alembic revision --autogenerate -m "..."`, inspect it before committing).
+   Running the app outside Docker (`uv run python main.py` directly) does **not** run migrations
+   for you; run `uv run alembic upgrade head` first, per the README.
 
 3. **No CORS middleware exists.** Frontend `:3000` and backend `:8000` are different origins.
    Requests fail in-browser until `CORSMiddleware` is added with an explicit allow-list (never a
@@ -143,6 +149,10 @@ These are the ones that cost hours because nothing errors:
 ## Comments and docstrings
 
 Docstrings are the documentation. Inline comments are the exception, not the habit.
+
+**Exception: test files.** Everything below applies to application code. Inside `tests/`
+(backend) and `*.test.tsx` / test-support files (frontend), skip docstrings entirely and
+structure each test with `# Arrange` / `# Act` / `# Assert` comments instead. See Testing below.
 
 **Required:**
 
@@ -248,11 +258,26 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
 
 ## Testing
 
-**Story 1.0 establishes both harnesses.** Until it lands there is nothing to run.
+**Both harnesses are live as of Story 1.0.** Run `uv run pytest` from `backend/` and `pnpm test`
+from `frontend/`.
 
-- Backend: `pytest` + `pytest-asyncio` + `httpx.AsyncClient`, with `conftest.py` providing an async
-  client and a throwaway-database session fixture.
-- Frontend: `vitest` + `@testing-library/react`, exposed as `pnpm test`.
+- Backend: `pytest` + `pytest-asyncio` + `httpx.AsyncClient`, declared as a PEP 735
+  `[dependency-groups] dev` group (never main `dependencies` — the Dockerfile runs
+  `uv sync --no-dev`). `backend/tests/conftest.py` provides `client` (async HTTP client over the
+  app, entering the real lifespan) and `db_session` (bound to a throwaway database migrated by
+  `alembic upgrade head`, not `create_all`, so the suite continuously proves the migration chain
+  works). Fixture names: `client`, `db_session`, `migrated_database` (session-scoped),
+  `empty_database`. Async fixtures use `@pytest_asyncio.fixture`, never plain `@pytest.fixture`
+  (pytest-asyncio 1.x removed the `event_loop` fixture, don't define one).
+- Frontend: `vitest` + `@testing-library/react` + `jest-dom`, exposed as `pnpm test`. Configure
+  vitest via `defineConfig` from `"vitest/config"` (not `"vite"` — that import doesn't type the
+  `test` key and fails the strict build).
+- **Test files do not use docstrings.** Every test method is organized with plain
+  `# Arrange` / `# Act` / `# Assert` comments instead (omit a section with nothing in it). This is
+  a deliberate carve-out from the "Comments and docstrings" rule below, scoped to `tests/` and
+  `*.test.tsx` files only — everything else still requires docstrings.
+- No `pytest-xdist` and no CI pipeline exist yet, so the session-scoped test database fixture has
+  no per-worker isolation. Fine today; revisit if parallel test execution is introduced.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria — those are the tests.
 
@@ -283,7 +308,12 @@ better spent on design depth.
 ## Maintaining this file
 
 Regenerate when the installed-vs-decided table stops matching the manifests, or when a story lands
-that removes one of the silent traps above (Story 1.0 kills traps 2; Story 1.1 kills 1, 3, 4, 5).
+that removes one of the silent traps above (Story 1.0 killed trap 2; Story 1.1 kills 1, 3, 4, 5).
 Keep it lean — facts an agent can't infer from the code in front of it.
 
-Last Updated: 2026-08-02
+**2026-08-08 patch (Story 1.0 landed, PR #121 merged to main):** installed-vs-decided table,
+current-state tree, trap 2, and Testing updated in place rather than a full regenerate. Everything
+else in this file is still as of 2026-08-02 and should be checked against the code before being
+trusted for later stories.
+
+Last Updated: 2026-08-08
