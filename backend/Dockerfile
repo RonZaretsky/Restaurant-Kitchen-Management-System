@@ -9,6 +9,8 @@ RUN uv sync --no-dev
 
 COPY . .
 
+RUN chmod +x entrypoint.sh
+
 EXPOSE 8000
 
-CMD ["uv", "run", "python", "main.py"]
+CMD ["./entrypoint.sh"]
