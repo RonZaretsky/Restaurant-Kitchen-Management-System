@@ -51,6 +51,8 @@ graph LR
 
 **Rule (dependency direction):** `api/` may depend on `services/` only. `services/` may depend on `clients/` and `data_models/`. `clients/` may depend on `data_models/`. Nothing depends back upward. `exceptions/` is a leaf. Frontend mirrors this: `pages/` may depend on `components/` and `services/`; `components/` may depend on `services/` and `types/`; `services/` may depend on `types/`; nothing imports `pages/`.
 
+**Clarification (added 2026-08-08, after Stories 1.1 and 1.2 each spent a review cycle on it):** "`api/` may depend on `services/` only" governs *behaviour*, not *types*. `api/` may import from `data_models/` for declaration purposes: Pydantic request/response schemas, and type-level names such as the `UserRole` enum or an ORM class used purely as a type annotation. What `api/` may never do is query, mutate, or apply a domain rule, all of which stay in `services/`. This is what the package description already implies by calling `data_models/` "SQLAlchemy models & Pydantic schemas". Concretely: `api/auth.py` importing `LoginRequest`/`LoginResponse` and `api/dependencies.py` importing `User`/`UserRole` are both compliant; a route issuing a `select()` is not.
+
 ## Invariants & Rules
 
 ### AD-1 — Layered backend with a single DI composition root [ADOPTED]
