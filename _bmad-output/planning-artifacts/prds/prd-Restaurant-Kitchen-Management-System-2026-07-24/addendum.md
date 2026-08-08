@@ -48,9 +48,9 @@ The PRD is organized by feature, not by actor, so this table re-derives the OOA'
 | Role | Actions (FR references) |
 |---|---|
 | **Waiter** | Open a table and start an order (FR-4); add items to an order (FR-5); view live order/table status (FR-6); edit or cancel an order item (FR-7); mark an order served (FR-11); close a table (FR-8) |
-| **Cook** | View incoming orders in real time (FR-9); update an order item's status / pick up and mark ready (FR-10); cancel an in-preparation order item (FR-7, shared with Waiter/Admin); generate a recipe suggestion from stock (FR-18); consult/version/improve recipes via Smart Assistant chat (FR-20) |
+| **Cook** | View incoming orders in real time (FR-9); update an order item's status / pick up and mark ready (FR-10); cancel an in-preparation order item (FR-7, shared with Waiter/Admin); browse the dish catalog read-only for prep context (FR-25); generate a recipe suggestion from stock (FR-18); consult/version/improve recipes via Smart Assistant chat (FR-20) |
 | **Warehouse Manager** | Record manual stock movements — purchase/waste/adjustment (FR-15); create a new ingredient (FR-16, shared with Admin); view ingredient stock levels and shortage status (FR-17); receive Low-Stock Alerts (FR-14, passive) |
-| **Admin** | Create/deactivate/edit/reactivate user accounts (FR-3); manage menu dishes and categories (FR-22); define a dish's recipe (FR-23); manage restaurant tables (FR-24); create a new ingredient (FR-16, shared with Warehouse Manager); turn a Recipe Suggestion into a live Dish (FR-19, shared trigger with FR-22/23) |
+| **Admin** | Create/deactivate/edit/reactivate user accounts (FR-3); manage menu dishes and categories (FR-22); define a dish's recipe (FR-23); add and edit restaurant tables, edit gated on the table being available (FR-24); create a new ingredient (FR-16, shared with Warehouse Manager); turn a Recipe Suggestion into a live Dish (FR-19, shared trigger with FR-22/23) |
 
 **Cross-role note:** every Role also performs FR-1 (login) and is subject to FR-2 (role-based authorization) — these are foundational rather than Role-specific and are listed once here rather than repeated in each row.
 
