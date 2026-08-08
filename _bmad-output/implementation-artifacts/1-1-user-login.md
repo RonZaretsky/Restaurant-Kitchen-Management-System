@@ -4,7 +4,7 @@ baseline_commit: 33e4aa36b45317a1cfc185106fabf2155e478623
 
 # Story 1.1: User Login
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -74,25 +74,25 @@ custom exceptions (architecture spine, Deferred).
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Exceptions package** (AC: 8, 2, 3)
-  - [ ] Delete `backend/data_models/exceptions/` (the file is empty; confirmed nothing imports
+- [x] **Task 1: Exceptions package** (AC: 8, 2, 3)
+  - [x] Delete `backend/data_models/exceptions/` (the file is empty; confirmed nothing imports
     `data_models.exceptions` anywhere in the codebase)
-  - [ ] Create `backend/exceptions/__init__.py` with `InvalidCredentialsError(Exception)` — raised
+  - [x] Create `backend/exceptions/__init__.py` with `InvalidCredentialsError(Exception)` — raised
     for wrong username, wrong password, and deactivated user alike, so the caller cannot
     distinguish the three cases (AC2, AC3)
-  - [ ] Register a FastAPI exception handler in `main.py` mapping `InvalidCredentialsError` to a
+  - [x] Register a FastAPI exception handler in `main.py` mapping `InvalidCredentialsError` to a
     `401` response body `{"detail": "Invalid username or password"}` — one handler, so the generic
     message can never drift between call sites
 
-- [ ] **Task 2: Add auth dependencies** (AC: 4, 5)
-  - [ ] Add `bcrypt>=5.0.0` and `pyjwt>=2.13.0` to `backend/pyproject.toml`'s main `dependencies`
+- [x] **Task 2: Add auth dependencies** (AC: 4, 5)
+  - [x] Add `bcrypt>=5.0.0` and `pyjwt>=2.13.0` to `backend/pyproject.toml`'s main `dependencies`
     (not the dev group; these run in production) and run `uv sync` from inside `backend/`,
     committing the regenerated `uv.lock`
-  - [ ] Do not add `passlib` — it is unmaintained and its bcrypt backend has known compatibility
+  - [x] Do not add `passlib` — it is unmaintained and its bcrypt backend has known compatibility
     breaks with bcrypt 4.x+; call `bcrypt.hashpw`/`bcrypt.checkpw` directly instead
 
-- [ ] **Task 3: Config for auth and CORS** (AC: 5, 7)
-  - [ ] Add to `backend/config.yaml`:
+- [x] **Task 3: Config for auth and CORS** (AC: 5, 7)
+  - [x] Add to `backend/config.yaml`:
     ```yaml
     auth:
       secret_key: ${JWT_SECRET_KEY: "dev-only-insecure-secret-change-me"}
@@ -101,12 +101,12 @@ custom exceptions (architecture spine, Deferred).
     cors:
       allow_origin: ${FRONTEND_ORIGIN: "http://localhost:3000"}
     ```
-  - [ ] Wire both into `container.config` the same way `database`/`logging` already are (config is
+  - [x] Wire both into `container.config` the same way `database`/`logging` already are (config is
     loaded once in `main.py` via `container.config.from_dict(load_config(...))`, nothing extra
     needed there)
 
-- [ ] **Task 4: AuthService** (AC: 1, 2, 3, 4, 5, 6)
-  - [ ] Create `backend/services/auth_service.py` with a class `AuthService`:
+- [x] **Task 4: AuthService** (AC: 1, 2, 3, 4, 5, 6)
+  - [x] Create `backend/services/auth_service.py` with a class `AuthService`:
     - Constructor takes `secret_key: str`, `token_expiry_hours: int` (config-driven, no per-request
       state, so it can be a container-level provider — see Task 5)
     - `async def authenticate(self, db: AsyncSession, username: str, password: str) -> User`:
@@ -122,11 +122,11 @@ custom exceptions (architecture spine, Deferred).
       claim, raises if the user no longer exists or is now deactivated. **This is the one shared
       dependency AD-3 requires** — every future protected route depends on this method, never a
       per-route reimplementation
-  - [ ] Never log the plaintext password anywhere in this file, including in exception messages
+  - [x] Never log the plaintext password anywhere in this file, including in exception messages
     (AC4)
 
-- [ ] **Task 5: Register AuthService in the container** (AC: 7)
-  - [ ] Add to `backend/container.py`:
+- [x] **Task 5: Register AuthService in the container** (AC: 7)
+  - [x] Add to `backend/container.py`:
     ```python
     auth_service = providers.Factory(
         AuthService,
@@ -134,63 +134,63 @@ custom exceptions (architecture spine, Deferred).
         token_expiry_hours=config.auth.token_expiry_hours,
     )
     ```
-  - [ ] `AuthService` takes no DB session in its constructor — the session is per-request
+  - [x] `AuthService` takes no DB session in its constructor — the session is per-request
     (`SessionDep`) and is passed as a method argument at call time, not injected via the container
     (the container's providers are app-lifetime; a request-scoped `AsyncSession` cannot live on
     one)
 
-- [ ] **Task 6: Auth router** (AC: 1, 2, 3, 6, 7)
-  - [ ] Create `backend/api/auth.py`: `APIRouter(prefix="/api/auth", tags=["auth"])`
-  - [ ] `POST /api/auth/login`, `@inject`-decorated, taking a `LoginRequest` Pydantic body
+- [x] **Task 6: Auth router** (AC: 1, 2, 3, 6, 7)
+  - [x] Create `backend/api/auth.py`: `APIRouter(prefix="/api/auth", tags=["auth"])`
+  - [x] `POST /api/auth/login`, `@inject`-decorated, taking a `LoginRequest` Pydantic body
     (`username: str`, `password: str`), the `SessionDep`, a `Response` param, and
     `auth_service: AuthService = Depends(Provide[Container.auth_service])`
-  - [ ] On success: call `auth_service.authenticate(...)`, then `create_access_token(...)`, set it
+  - [x] On success: call `auth_service.authenticate(...)`, then `create_access_token(...)`, set it
     via `response.set_cookie(key="access_token", value=token, httponly=True, samesite="lax",
     secure=not container.config.app.debug(), max_age=token_expiry_hours * 3600)`, return a
     `LoginResponse` with the User's role (do not return the token in the body — it only ever
     travels as the httpOnly cookie)
-  - [ ] `InvalidCredentialsError` from `authenticate` propagates to the Task 1 handler; do not
+  - [x] `InvalidCredentialsError` from `authenticate` propagates to the Task 1 handler; do not
     catch it in the route
-  - [ ] Include the new router in `backend/api/router.py`'s aggregator via `include_router()` —
+  - [x] Include the new router in `backend/api/router.py`'s aggregator via `include_router()` —
     that file stays the aggregator-only, no route logic added there
 
-- [ ] **Task 7: CORS middleware and DI wiring** (AC: 7)
-  - [ ] In `backend/main.py`, register `CORSMiddleware` on the `FastAPI` app with
+- [x] **Task 7: CORS middleware and DI wiring** (AC: 7)
+  - [x] In `backend/main.py`, register `CORSMiddleware` on the `FastAPI` app with
     `allow_origins=[container.config.cors.allow_origin()]` (a one-item explicit list, never `"*"`),
     `allow_credentials=True` (required for the cookie to be sent cross-port), and the standard
     methods/headers
-  - [ ] Call `container.wire(modules=["api.auth"])` after the container is constructed — this is
+  - [x] Call `container.wire(modules=["api.auth"])` after the container is constructed — this is
     the first entry in the wire list; every later story that adds `@inject` to a new router
     **appends** its module name to this same list, never replaces it (AC7, AD-1)
 
-- [ ] **Task 8: Fix the pre-existing `clients/database.py` bug** (AC: 1 — needed for the login
+- [x] **Task 8: Fix the pre-existing `clients/database.py` bug** (AC: 1 — needed for the login
   route's DB query to work at all)
-  - [ ] `get_session` currently does `db = request.app.container.database()` without `await`. The
+  - [x] `get_session` currently does `db = request.app.container.database()` without `await`. The
     `database` provider is a `providers.Resource` built from an async generator, so the call
     returns an unawaited `Future`, and `db.session_factory` raises `AttributeError`. Fix: `db =
     await request.app.container.database()`. This was flagged in Story 1.0's Completion Notes as
     deferred to this story, since 1.0 had nothing that actually queried the DB through `SessionDep`
-  - [ ] Verify with a test that actually round-trips a query through `SessionDep` (the login test
+  - [x] Verify with a test that actually round-trips a query through `SessionDep` (the login test
     in Task 9 covers this — Story 1.0's tests never exercised this path)
 
-- [ ] **Task 9: Tests** (AC: all)
-  - [ ] `test_auth.py`: seed a User directly via the DB session fixture (bcrypt-hash a known
+- [x] **Task 9: Tests** (AC: all)
+  - [x] `test_auth.py`: seed a User directly via the DB session fixture (bcrypt-hash a known
     password with the same helper `AuthService` uses, so the test doesn't duplicate hashing logic)
     covering: successful login sets the cookie and returns the role (AC1); wrong password rejected
     with the generic message (AC2); wrong username rejected with the identical message (AC2);
     deactivated user rejected with the identical message (AC3); the JWT's `exp` claim is
     `now + 8h` within a small tolerance (AC5)
-  - [ ] Assert the response never contains the plaintext password anywhere, including on a failed
+  - [x] Assert the response never contains the plaintext password anywhere, including on a failed
     login (AC4)
-  - [ ] `get_current_user` unit-level coverage (AC6): no cookie raises `InvalidCredentialsError`;
+  - [x] `get_current_user` unit-level coverage (AC6): no cookie raises `InvalidCredentialsError`;
     an expired token raises it; a token signed with the wrong secret raises it; a valid token
     resolves the correct User. **No protected domain route exists yet to exercise this
     end-to-end** (Stories 1.2/1.3 add the first ones) — proving the dependency directly is the
     correct scope for this story, matching the guard-test precedent set by Story 1.0's
     `test_migrations_match_the_models`
-  - [ ] CORS: assert `CORSMiddleware` is registered with `allow_origins == [<configured origin>]`
+  - [x] CORS: assert `CORSMiddleware` is registered with `allow_origins == [<configured origin>]`
     and not `["*"]`
-  - [ ] `GET /health` still returns `200` with no cookie (stays public)
+  - [x] `GET /health` still returns `200` with no cookie (stays public)
 
 ## Dev Notes
 
@@ -266,8 +266,125 @@ Backend harness is live as of Story 1.0: `uv run pytest` from `backend/`, fixtur
 
 ### Agent Model Used
 
+claude-sonnet-5 (Claude Code, bmad-dev-story workflow)
+
 ### Debug Log References
+
+**Task order changed from the written sequence.** Task 8 (fixing the pre-existing missing
+`await` in `clients/database.py`) was implemented right after Task 6 (the auth router) rather
+than after Task 7, since the login endpoint needed a working `SessionDep` to be testable at
+all. Task 7 (CORS + `container.wire()`) was done last among the implementation tasks, right
+before Task 9 (tests), since it is main.py's final piece and the tests assert on both the
+wiring-enabled `@inject` route and the registered CORS middleware. Scope and content of every
+task are unchanged; only the order was adapted, same as Story 1.0's precedent.
+
+**Full regression pass:** `uv run pytest -v` from `backend/` (against a local Postgres started
+via `docker compose up -d postgres`) — 18 passed (6 pre-existing from Story 1.0, 12 new). No
+frontend files were touched by this story, so `pnpm test`/`pnpm build` were not re-run.
+
+**Docker Compose end-to-end verification could not be completed on this machine.** A
+`docker compose down -v && docker compose up --build` produced a crash-looping `backend`
+container: `exec ./entrypoint.sh: no such file or directory`. Root-caused to this Windows
+checkout's `core.autocrlf=true` converting `entrypoint.sh`'s committed LF line endings to CRLF
+on checkout, breaking the `#!/bin/sh` shebang inside the Linux container. Confirmed with
+`git show HEAD:backend/entrypoint.sh | cat -A` that the committed blob has correct LF endings
+and `git log` that the file was added by Story 1.0, unmodified by this story. This is a
+per-machine git-config artifact, not a repository defect or a regression introduced here, so it
+was not fixed as part of this story (out of this story's file list and unrelated to any of its
+ACs). The login flow, DI wiring, and CORS registration were instead verified through
+`tests/test_auth.py`, which exercises the real `FastAPI` app (including its `lifespan`,
+`container.wire()` call, and `CORSMiddleware` registration) via `httpx.AsyncClient` over
+`ASGITransport` — equivalent coverage to a live HTTP call, without the container layer.
+Flagging this CRLF issue for the team; a `.gitattributes` pinning `*.sh text eol=lf` would
+prevent it recurring for any Windows contributor, but that is a repo-wide decision outside this
+story's scope.
 
 ### Completion Notes List
 
+**What was built.** The backend now has a working login endpoint (`POST /api/auth/login`)
+issuing an httpOnly, 8-hour JWT cookie; a shared `AuthService.get_current_user` dependency
+ready for every future protected route; CORS restricted to an explicit configured origin; and
+`container.wire()` activated for the first time, with `api.auth` as its first module. The stray
+`backend/data_models/exceptions/` scaffold folder is gone; `backend/exceptions/` is now the one
+designated location for custom exceptions, starting with `InvalidCredentialsError`.
+
+**Design decisions worth knowing:**
+
+1. **One exception, three causes.** `AuthService.authenticate` raises the identical
+   `InvalidCredentialsError` whether the username does not exist, the user is deactivated, or
+   the password is wrong. A single FastAPI exception handler in `main.py` maps it to the fixed
+   `401 {"detail": "Invalid username or password"}` body, so the generic message cannot drift
+   between call sites and no code path can accidentally leak which part of a login attempt
+   failed.
+2. **bcrypt and PyJWT used directly, not `passlib`.** `passlib`'s bcrypt backend has known
+   compatibility breaks against bcrypt 4.x+ and the project is unmaintained; `bcrypt.hashpw` /
+   `bcrypt.checkpw` and `jwt.encode` / `jwt.decode` are called directly instead.
+3. **`AuthService` is a container `Factory`, not a `Singleton` or a per-request object.** It
+   holds only config values (`secret_key`, `token_expiry_hours`), no request-scoped state, so it
+   can be constructed once and injected via `@inject` into route handlers. The database session
+   it needs is passed as a method argument at call time, since a request-scoped `AsyncSession`
+   cannot live on an app-lifetime container provider.
+4. **AC6 (protected-by-default) is proven at the dependency level, not through a live protected
+   route.** No domain router besides `auth` (public) and `health` (public) exists yet, so
+   `tests/test_auth.py` calls `AuthService.get_current_user` directly with a hand-built
+   `starlette.requests.Request` to prove it rejects a missing cookie, an expired token, and a
+   token signed with the wrong secret, and accepts a valid one. This mirrors Story 1.0's
+   `test_migrations_match_the_models` precedent: the executable proof for an invariant that has
+   no consumer yet.
+5. **The `clients/database.py` bug fix was a single line.** `get_session` now `await`s
+   `request.app.container.database()` before calling `.session_factory()`. This was the only
+   change to that file; the rest, including the fixture's shape, was left untouched.
+6. **Cookie `Secure` attribute is tied to the existing `app.debug` config flag**, not a new
+   setting: `secure=not debug`, injected via `Depends(Provide[Container.config.app.debug])`,
+   matching the architecture spine's "Secure outside local dev" rule without inventing a second
+   environment flag.
+
+**Findings deliberately NOT fixed here (out of this story's stated scope):**
+
+- **`backend/entrypoint.sh` breaks under Windows `core.autocrlf=true` checkouts.** See Debug Log
+  above. Not in this story's file list; a `.gitattributes` fix is a repo-wide decision for the
+  team, not this story's call.
+- **NFR-2 ("no mutating action executes without an authenticated session") is not yet enforced
+  on any concrete route**, because no mutating domain route exists yet besides login itself
+  (which is intentionally public). Story 1.2 formalizes enforcement as new routers are added;
+  this story only builds and proves the mechanism they will depend on.
+
 ### File List
+
+**Added**
+
+- `backend/exceptions/__init__.py`
+- `backend/services/auth_service.py`
+- `backend/api/auth.py`
+- `backend/tests/test_auth.py`
+
+**Modified**
+
+- `backend/pyproject.toml` (added `bcrypt>=5.0.0`, `pyjwt>=2.13.0` to main dependencies)
+- `backend/uv.lock` (regenerated by `uv sync`)
+- `backend/config.yaml` (added `auth` and `cors` sections)
+- `backend/container.py` (added `auth_service` provider, imports `AuthService`)
+- `backend/main.py` (added `InvalidCredentialsError` exception handler, `CORSMiddleware`
+  registration, `container.wire(modules=["api.auth"])`)
+- `backend/api/router.py` (includes the new `auth` router)
+- `backend/clients/database.py` (added the missing `await` on `container.database()`)
+
+**Deleted**
+
+- `backend/data_models/exceptions/__init__.py` (and the now-empty `backend/data_models/exceptions/` directory)
+
+**Confirmed unchanged**: `backend/data_models/**` (other than the `exceptions/` removal above),
+`backend/alembic/**`, all frontend files.
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-08-08 | Removed the stray `backend/data_models/exceptions/` scaffold package; added `backend/exceptions/__init__.py` with `InvalidCredentialsError` and a global FastAPI handler mapping it to a generic 401. |
+| 2026-08-08 | Added `bcrypt` and `pyjwt` as main backend dependencies. |
+| 2026-08-08 | Added `auth` and `cors` config sections to `backend/config.yaml`. |
+| 2026-08-08 | Added `AuthService` (`services/auth_service.py`): bcrypt password verification, JWT issuance with an 8-hour expiry, and the shared `get_current_user` session dependency. Registered it as a `providers.Factory` on the container. |
+| 2026-08-08 | Added `POST /api/auth/login` (`api/auth.py`), setting the session JWT as an httpOnly, SameSite=Lax cookie; included it into the router aggregator. |
+| 2026-08-08 | Registered `CORSMiddleware` with an explicit configured allow-list and activated `container.wire(modules=["api.auth"])`, the first entry in the wire list. |
+| 2026-08-08 | Fixed the pre-existing missing `await` on `container.database()` in `clients/database.py`, deferred to this story by Story 1.0. |
+| 2026-08-08 | Added `tests/test_auth.py` covering all 8 acceptance criteria: successful login, wrong username/password, deactivated user, no plaintext leakage, 8-hour token expiry, the `get_current_user` dependency's four cases, explicit CORS, and that `/health` stays public. |
