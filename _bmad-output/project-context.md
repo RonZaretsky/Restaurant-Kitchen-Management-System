@@ -140,6 +140,64 @@ These are the ones that cost hours because nothing errors:
 
 ---
 
+## Comments and docstrings
+
+Docstrings are the documentation. Inline comments are the exception, not the habit.
+
+**Required:**
+
+- Every method and every function gets a docstring saying what it does, what each argument is, and what it returns. If it returns nothing, say so. If it raises, say what and when.
+- Every class gets a docstring at the top of the class saying what it is and what it is for.
+- Every module gets a short docstring at the top of the file when the filename alone does not make its purpose obvious.
+
+**Style:**
+
+- **Never use an em dash (—) in a docstring or comment.** Use a comma, a period, or a new sentence.
+- Simple English. Short sentences. No long words where a short one works.
+- Say what the code does, not how clever it is. No filler, no restating the function name.
+
+**Inline comments:**
+
+- Do not comment between the lines of a method by default. If the docstring says what the method does, the body should be readable without narration.
+- Add an inline comment only when the code is genuinely hard to follow: a non-obvious algorithm, a workaround, an ordering that matters, a rule that looks wrong but is correct.
+- When you do add one, explain **why**, not what. `# guard against a second cook picking this up mid-transaction` is useful. `# increment the counter` is not.
+- Naming a design pattern in a comment is expected and encouraged here, since pattern usage is graded (see Academic context below).
+
+**Python format** (standard triple-quoted docstring):
+
+```python
+class OrderService:
+    """Handles order creation, item changes, and status transitions."""
+
+    async def cancel_item(self, item_id: int, actor: User) -> OrderItem:
+        """Cancel a single order item.
+
+        Args:
+            item_id: The order item to cancel.
+            actor: The user performing the cancellation. Must be a waiter, cook, or admin.
+
+        Returns:
+            The updated order item, now cancelled.
+
+        Raises:
+            NotFoundError: If no order item matches item_id.
+            InvalidTransitionError: If the item is already cancelled or served.
+        """
+```
+
+**TypeScript format** (TSDoc, same rules):
+
+```typescript
+/**
+ * Formats a price for display in the order total.
+ *
+ * @param cents - The price in whole cents.
+ * @returns The price as a string with a currency symbol.
+ */
+```
+
+---
+
 ## Binding architecture invariants
 
 From the architecture spine — these are contracts, not suggestions. Cited by AD number in story ACs.
