@@ -6,6 +6,8 @@ from dependency_injector import containers, providers
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from services.auth_service import AuthService
+
 
 @dataclass
 class Database:
@@ -45,4 +47,11 @@ class Container(containers.DeclarativeContainer):
         user=config.database.user,
         password=config.database.password,
         name=config.database.name,
+    )
+
+    auth_service = providers.Factory(
+        AuthService,
+        secret_key=config.auth.secret_key,
+        token_expiry_hours=config.auth.token_expiry_hours,
+        logger=logging,
     )

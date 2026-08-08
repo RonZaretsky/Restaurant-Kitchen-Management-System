@@ -1,0 +1,10 @@
+# Shell scripts run inside Linux containers. Without this, a Windows checkout with
+# core.autocrlf=true rewrites them to CRLF, which breaks the shebang and makes the
+# backend container fail with "exec ./entrypoint.sh: no such file or directory".
+*.sh text eol=lf
+
+# Same reasoning for anything else read by the container at runtime.
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.env.example text eol=lf

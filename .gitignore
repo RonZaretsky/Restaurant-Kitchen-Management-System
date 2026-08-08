@@ -24,6 +24,9 @@ ENV/
 # Environment
 .env
 .env.*
+# The template carries no secrets and must stay tracked, so new clones know
+# which variables to set.
+!.env.example
 
 # Secrets / private material (API keys, restricted course/client material, etc.)
 # Never push this directory — see secrets/README.md, which is the one file kept tracked.

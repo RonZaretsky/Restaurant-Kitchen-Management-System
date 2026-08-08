@@ -25,3 +25,27 @@
   fixtures raise a raw `ConnectionRefusedError` deep in setup if Postgres isn't running, rather
   than one message pointing at "start Postgres first" (`docker compose up`). DX polish only, not
   a correctness bug.
+
+## Deferred from: code review of story-1-1 (2026-08-08)
+
+- ~~**The JWT `role` claim is written but never read**~~ — **RESOLVED during the same review's
+  patch pass, not deferred.** The claim was dropped from `create_access_token` entirely; the
+  token now carries only `sub` and `exp`. `get_current_user` re-loads the `User` row, so role is
+  always read live from the database. **The rule this leaves for Story 1.2:** derive
+  authorization from the loaded `User`, never from a token claim. Putting `role` back in the
+  token would mean an Admin demoting or deactivating someone has no effect until that user's
+  token expires up to 8 hours later.
+- ~~**Layering: `api/` imports `data_models`**~~ — **RESOLVED 2026-08-08, not deferred.**
+  `backend/api/auth.py` originally defined `LoginRequest`/`LoginResponse` inline and pulled the
+  bare `UserRole` enum from `data_models` to type the response, the crossing this item
+  originally flagged. `LoginRequest` and `LoginResponse` now live in the new
+  `backend/data_models/auth.py`, alongside `MAX_PASSWORD_BYTES` (moved there too, since the
+  request schema's `Field(max_length=...)` needs it and `data_models/` must not import from
+  `services/`). `api/auth.py` now imports only Pydantic schemas from `data_models`, never a raw
+  domain enum, matching the architecture spine's own description of that package: "SQLAlchemy
+  models & Pydantic schemas." `services/auth_service.py` imports `MAX_PASSWORD_BYTES` back from
+  `data_models`, which is the allowed direction (`services/` may depend on `data_models/`). The
+  opposite-direction violation (`services/` importing `fastapi.Request`) was already resolved in
+  the prior patch pass. **The pattern for Story 1.2 and beyond:** request/response schemas for a
+  domain live in `data_models/{domain}.py` next to that domain's ORM models, not inline in the
+  router file.

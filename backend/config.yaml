@@ -16,3 +16,10 @@ logging:
   level: ${LOG_LEVEL: "INFO"}
   colorize: ${LOG_COLORIZE: true}
   format: "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>"
+
+auth:
+  secret_key: ${JWT_SECRET_KEY: "dev-only-insecure-secret-change-me"}
+  token_expiry_hours: ${JWT_EXPIRY_HOURS: 8}
+
+cors:
+  allow_origin: ${FRONTEND_ORIGIN: "http://localhost:3000"}
