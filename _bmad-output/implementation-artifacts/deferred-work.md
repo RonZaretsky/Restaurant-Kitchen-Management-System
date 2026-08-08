@@ -49,3 +49,31 @@
   the prior patch pass. **The pattern for Story 1.2 and beyond:** request/response schemas for a
   domain live in `data_models/{domain}.py` next to that domain's ORM models, not inline in the
   router file.
+
+## Deferred from: code review of story-1-2 (2026-08-08)
+
+- **403 is invisible in the OpenAPI schema** — `ForbiddenError` is a bare `Exception` rather than
+  an `HTTPException` (`backend/exceptions/__init__.py:47`), so FastAPI cannot infer it and a
+  `require_role`-protected route declares only `200` in its `responses`. Verified against a real
+  mounted route. The frontend from Story 1.4 onward, reading `/docs` or generating a typed client,
+  sees no 403 contract for exactly the routes whose purpose is returning one. Deferred because
+  there is no protected route to annotate yet. **Story 1.3 should settle this** when it adds the
+  first one: either declare `responses={403: ...}` per route, or give `require_role` a shape that
+  contributes the response to the schema automatically.
+- **Authorization denials are not logged, by decision, and the obligation moves to `services/`** —
+  `require_role` raises `ForbiddenError` silently at `backend/api/dependencies.py:74`, while every
+  auth rejection inside `AuthService` logs one. Reviewed and **decided 2026-08-08 (Ofek): the
+  service layer owns denial logging, `api/` stays thin and non-logging.** A bare "role X denied"
+  from a shared dependency carries no domain context; the log line worth having is the one the
+  service writes, with the order id, ingredient name, or target user id attached. **Action for
+  Story 1.3 and every domain story after it:** when a service rejects an action, log it through the
+  injected loguru logger with the acting user id. This is the only remaining coverage for
+  `project-context.md`'s "log at every layer, carry identifying context" rule on the authorization
+  path, so if 1.3 does not do it, nothing does.
+- **The `AuthError`/`ForbiddenError` families silently discard a constructor message** — `detail`
+  is a class attribute with no `__init__` override, so `ForbiddenError("only admins may do this")`
+  keeps the generic default and `str(ForbiddenError())` is `''`, leaving an escaped traceback as a
+  bare class name. Verified. Pre-existing rather than introduced here: every member of the
+  `AuthError` family Story 1.1 added has the same shape, so the honest fix changes that family
+  too. Worth doing the first time a call site genuinely needs a specific message; harmless while
+  every raise site uses the default.

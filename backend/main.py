@@ -8,7 +8,7 @@ from loguru import logger
 
 from constants import SETTINGS
 from container import Container
-from exceptions import AuthError
+from exceptions import AuthError, ForbiddenError
 from utils import load_config
 from api.router import router
 
@@ -65,6 +65,25 @@ async def _auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
     return JSONResponse(status_code=401, content={"detail": exc.detail})
 
 
+async def _forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSONResponse:
+    """Turn a role-authorization failure into a 403 carrying its message.
+
+    Kept separate from _auth_error_handler: a ForbiddenError means the
+    caller's identity is already verified and only their Role lacks
+    permission, a distinct case from an AuthError that must stay
+    independently testable and never collapse into a 401.
+
+    Args:
+        request: The incoming request that triggered the error.
+        exc: The raised ForbiddenError, whose detail becomes the response
+            body.
+
+    Returns:
+        A 403 JSON response.
+    """
+    return JSONResponse(status_code=403, content={"detail": exc.detail})
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=SETTINGS.APP_NAME,
@@ -81,6 +100,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(AuthError, _auth_error_handler)
+    app.add_exception_handler(ForbiddenError, _forbidden_error_handler)
     app.include_router(router)
     return app
 
