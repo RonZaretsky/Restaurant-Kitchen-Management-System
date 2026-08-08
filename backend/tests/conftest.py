@@ -13,11 +13,12 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from alembic import command
 from alembic.config import Config
 from constants import SETTINGS
+from data_models import Base
 from main import app
 from utils import load_config
 
@@ -59,6 +60,13 @@ async def run_on_maintenance_database(statement: str) -> None:
             await connection.execute(text(statement))
     finally:
         await engine.dispose()
+
+
+async def truncate_all_tables(engine: AsyncEngine) -> None:
+    # Every model table in one statement so foreign keys never block the order.
+    table_names = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+    async with engine.begin() as connection:
+        await connection.execute(text(f"TRUNCATE {table_names} RESTART IDENTITY CASCADE"))
 
 
 def run_migrations() -> None:
@@ -105,6 +113,12 @@ async def db_session(migrated_database: str) -> AsyncGenerator[AsyncSession, Non
     try:
         async with factory() as session:
             yield session
+        # Rows have to be committed for the app under test to see them over its own
+        # connection, so per-test isolation is truncation afterwards rather than a
+        # rollback. Without this, writes leak into every later test on the
+        # session-scoped database. alembic_version is untouched: it is not a model
+        # table, so the migration state survives.
+        await truncate_all_tables(engine)
     finally:
         await engine.dispose()
 

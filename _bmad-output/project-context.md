@@ -26,7 +26,7 @@ manifest in that same change.
 
 | | Installed and usable **now** | Decided, **not yet installed** (adopting story) |
 |---|---|---|
-| **Backend** | fastapi, uvicorn[standard], dependency-injector, pyyaml, loguru, sqlalchemy[asyncio], asyncpg, alembic, pytest + pytest-asyncio + httpx | a bcrypt/password-hashing lib (Story 1.1) · a JWT lib (Story 1.1) · openai (Story 6.1) |
+| **Backend** | fastapi, uvicorn[standard], dependency-injector, pyyaml, loguru, sqlalchemy[asyncio], asyncpg, alembic, bcrypt, pyjwt, python-dotenv, pytest + pytest-asyncio + httpx | openai (Story 6.1) |
 | **Frontend** | react 19, react-dom, typescript ~5.7.2, vite ^6, @vitejs/plugin-react, vitest + @testing-library/react | react-router v7 (Story 1.4) · MUI v9 (Story 1.4) · @tanstack/react-query v5 (Story 1.4) |
 
 Authoritative manifests: `backend/pyproject.toml` + `backend/uv.lock`, `frontend/package.json` +
@@ -76,11 +76,11 @@ harness's proof-of-life; delete or replace the latter once `App` has real conten
 
 These are the ones that cost hours because nothing errors:
 
-1. **`container.wire()` is never called.** Not in `main.py`, not anywhere. Until it is, every
-   `@inject` / `Depends(Provide[...])` resolves to an unconfigured provider — and it fails at
-   *request* time, not import time, so the app starts fine and breaks on first call. Story 1.1
-   activates it for `auth`. Every later story **appends** its module to `modules=[...]` — never
-   replaces the list. A silently truncated list is the classic version of this bug.
+1. **RESOLVED by Story 1.1.** `container.wire()` is now called in `main.py` with
+   `modules=["api.auth", "api.dependencies"]`. The live rule from here: every later story
+   **appends** its module to that list, **never replaces it**. A silently truncated list is the
+   classic version of this bug, and it fails at *request* time rather than import time, so the
+   app still starts fine and breaks on first call.
 
 2. **RESOLVED by Story 1.0.** `create_all` is gone from `container.py`. Alembic (async template)
    now owns the schema: `backend/alembic/env.py` resolves the connection URL through
@@ -90,16 +90,35 @@ These are the ones that cost hours because nothing errors:
    Running the app outside Docker (`uv run python main.py` directly) does **not** run migrations
    for you; run `uv run alembic upgrade head` first, per the README.
 
-3. **No CORS middleware exists.** Frontend `:3000` and backend `:8000` are different origins.
-   Requests fail in-browser until `CORSMiddleware` is added with an explicit allow-list (never a
-   wildcard). Story 1.1 adds it.
+3. **RESOLVED by Story 1.1.** `CORSMiddleware` is registered in `main.py` with an explicit
+   one-item allow-list from `config.cors.allow_origin` and `allow_credentials=True` (needed for
+   the session cookie across ports). **Never widen this to a wildcard** (AD-3).
 
-4. **No auth layer exists.** `User.role` is defined in the schema, but every route today is
-   effectively public. Do not assume a request carries an authenticated user until Story 1.1 ships.
+4. **RESOLVED by Story 1.1, with a sharp edge.** Auth exists, but it is *opt-in per route*.
+   `api/dependencies.py` provides `CurrentUserDep`, the one shared seam AD-3 requires. A route
+   without it is still fully public, and nothing warns you. Every protected route must declare
+   `user: CurrentUserDep`, and it must never re-derive a user from the cookie itself. Story 1.2
+   builds role enforcement on top of this.
 
-5. **`backend/data_models/exceptions/` is stray scaffold debris.** The designated location is
-   top-level `backend/exceptions/`. Story 1.1 removes the stray package. Don't treat it as a
-   competing convention.
+5. **RESOLVED by Story 1.1.** The stray `backend/data_models/exceptions/` package is gone.
+   Top-level `backend/exceptions/` is the single designated location, and it now holds the
+   `AuthError` family (`InvalidCredentialsError`, `SessionExpiredError`,
+   `NotAuthenticatedError`). Each carries its own `detail`; one handler in `main.py` maps any of
+   them to a 401. Add new exception types the same way rather than raising inline or building a
+   second handler.
+
+6. **Secrets come from `backend/.env`, which is untracked.** `utils.load_config` loads it at
+   import (real environment variables still win), and docker-compose passes it through
+   `env_file` as optional. A fresh clone with no `.env` still boots, silently falling back to
+   `config.yaml`'s published default JWT key, which makes every session forgeable. The app logs a
+   startup warning when that happens. Copy `backend/.env.example` to `backend/.env` before the
+   first run. **Never commit `.env`, and never put a real secret in `.env.example`.**
+
+7. **The session cookie is `Secure` unconditionally, and v1 is localhost-only.** Browsers exempt
+   `http://localhost` from the Secure requirement, so the Docker demo works. Reaching the app
+   over a LAN IP or hostname instead returns a 200 on login and then silently drops the cookie,
+   with no error anywhere. Accepted scope for v1 (review 2026-08-08); revisit with a real
+   cookie-transport setting if the app ever needs to be reached off-box.
 
 ---
 
@@ -276,6 +295,12 @@ from `frontend/`.
   `# Arrange` / `# Act` / `# Assert` comments instead (omit a section with nothing in it). This is
   a deliberate carve-out from the "Comments and docstrings" rule below, scoped to `tests/` and
   `*.test.tsx` files only — everything else still requires docstrings.
+- **`db_session` truncates every model table after each test** (Story 1.1). Rows must be
+  committed for the app under test to see them over its own connection, so isolation is
+  truncation afterwards, not a rollback. Write tests freely; they will not leak into the next
+  test. `alembic_version` is untouched, so the migration state survives.
+- Hash passwords in tests through `AuthService.hash_password`, never `bcrypt.hashpw` directly, so
+  account creation and login can never diverge on cost or salt settings.
 - No `pytest-xdist` and no CI pipeline exist yet, so the session-scoped test database fixture has
   no per-worker isolation. Fine today; revisit if parallel test execution is introduced.
 
@@ -315,5 +340,13 @@ Keep it lean — facts an agent can't infer from the code in front of it.
 current-state tree, trap 2, and Testing updated in place rather than a full regenerate. Everything
 else in this file is still as of 2026-08-02 and should be checked against the code before being
 trusted for later stories.
+
+**2026-08-08 patch (Story 1.1 code review):** traps 1, 3, 4 and 5 marked resolved and rewritten as
+the live rules they became; traps 6 and 7 added for the new `.env` secret mechanism and the
+localhost-only cookie scope; installed-vs-decided table updated (bcrypt, pyjwt and python-dotenv
+are installed, only openai is still pending); Testing updated for the new per-test truncation and
+the `AuthService.hash_password` seam. The current-state tree above still predates Story 1.1 and
+does not list `api/auth.py`, `api/dependencies.py`, `services/auth_service.py` or
+`exceptions/`; verify against disk before trusting it.
 
 Last Updated: 2026-08-08

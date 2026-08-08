@@ -46,6 +46,11 @@ cd backend
 # Install dependencies
 uv sync
 
+# Set up secrets (required: without it the app uses a publicly known JWT key
+# and warns at startup that every session is forgeable)
+cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # paste into JWT_SECRET_KEY
+
 # (Optional) copy and edit config
 cp config.yaml config.yaml   # edit host, port, log level, etc.
 

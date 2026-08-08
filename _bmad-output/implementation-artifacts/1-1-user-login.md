@@ -4,7 +4,7 @@ baseline_commit: 33e4aa36b45317a1cfc185106fabf2155e478623
 
 # Story 1.1: User Login
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -192,6 +192,151 @@ custom exceptions (architecture spine, Deferred).
     and not `["*"]`
   - [x] `GET /health` still returns `200` with no cookie (stays public)
 
+### Review Findings
+
+Reviewed 2026-08-08 by three parallel Opus reviewers (Blind Hunter, Edge Case Hunter,
+Acceptance Auditor) against `33e4aa3..HEAD` scoped to `backend/`, `uv.lock` excluded as
+machine-generated. Every finding below was independently re-verified against the code or
+reproduced in the project venv before being rated; subagent severities were discarded.
+
+**Decision needed** — 2, both resolved 2026-08-08 by Ofek
+
+- [x] [Review][Decision] The committed default JWT signing key is what `docker compose up`
+  actually runs with, and nothing rejects it. `config.yaml` ships
+  `${JWT_SECRET_KEY: "dev-only-insecure-secret-change-me"}`; `JWT_SECRET_KEY` is set nowhere in
+  the repo (compose passes only `DB_*`), and `docs/development-guide-backend.md` states there is
+  no `.env` mechanism. Combined with the missing-`exp` finding below, anyone reading the repo can
+  mint a permanent admin token. [backend/config.yaml:21] — **Resolved: adopt a backend `.env`
+  file loaded by docker-compose.** Moved to Patch below. Scope as implemented: an untracked
+  `backend/.env` holding the real secret, a committed `backend/.env.example` template (requires a
+  `!.env.example` negation, since `.gitignore` currently ignores `.env.*` too), `env_file` on the
+  compose backend service, `python-dotenv` loading in `utils.load_config` so the non-Docker
+  `uv run python main.py` path gets the same values instead of silently falling back to the
+  insecure default, and a loud startup warning if the default secret is still in use.
+- [x] [Review][Decision] The session cookie is `Secure` in every environment the repo defines,
+  including local dev, contradicting Completion Note #6. `secure=not debug` reads `app.debug`,
+  which defaults to `false` and is never set to `true` by `docker-compose.yml` or any other
+  path, so the project's only documented local-dev and demo route serves a `Secure` cookie over
+  plain HTTP. It works on `http://localhost` only because browsers grant localhost a
+  secure-context exemption; a defense demo reached over a LAN IP silently drops the session with
+  no error. AD-3 says "Secure outside local dev", so something must change.
+  [backend/api/auth.py:65, backend/config.yaml:2, docker-compose.yml:24-29] — **Resolved: accept
+  localhost-only scope for now.** No behavioural change. Reviewer did not disagree: the
+  architecture spine already defers production-grade deployment, and localhost is the documented
+  demo path. Residual risk accepted and now documented rather than implied: reaching the demo
+  over a LAN IP or hostname instead of `localhost` drops the session cookie silently. The
+  inaccurate Completion Note #6, which claimed the current code matches "Secure outside local
+  dev", is corrected to state the actual behaviour (Patch below).
+
+**Patch** — 16 (14 from review, 2 converted from the resolved decisions above)
+
+- [x] [Review][Patch] Adopt a backend `.env` mechanism so the JWT secret is not the committed
+  default (converted from Decision 1). Untracked `backend/.env` with a generated secret, committed
+  `backend/.env.example` template, `!.env.example` negation in `.gitignore`, `env_file` on the
+  compose backend service, `python-dotenv` added explicitly to `pyproject.toml` and loaded in
+  `utils.load_config` so the non-Docker run path resolves the same values, and a startup warning
+  when the default secret is still active. `backend/.dockerignore` already excludes `.env`, which
+  is correct: the secret is injected at runtime, never baked into the image.
+  [backend/config.yaml:21, docker-compose.yml:24-29, .gitignore]
+- [x] [Review][Patch] Correct Completion Note #6, which claims the cookie's `Secure` flag
+  "match[es] the architecture spine's 'Secure outside local dev' rule" (converted from Decision
+  2). It does not: `APP_DEBUG` is never set true anywhere, so `Secure` is on in every defined
+  environment. State the actual behaviour and the accepted localhost-only scope.
+  [_bmad-output/implementation-artifacts/1-1-user-login.md, Completion Notes List]
+- [x] [Review][Patch] A password longer than 72 bytes returns an unhandled 500 instead of the
+  generic 401, and the differing status code reveals whether the username exists (breaks AC2).
+  bcrypt 5.0 raises `ValueError: password cannot be longer than 72 bytes` rather than
+  truncating; `LoginRequest.password` has no `max_length` and nothing catches the raise.
+  Reproduced in the project venv. [backend/services/auth_service.py:57, backend/api/auth.py:19]
+- [x] [Review][Patch] JWTs carrying no `exp` claim are accepted and never expire, defeating AC5.
+  `jwt.decode` is called without `options={"require": [...]}`, and PyJWT only validates `exp`
+  when the claim is present. Reproduced: a token with `{"sub","role"}` and no `exp` decodes
+  cleanly. [backend/services/auth_service.py:103]
+- [x] [Review][Patch] `get_current_user` was built as a bound service method, not as a
+  `Depends`-usable seam, so the "one shared FastAPI dependency" AD-3 requires does not actually
+  ship. Signature is `(self, request, db)` on a `Factory`-provided instance; there are zero
+  production call sites and no `CurrentUserDep` alias, despite `SessionDep` in
+  `clients/database.py` establishing exactly that pattern. Stories 1.2/1.3 would each have to
+  write their own `@inject` glue, the per-route reimplementation AD-3 forbids.
+  [backend/services/auth_service.py:80]
+- [x] [Review][Patch] `int(payload["sub"])` sits outside the `except jwt.PyJWTError` block, so a
+  validly-signed token with a missing or non-numeric `sub` raises `KeyError`/`ValueError` and
+  escapes as a 500. The method's own docstring promises `InvalidCredentialsError` for any
+  malformed token. Reproduced. [backend/services/auth_service.py:107]
+- [x] [Review][Patch] Response timing enumerates valid usernames despite the identical error
+  body. The miss and inactive paths return before any bcrypt work; the existing-user path runs a
+  full ~330ms hash comparison. Measured at roughly 60-100x. Standard fix is a dummy `checkpw`
+  against a fixed hash on the miss path. [backend/services/auth_service.py:54-57]
+- [x] [Review][Patch] `bcrypt.checkpw` is a synchronous ~330ms CPU-bound call made directly
+  inside `async def authenticate`, blocking the event loop for every concurrent login and
+  stalling all other traffic including `/health`. Wrap in `asyncio.to_thread` /
+  `run_in_threadpool`. [backend/services/auth_service.py:57]
+- [x] [Review][Patch] An empty or non-bcrypt `password_hash` in the database raises
+  `ValueError: Invalid salt` and 500s, again leaking that the username exists. Reproduced. Folds
+  into the same guard as the 72-byte fix. [backend/services/auth_service.py:57]
+- [x] [Review][Patch] `AuthService` performs no logging at all, violating project-context's
+  "log through the injected loguru logger at every layer, carry identifying context (user id)"
+  rule. The container has a `logging` Resource but `auth_service` is constructed without it, so
+  successful logins, failed logins and rejected sessions leave no trace. Must never log the
+  plaintext password. [backend/services/auth_service.py, backend/container.py:52-56]
+- [x] [Review][Patch] An expired session is reported to the client as "Invalid username or
+  password", because `get_current_user` raises the same exception type as `authenticate`. AC5
+  requires an expired user be "returned to Login and re-authenticate"; Story 1.4 has no way to
+  distinguish an ended shift from a typo and will show the wrong copy on every 8-hour timeout. A
+  distinct exception type mapping to its own 401 detail is safe here, since this path is only
+  reachable by someone who already authenticated.
+  [backend/services/auth_service.py:99,103,111, backend/main.py:30-42]
+- [x] [Review][Patch] `_COOKIE_NAME = "access_token"` is declared independently in the module
+  that writes the cookie and the module that reads it. Change either and login returns 200 while
+  every authenticated request 401s, with nothing to catch the drift.
+  [backend/api/auth.py:12, backend/services/auth_service.py:13]
+- [x] [Review][Patch] Test-seeded `User` rows are never cleaned up on the session-scoped
+  database, and `_create_user`'s default `username="waiter1"` will collide the moment two future
+  tests accept the default. This is Story 1.0's deferred "no per-test transaction isolation"
+  item coming due, now that write-tests exist. [backend/tests/conftest.py:99-109,
+  backend/tests/test_auth.py:17-40]
+- [x] [Review][Patch] Config values are substituted as raw strings before YAML parsing, so
+  `JWT_EXPIRY_HOURS=8h` makes `timedelta(hours="8h")` a `TypeError` and `max_age` a 10,800-char
+  header, a non-boolean `APP_DEBUG` yields a truthy string that silently sets `secure=False`, and
+  a `token_expiry_hours` of 0 or negative issues an already-expired cookie behind a 200. Coerce
+  and validate in `AuthService.__init__`. [backend/services/auth_service.py:31,
+  backend/config.yaml:22]
+- [x] [Review][Patch] The CORS test asserts materially less than Task 9 specified. Spec says
+  assert `allow_origins == [<configured origin>]`; the test checks only `!= ["*"]` and
+  `len >= 1`, so a typo'd or empty origin passes. Nothing asserts the cookie's `Secure`,
+  `SameSite`, `Max-Age` or `Path` attributes either. [backend/tests/test_auth.py:214-216,
+  backend/tests/test_auth.py:63]
+- [x] [Review][Patch] `_bmad-output/project-context.md` still lists traps 1, 3, 4 and 5 as live
+  and bcrypt/JWT as "decided, not yet installed", all four now false. The story file mandates
+  this update in bold at its Dev Notes; `docs/development-guide-backend.md`'s env-var list is
+  likewise missing `JWT_SECRET_KEY`, `JWT_EXPIRY_HOURS` and `FRONTEND_ORIGIN`, and it is the only
+  place an operator would learn the secret needs setting.
+  [_bmad-output/project-context.md:29,79-103, docs/development-guide-backend.md:32]
+
+**Defer** — 2 raised, 1 resolved during the patch pass, 1 still open
+
+- [x] [Review][Defer] The `role` claim is written into every JWT but never read anywhere;
+  `get_current_user` re-loads the `User` row instead. Harmless today, but it is a standing
+  invitation for Story 1.2 to read `payload["role"]` for its role guard, at which point an Admin
+  demoting a user has no effect until the token expires 8 hours later
+  [backend/services/auth_service.py:73-77] — **resolved rather than deferred:** the claim was
+  dropped, and the token now carries only `sub` and `exp`. Standing rule for Story 1.2: derive
+  authorization from the loaded `User`, never from a token claim.
+- [x] [Review][Defer] `api/auth.py` imports `UserRole` from `data_models`, and
+  `services/auth_service.py` imports `fastapi.Request`, both crossing the spine's stated
+  dependency direction (`api/` may depend on `services/` only; nothing below should know the web
+  framework) [backend/api/auth.py:7, backend/services/auth_service.py:5] — half resolved: the
+  `fastapi.Request` import is gone, since `get_current_user` now takes a token string and
+  `api/dependencies.py` owns the framework coupling. The `api/` to `data_models` enum reference
+  remains deferred; settle the convention once Story 1.2 adds a second router rather than
+  inventing a one-off here.
+
+**Dismissed as noise (3):** `samesite="lax"` hardcoded while the CORS origin is configurable
+(only bites on cross-registrable-domain deployment, explicitly out of scope per the spine's
+Deferred section); `FRONTEND_ORIGIN` trailing-slash and missing-key robustness (speculative
+misconfiguration with no evidence); `test_health_route_stays_public` being currently tautological
+(it pins intent for Story 1.2, the same guard-test pattern Story 1.0 established deliberately).
+
 ## Dev Notes
 
 ### Architecture compliance
@@ -334,10 +479,17 @@ designated location for custom exceptions, starting with `InvalidCredentialsErro
 5. **The `clients/database.py` bug fix was a single line.** `get_session` now `await`s
    `request.app.container.database()` before calling `.session_factory()`. This was the only
    change to that file; the rest, including the fixture's shape, was left untouched.
-6. **Cookie `Secure` attribute is tied to the existing `app.debug` config flag**, not a new
+6. ~~**Cookie `Secure` attribute is tied to the existing `app.debug` config flag**, not a new
    setting: `secure=not debug`, injected via `Depends(Provide[Container.config.app.debug])`,
    matching the architecture spine's "Secure outside local dev" rule without inventing a second
-   environment flag.
+   environment flag.~~ **Corrected 2026-08-08 during code review, this note was wrong.**
+   `APP_DEBUG` is never set to `true` anywhere in the repo, so `secure=not debug` evaluated to
+   `Secure` in *every* environment, including local dev, and did not implement "Secure outside
+   local dev" at all. It also wrongly coupled cookie transport policy to the verbose-traceback
+   and auto-reload switch. Now set to `secure=True` unconditionally with the reasoning inline:
+   browsers exempt `http://localhost` from the Secure requirement, so the Docker demo works, and
+   v1 is accepted as localhost-only. Reaching the app over a LAN address would silently drop the
+   cookie.
 
 **Findings deliberately NOT fixed here (out of this story's stated scope):**
 
@@ -376,6 +528,37 @@ designated location for custom exceptions, starting with `InvalidCredentialsErro
 **Confirmed unchanged**: `backend/data_models/**` (other than the `exceptions/` removal above),
 `backend/alembic/**`, all frontend files.
 
+### Files changed by the code-review patch pass (2026-08-08)
+
+**Added**
+
+- `backend/api/dependencies.py` (`CurrentUserDep`, the shared AD-3 seam)
+- `backend/.env.example` (committed template, no secrets)
+- `backend/.env` (**untracked**, holds the generated signing key)
+- `.gitattributes`
+
+**Modified**
+
+- `backend/services/auth_service.py` (rewritten: `hash_password` seam, timing equalization,
+  threaded bcrypt, `require` on JWT claims, guarded `sub` parsing, expiry validation, injected
+  logger, takes a token string rather than a `Request`)
+- `backend/exceptions/__init__.py` (`AuthError` base plus `InvalidCredentialsError`,
+  `SessionExpiredError`, `NotAuthenticatedError`)
+- `backend/api/auth.py` (bounded request fields, shared `COOKIE_NAME`, unconditional `Secure`)
+- `backend/main.py` (single `AuthError` handler, default-secret startup warning, wire list
+  extended to `api.dependencies`)
+- `backend/container.py` (injects the logger into `auth_service`)
+- `backend/utils.py` (loads `backend/.env` via python-dotenv, real env vars still win)
+- `backend/pyproject.toml`, `backend/uv.lock` (added `python-dotenv`)
+- `backend/tests/conftest.py` (`truncate_all_tables`, per-test isolation)
+- `backend/tests/test_auth.py` (rewritten: 12 tests to 22)
+- `backend/entrypoint.sh` (line endings renormalized to LF, no content change)
+- `docker-compose.yml` (optional `env_file` on the backend service)
+- `.gitignore` (`!.env.example` negation)
+- `README.md`, `docs/development-guide-backend.md` (`.env` setup, new env vars)
+- `_bmad-output/project-context.md` (traps 1/3/4/5 resolved, traps 6/7 added, table and testing
+  notes updated)
+
 ## Change Log
 
 | Date | Change |
@@ -388,3 +571,10 @@ designated location for custom exceptions, starting with `InvalidCredentialsErro
 | 2026-08-08 | Registered `CORSMiddleware` with an explicit configured allow-list and activated `container.wire(modules=["api.auth"])`, the first entry in the wire list. |
 | 2026-08-08 | Fixed the pre-existing missing `await` on `container.database()` in `clients/database.py`, deferred to this story by Story 1.0. |
 | 2026-08-08 | Added `tests/test_auth.py` covering all 8 acceptance criteria: successful login, wrong username/password, deactivated user, no plaintext leakage, 8-hour token expiry, the `get_current_user` dependency's four cases, explicit CORS, and that `/health` stays public. |
+| 2026-08-08 | Applied bmad-code-review findings (3-layer parallel Opus review, 16 patches). Security: bounded the login request and guarded the bcrypt call so an overlong password or corrupt stored hash is a 401 rather than a 500 that enumerated usernames; required `exp` and `sub` on JWT decode so a token omitting them can no longer be an eternal session; guarded `sub` parsing; equalized failed-login response time with a dummy hash comparison (measured 60-100x gap down to 1.03x); moved bcrypt off the event loop with `asyncio.to_thread`. |
+| 2026-08-08 | Delivered the AD-3 shared dependency properly as `api/dependencies.py::CurrentUserDep`, the seam Stories 1.2 and 1.3 depend on. `AuthService.get_current_user` now takes a token string instead of a `Request`, so the service layer no longer imports the web framework, and `api.dependencies` was appended to the wire list. |
+| 2026-08-08 | Split `InvalidCredentialsError` into an `AuthError` family so an expired session no longer reports itself as a wrong password, added the `AuthService.hash_password` seam Story 1.3 will create accounts through, injected the loguru logger for login and session auditing, validated `token_expiry_hours` at construction, and made `COOKIE_NAME` a single shared constant. |
+| 2026-08-08 | Adopted a `backend/.env` secret mechanism (Decision 1): untracked `.env`, committed `.env.example`, `!.env.example` gitignore negation, optional `env_file` in compose, python-dotenv loading so the non-Docker path matches, and a startup warning when the published default key is still in use. |
+| 2026-08-08 | Accepted localhost-only cookie scope (Decision 2) and corrected the inaccurate Completion Note #6. `Secure` is now unconditional rather than wrongly tied to the debug/auto-reload flag. |
+| 2026-08-08 | Added per-test truncation to the `db_session` fixture, closing Story 1.0's deferred test-isolation item now that write tests exist. Strengthened the CORS test to assert the exact configured origin and added cookie-attribute assertions. Test count 12 to 22, suite 18 to 29. |
+| 2026-08-08 | Added `.gitattributes` pinning `*.sh` to LF. A Windows checkout with `core.autocrlf=true` was rewriting `entrypoint.sh` to CRLF and breaking its shebang, which made the backend container crash-loop and blocked Story 1.0's and this story's Docker verification. Full stack now verified from an empty volume, including a real end-to-end login. |

@@ -27,9 +27,26 @@ database:
 logging:
   level: ${LOG_LEVEL: "INFO"}
   colorize: ${LOG_COLORIZE: true}
+auth:
+  secret_key: ${JWT_SECRET_KEY: "dev-only-insecure-secret-change-me"}
+  token_expiry_hours: ${JWT_EXPIRY_HOURS: 8}
+cors:
+  allow_origin: ${FRONTEND_ORIGIN: "http://localhost:3000"}
 ```
 
-No `.env` file mechanism is used on the backend — overrides come from real process environment variables (`APP_DEBUG`, `SERVER_HOST`, `SERVER_PORT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `LOG_LEVEL`, `LOG_COLORIZE`).
+Overrides come from real process environment variables (`APP_DEBUG`, `SERVER_HOST`, `SERVER_PORT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `LOG_LEVEL`, `LOG_COLORIZE`, `JWT_SECRET_KEY`, `JWT_EXPIRY_HOURS`, `FRONTEND_ORIGIN`), and from an optional `backend/.env` file loaded at import by `utils.load_config`. A real environment variable always beats the file, so docker-compose and your shell both still win.
+
+### Secrets: set up `backend/.env` before the first run
+
+```bash
+cd backend
+cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # paste into JWT_SECRET_KEY
+```
+
+`backend/.env` is gitignored and is excluded from the Docker build context, so the secret is injected at runtime and never baked into an image. `docker-compose.yml` picks it up via `env_file` (marked optional, so a fresh clone still starts).
+
+**If you skip this**, the app falls back to the default `JWT_SECRET_KEY` published in `config.yaml` and logs a warning at startup. That default is in the public repository, so anyone can forge a session token against it. Fine for a throwaway local run, never for anything shared.
 
 A PostgreSQL instance must be reachable at the configured host/port — locally this means either running `docker compose up postgres` from the repo root, or your own Postgres install matching the `database.*` config values.
 

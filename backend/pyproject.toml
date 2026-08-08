@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.19.0",
     "bcrypt>=5.0.0",
     "pyjwt>=2.13.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [dependency-groups]

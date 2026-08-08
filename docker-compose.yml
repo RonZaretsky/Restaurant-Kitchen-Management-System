@@ -21,6 +21,14 @@ services:
       context: ./backend
     ports:
       - "8000:8000"
+    # Secrets are injected at runtime, never baked into the image
+    # (backend/.dockerignore excludes .env from the build context).
+    # Copy backend/.env.example to backend/.env before the first run.
+    env_file:
+      # Optional so a fresh clone still starts. Without it the app falls back to
+      # config.yaml's defaults and logs a warning about the forgeable secret.
+      - path: ./backend/.env
+        required: false
     environment:
       DB_HOST: postgres
       DB_PORT: 5432

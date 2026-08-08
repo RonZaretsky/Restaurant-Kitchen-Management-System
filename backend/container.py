@@ -53,4 +53,5 @@ class Container(containers.DeclarativeContainer):
         AuthService,
         secret_key=config.auth.secret_key,
         token_expiry_hours=config.auth.token_expiry_hours,
+        logger=logging,
     )

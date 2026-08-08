@@ -25,3 +25,23 @@
   fixtures raise a raw `ConnectionRefusedError` deep in setup if Postgres isn't running, rather
   than one message pointing at "start Postgres first" (`docker compose up`). DX polish only, not
   a correctness bug.
+
+## Deferred from: code review of story-1-1 (2026-08-08)
+
+- ~~**The JWT `role` claim is written but never read**~~ — **RESOLVED during the same review's
+  patch pass, not deferred.** The claim was dropped from `create_access_token` entirely; the
+  token now carries only `sub` and `exp`. `get_current_user` re-loads the `User` row, so role is
+  always read live from the database. **The rule this leaves for Story 1.2:** derive
+  authorization from the loaded `User`, never from a token claim. Putting `role` back in the
+  token would mean an Admin demoting or deactivating someone has no effect until that user's
+  token expires up to 8 hours later.
+- **Layering: `api/` imports `data_models`** — `backend/api/auth.py` pulls `UserRole` from
+  `data_models` for its response model, crossing the architecture spine's stated dependency
+  direction (`api/` may depend on `services/` only). Partially addressed during the patch pass:
+  the opposite-direction violation is gone, since `services/auth_service.py` no longer imports
+  `fastapi.Request` (`get_current_user` now takes a token string, and `api/dependencies.py` owns
+  the framework coupling). What remains is the API layer referencing a domain enum, which is
+  ordinary Pydantic practice but still contradicts the spine as written. Settle the convention
+  once Story 1.2 adds a second domain router and a real pattern is needed, rather than inventing
+  a one-off shim. This is graded work, so resolve it explicitly and document the reasoning rather
+  than letting it drift.

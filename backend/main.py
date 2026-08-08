@@ -4,42 +4,65 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from loguru import logger
 
 from constants import SETTINGS
 from container import Container
-from exceptions import InvalidCredentialsError
+from exceptions import AuthError
 from utils import load_config
 from api.router import router
+
+DEFAULT_SECRET_KEY = "dev-only-insecure-secret-change-me"
 
 container = Container()
 container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 
-# The first entry in the wire list (AD-1). Every later story that adds
-# @inject to a new router module appends its name here, never replaces
-# the list.
-container.wire(modules=["api.auth"])
+# Every later story that adds @inject to a new module appends its name here,
+# never replaces the list (AD-1).
+container.wire(modules=["api.auth", "api.dependencies"])
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await container.init_resources()
+    _warn_if_default_secret_key()
     yield
     await container.shutdown_resources()
 
 
-async def _invalid_credentials_handler(request: Request, exc: InvalidCredentialsError) -> JSONResponse:
-    """Return the single generic login-failure response for any credential error.
+def _warn_if_default_secret_key() -> None:
+    """Log a warning if the JWT signing key is still the committed default.
+
+    The default is published in this repository, so anyone can forge a token
+    against a deployment still using it. Set JWT_SECRET_KEY in backend/.env.
+    Deliberately a warning rather than a hard failure, so a fresh clone still
+    starts for the local demo.
+
+    Returns:
+        Nothing.
+    """
+    if container.config.auth.secret_key() == DEFAULT_SECRET_KEY:
+        logger.warning(
+            "JWT_SECRET_KEY is still the published default. Sessions are forgeable. "
+            "Set it in backend/.env (see backend/.env.example)."
+        )
+
+
+async def _auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
+    """Turn any authentication failure into a 401 carrying its own message.
+
+    One handler for the whole AuthError family, so each message stays defined
+    in exactly one place and cannot drift between call sites.
 
     Args:
         request: The incoming request that triggered the error.
-        exc: The raised InvalidCredentialsError. Its details are never used in
-            the response, only its type, so the message can never drift
-            between call sites.
+        exc: The raised AuthError subclass, whose detail becomes the response
+            body.
 
     Returns:
-        A 401 JSON response with a fixed, non-revealing error message.
+        A 401 JSON response.
     """
-    return JSONResponse(status_code=401, content={"detail": "Invalid username or password"})
+    return JSONResponse(status_code=401, content={"detail": exc.detail})
 
 
 def create_app() -> FastAPI:
@@ -57,7 +80,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_exception_handler(InvalidCredentialsError, _invalid_credentials_handler)
+    app.add_exception_handler(AuthError, _auth_error_handler)
     app.include_router(router)
     return app
 
