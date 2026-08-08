@@ -49,6 +49,9 @@ uv sync
 # (Optional) copy and edit config
 cp config.yaml config.yaml   # edit host, port, log level, etc.
 
+# Apply database migrations (required: the app no longer creates the schema itself)
+uv run alembic upgrade head
+
 # Start the server
 uv run python main.py
 ```
