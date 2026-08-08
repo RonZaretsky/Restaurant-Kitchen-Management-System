@@ -7,10 +7,10 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.cors import CORSMiddleware
 
-from data_models import User, UserRole
+from data_models import MAX_PASSWORD_BYTES, User, UserRole
 from exceptions import NotAuthenticatedError, SessionExpiredError
 from main import app
-from services.auth_service import MAX_PASSWORD_BYTES, AuthService
+from services.auth_service import AuthService
 from utils import load_config
 from constants import SETTINGS
 

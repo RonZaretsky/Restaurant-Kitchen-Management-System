@@ -7,15 +7,11 @@ import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import User
+from data_models import MAX_PASSWORD_BYTES, User
 from exceptions import InvalidCredentialsError, NotAuthenticatedError, SessionExpiredError
 
 JWT_ALGORITHM = "HS256"
 COOKIE_NAME = "access_token"
-
-# bcrypt refuses anything longer, so a longer submission can never be a real
-# credential: no account could have been created with one either.
-MAX_PASSWORD_BYTES = 72
 
 # A fixed valid hash compared against on the user-miss path so a failed login
 # costs the same time whether or not the username exists. Without this the

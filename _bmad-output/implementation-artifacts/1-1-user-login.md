@@ -325,11 +325,17 @@ reproduced in the project venv before being rated; subagent severities were disc
 - [x] [Review][Defer] `api/auth.py` imports `UserRole` from `data_models`, and
   `services/auth_service.py` imports `fastapi.Request`, both crossing the spine's stated
   dependency direction (`api/` may depend on `services/` only; nothing below should know the web
-  framework) [backend/api/auth.py:7, backend/services/auth_service.py:5] — half resolved: the
-  `fastapi.Request` import is gone, since `get_current_user` now takes a token string and
-  `api/dependencies.py` owns the framework coupling. The `api/` to `data_models` enum reference
-  remains deferred; settle the convention once Story 1.2 adds a second router rather than
-  inventing a one-off here.
+  framework) [backend/api/auth.py:7, backend/services/auth_service.py:5] — **fully resolved
+  2026-08-08, not deferred.** The `fastapi.Request` import was already gone from the prior patch
+  pass. The remaining half, `api/` reaching into `data_models` for a raw enum, is now gone too:
+  `LoginRequest`/`LoginResponse` moved out of `api/auth.py` into the new
+  `backend/data_models/auth.py`, alongside `MAX_PASSWORD_BYTES` (which the request schema's
+  `Field(max_length=...)` needs, and which `services/auth_service.py` now imports back from
+  `data_models` instead of defining locally). `api/auth.py` imports only Pydantic schemas from
+  `data_models` now, matching the architecture spine's own description of that package:
+  "SQLAlchemy models & Pydantic schemas." **Pattern for Story 1.2 onward:** request/response
+  schemas for a domain live in `data_models/{domain}.py` next to that domain's ORM models, not
+  inline in the router file.
 
 **Dismissed as noise (3):** `samesite="lax"` hardcoded while the CORS origin is configurable
 (only bites on cross-registrable-domain deployment, explicitly out of scope per the spine's
@@ -559,6 +565,23 @@ designated location for custom exceptions, starting with `InvalidCredentialsErro
 - `_bmad-output/project-context.md` (traps 1/3/4/5 resolved, traps 6/7 added, table and testing
   notes updated)
 
+### Files changed post-review: schema relocation (2026-08-08)
+
+**Added**
+
+- `backend/data_models/auth.py` (`LoginRequest`, `LoginResponse`, `MAX_PASSWORD_BYTES`)
+
+**Modified**
+
+- `backend/data_models/__init__.py` (exports the three new names, following the package's
+  existing pattern)
+- `backend/api/auth.py` (`LoginRequest`/`LoginResponse` removed, now imported from
+  `data_models`; no longer imports `UserRole` directly, resolving the layering item left open
+  after the review's patch pass)
+- `backend/services/auth_service.py` (`MAX_PASSWORD_BYTES` removed, now imported from
+  `data_models` instead of defined locally)
+- `backend/tests/test_auth.py` (`MAX_PASSWORD_BYTES` import source updated to match)
+
 ## Change Log
 
 | Date | Change |
@@ -578,3 +601,4 @@ designated location for custom exceptions, starting with `InvalidCredentialsErro
 | 2026-08-08 | Accepted localhost-only cookie scope (Decision 2) and corrected the inaccurate Completion Note #6. `Secure` is now unconditional rather than wrongly tied to the debug/auto-reload flag. |
 | 2026-08-08 | Added per-test truncation to the `db_session` fixture, closing Story 1.0's deferred test-isolation item now that write tests exist. Strengthened the CORS test to assert the exact configured origin and added cookie-attribute assertions. Test count 12 to 22, suite 18 to 29. |
 | 2026-08-08 | Added `.gitattributes` pinning `*.sh` to LF. A Windows checkout with `core.autocrlf=true` was rewriting `entrypoint.sh` to CRLF and breaking its shebang, which made the backend container crash-loop and blocked Story 1.0's and this story's Docker verification. Full stack now verified from an empty volume, including a real end-to-end login. |
+| 2026-08-08 | Moved `LoginRequest`, `LoginResponse` and `MAX_PASSWORD_BYTES` out of `api/auth.py` into new `data_models/auth.py`, matching the architecture spine's description of that package ("SQLAlchemy models & Pydantic schemas"). Fully resolves the layering item left open after the review patch pass: `api/auth.py` no longer imports a raw domain enum from `data_models`, only schemas. Establishes the pattern for later domains: request/response schemas live in `data_models/{domain}.py`, not inline in the router. |

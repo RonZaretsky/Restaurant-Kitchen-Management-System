@@ -35,13 +35,17 @@
   authorization from the loaded `User`, never from a token claim. Putting `role` back in the
   token would mean an Admin demoting or deactivating someone has no effect until that user's
   token expires up to 8 hours later.
-- **Layering: `api/` imports `data_models`** — `backend/api/auth.py` pulls `UserRole` from
-  `data_models` for its response model, crossing the architecture spine's stated dependency
-  direction (`api/` may depend on `services/` only). Partially addressed during the patch pass:
-  the opposite-direction violation is gone, since `services/auth_service.py` no longer imports
-  `fastapi.Request` (`get_current_user` now takes a token string, and `api/dependencies.py` owns
-  the framework coupling). What remains is the API layer referencing a domain enum, which is
-  ordinary Pydantic practice but still contradicts the spine as written. Settle the convention
-  once Story 1.2 adds a second domain router and a real pattern is needed, rather than inventing
-  a one-off shim. This is graded work, so resolve it explicitly and document the reasoning rather
-  than letting it drift.
+- ~~**Layering: `api/` imports `data_models`**~~ — **RESOLVED 2026-08-08, not deferred.**
+  `backend/api/auth.py` originally defined `LoginRequest`/`LoginResponse` inline and pulled the
+  bare `UserRole` enum from `data_models` to type the response, the crossing this item
+  originally flagged. `LoginRequest` and `LoginResponse` now live in the new
+  `backend/data_models/auth.py`, alongside `MAX_PASSWORD_BYTES` (moved there too, since the
+  request schema's `Field(max_length=...)` needs it and `data_models/` must not import from
+  `services/`). `api/auth.py` now imports only Pydantic schemas from `data_models`, never a raw
+  domain enum, matching the architecture spine's own description of that package: "SQLAlchemy
+  models & Pydantic schemas." `services/auth_service.py` imports `MAX_PASSWORD_BYTES` back from
+  `data_models`, which is the allowed direction (`services/` may depend on `data_models/`). The
+  opposite-direction violation (`services/` importing `fastapi.Request`) was already resolved in
+  the prior patch pass. **The pattern for Story 1.2 and beyond:** request/response schemas for a
+  domain live in `data_models/{domain}.py` next to that domain's ORM models, not inline in the
+  router file.
