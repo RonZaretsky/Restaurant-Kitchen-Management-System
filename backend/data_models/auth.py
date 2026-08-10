@@ -1,10 +1,6 @@
 from pydantic import BaseModel, Field
 
-from .user import UserRole
-
-# bcrypt refuses anything longer, so a longer submission can never be a real
-# credential: no account could have been created with one either.
-MAX_PASSWORD_BYTES = 72
+from .user import MAX_PASSWORD_BYTES, UserRole
 
 
 class LoginRequest(BaseModel):

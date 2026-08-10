@@ -50,6 +50,42 @@
   domain live in `data_models/{domain}.py` next to that domain's ORM models, not inline in the
   router file.
 
+## Deferred from: code review of story-1-3 (2026-08-10)
+
+- **An Admin password reset does not revoke the target's existing sessions** —
+  `backend/services/user_service.py:216-221` overwrites `password_hash` only. Verified by
+  execution: the victim's pre-reset session cookie still authenticates afterwards, because the JWT
+  carries only `sub`/`exp` and nothing password-derived. Since the canonical reason to reset a
+  password is a compromised account, the attacker keeps access for the remaining token lifetime
+  (8h default) while everyone believes the account was secured. AC7's "the old password stops
+  working immediately" is satisfied for *login*, and no Story 1.3 AC covers session revocation.
+  The honest fix is a `token_version` column on `users`, bumped on reset, included in the JWT and
+  verified in `get_current_user` — an Alembic migration plus an AD-3 amendment, both outside Story
+  1.3's stated no-schema-change scope. The revocation seam already exists (`get_current_user`
+  rejects inactive users, proven by the deactivate path returning 401 on the same cookie), so the
+  wiring is small once the column exists. **Worth doing before any real deployment**; it is a
+  genuine security gap, not just polish.
+- **`GET /api/admin/users` is unbounded** — `backend/services/user_service.py:92` is
+  `select(User).order_by(User.id)` with no limit, offset, or `is_active` filter. Fine for a
+  restaurant's staff list. Flagged because this endpoint is on the critical path for every admin
+  screen (per Story 1.3's scope note it is the only way the UI discovers user ids), and adding a
+  cursor later is a breaking response-shape change. Best decided when Story 1.4 builds the Users
+  screen and the actual pagination need is known.
+- **An Admin can deactivate their own account** — `backend/services/user_service.py:162-171` never
+  compares `user_id` to `actor.id`. Verified: with a second admin present, self-deactivation
+  returns 200 and the very next request on that session returns 401. AD-15 still holds (it only
+  permits this when another active Admin remains) and no AC forbids it, so this is arguably correct
+  behavior rather than a defect. But a misclick on the wrong row is unrecoverable for that Admin,
+  and it is only truly safe if someone actually holds the other Admin account's password. Better
+  addressed as a confirmation step in Story 1.4's Users screen than as a service-layer block.
+- **The test suite has no isolation against concurrent runs, and this review proved it empirically**
+  — during this review three Opus subagents ran `uv run pytest` simultaneously; one observed a
+  251-second run with 3 spurious failures (`InvalidRequestError: Could not refresh instance`) in
+  tests unrelated to the change. Three subsequent fresh-database runs by the reviewer were green in
+  ~24s each, confirming the story's own code is not flaky. This is live confirmation of the
+  pre-existing `migrated_database` per-worker-isolation item already deferred from Story 1.0, and it
+  will become a real problem the moment CI or `pytest-xdist` is introduced. Not caused by Story 1.3.
+
 ## Deferred from: code review of story-1-2 (2026-08-08)
 
 - **403 is invisible in the OpenAPI schema** — `ForbiddenError` is a bare `Exception` rather than

@@ -7,6 +7,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from services.auth_service import AuthService
+from services.user_service import UserService
 
 
 @dataclass
@@ -53,5 +54,10 @@ class Container(containers.DeclarativeContainer):
         AuthService,
         secret_key=config.auth.secret_key,
         token_expiry_hours=config.auth.token_expiry_hours,
+        logger=logging,
+    )
+
+    user_service = providers.Factory(
+        UserService,
         logger=logging,
     )

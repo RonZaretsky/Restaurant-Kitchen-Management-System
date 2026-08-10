@@ -1,14 +1,13 @@
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from loguru import logger
 
 from constants import SETTINGS
 from container import Container
-from exceptions import AuthError, ForbiddenError
+from exceptions.handlers import register_exception_handlers
 from utils import load_config
 from api.router import router
 
@@ -19,7 +18,7 @@ container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 
 # Every later story that adds @inject to a new module appends its name here,
 # never replaces the list (AD-1).
-container.wire(modules=["api.auth", "api.dependencies"])
+container.wire(modules=["api.auth", "api.dependencies", "api.admin"])
 
 
 @asynccontextmanager
@@ -48,42 +47,6 @@ def _warn_if_default_secret_key() -> None:
         )
 
 
-async def _auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
-    """Turn any authentication failure into a 401 carrying its own message.
-
-    One handler for the whole AuthError family, so each message stays defined
-    in exactly one place and cannot drift between call sites.
-
-    Args:
-        request: The incoming request that triggered the error.
-        exc: The raised AuthError subclass, whose detail becomes the response
-            body.
-
-    Returns:
-        A 401 JSON response.
-    """
-    return JSONResponse(status_code=401, content={"detail": exc.detail})
-
-
-async def _forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSONResponse:
-    """Turn a role-authorization failure into a 403 carrying its message.
-
-    Kept separate from _auth_error_handler: a ForbiddenError means the
-    caller's identity is already verified and only their Role lacks
-    permission, a distinct case from an AuthError that must stay
-    independently testable and never collapse into a 401.
-
-    Args:
-        request: The incoming request that triggered the error.
-        exc: The raised ForbiddenError, whose detail becomes the response
-            body.
-
-    Returns:
-        A 403 JSON response.
-    """
-    return JSONResponse(status_code=403, content={"detail": exc.detail})
-
-
 def create_app() -> FastAPI:
     app = FastAPI(
         title=SETTINGS.APP_NAME,
@@ -99,8 +62,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_exception_handler(AuthError, _auth_error_handler)
-    app.add_exception_handler(ForbiddenError, _forbidden_error_handler)
+    register_exception_handlers(app)
     app.include_router(router)
     return app
 

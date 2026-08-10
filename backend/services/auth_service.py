@@ -4,7 +4,7 @@ from typing import Any
 
 import bcrypt
 import jwt
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_models import MAX_PASSWORD_BYTES, User
@@ -96,7 +96,13 @@ class AuthService:
                 cases raise identically and take comparable time, so the
                 caller cannot distinguish which one occurred.
         """
-        result = await db.execute(select(User).where(User.username == username))
+        # Case-insensitive, matching the uniqueness rule UserService enforces on
+        # creation. If login stayed case-sensitive, an account created as "Casey"
+        # could never be signed into as "casey" while also blocking "casey" from
+        # being created, which is the worst of both.
+        result = await db.execute(
+            select(User).where(func.lower(User.username) == username.strip().lower())
+        )
         user = result.scalar_one_or_none()
 
         encoded = password.encode("utf-8")

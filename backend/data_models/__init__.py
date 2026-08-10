@@ -1,6 +1,15 @@
 from .base import Base
-from .user import User, UserRole
-from .auth import LoginRequest, LoginResponse, MAX_PASSWORD_BYTES
+from .user import (
+    User,
+    UserRole,
+    MAX_PASSWORD_BYTES,
+    CreateUserRequest,
+    UpdateUserRequest,
+    ResetPasswordRequest,
+    UserResponse,
+)
+from .auth import LoginRequest, LoginResponse
+from .errors import ErrorResponse
 from .menu import Category, Dish
 from .recipe import Ingredient, RecipeIngredient, Unit
 from .order import RestaurantTable, Order, OrderItem, TableStatus, OrderStatus, OrderItemStatus
@@ -10,7 +19,8 @@ from .ai import AIRecipeSuggestion, AIChatSession, AIChatMessage, ChatRole
 __all__ = [
     "Base",
     "User", "UserRole",
-    "LoginRequest", "LoginResponse", "MAX_PASSWORD_BYTES",
+    "CreateUserRequest", "UpdateUserRequest", "ResetPasswordRequest", "UserResponse",
+    "LoginRequest", "LoginResponse", "MAX_PASSWORD_BYTES", "ErrorResponse",
     "Category", "Dish",
     "Ingredient", "RecipeIngredient", "Unit",
     "RestaurantTable", "Order", "OrderItem", "TableStatus", "OrderStatus", "OrderItemStatus",
