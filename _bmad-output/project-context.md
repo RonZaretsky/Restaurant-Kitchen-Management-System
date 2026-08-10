@@ -27,7 +27,7 @@ manifest in that same change.
 | | Installed and usable **now** | Decided, **not yet installed** (adopting story) |
 |---|---|---|
 | **Backend** | fastapi, uvicorn[standard], dependency-injector, pyyaml, loguru, sqlalchemy[asyncio], asyncpg, alembic, bcrypt, pyjwt, python-dotenv, pytest + pytest-asyncio + httpx | openai (Story 6.1) |
-| **Frontend** | react 19, react-dom, typescript ~5.7.2, vite ^6, @vitejs/plugin-react, vitest + @testing-library/react | react-router v7 (Story 1.4) · MUI v9 (Story 1.4) · @tanstack/react-query v5 (Story 1.4) |
+| **Frontend** | react 19, react-dom, typescript ~5.7.2, vite ^6, @vitejs/plugin-react, vitest + @testing-library/react + @testing-library/user-event, react-router 7.8.0 (Story 1.4), MUI v9 + @mui/icons-material + @emotion/react + @emotion/styled (Story 1.4), @tanstack/react-query v5 (Story 1.4) | none |
 
 Authoritative manifests: `backend/pyproject.toml` + `backend/uv.lock`, `frontend/package.json` +
 `frontend/pnpm-lock.yaml`. Lockfiles are authoritative — regenerate via `uv sync` / `pnpm install`
@@ -45,38 +45,67 @@ after editing a manifest; never hand-edit a lockfile.
 
 ```
 backend/
-  main.py            app factory + lifespan; registers the AuthError -> 401 and ForbiddenError -> 403 handlers
-  container.py       DeclarativeContainer: config, logging, database, auth_service — all providers
+  main.py            app factory + lifespan; calls exceptions/handlers.py's register_exception_handlers(app)
+  container.py       DeclarativeContainer: config, logging, database, auth_service, user_service — all providers
   constants.py       SETTINGS (app name, version, config path)
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
   entrypoint.sh       Docker CMD: alembic upgrade head, then the app. Never in the lifespan.
-  alembic/            async-template migration environment; alembic/versions/ has the baseline
-  tests/              conftest.py, test_health.py, test_migrations.py, test_container.py, test_auth.py, test_authorization.py
-  api/router.py      aggregator; include_router()s auth (login) — no domain router mounted yet
-  api/auth.py        POST /auth/login, sets the JWT httpOnly cookie
+  alembic/            async-template migration environment; alembic/versions/ has 2 revisions
+  tests/              conftest.py + one test file per module below
+  api/router.py      aggregator; include_router()s auth and admin
+  api/auth.py        POST /auth/login (sets the JWT httpOnly cookie), GET /auth/me (Story 1.4, the
+                     frontend's only way to learn who is logged in across a page reload)
+  api/admin.py        Story 1.3's User-management routes, the reference implementation for
+                     role-gated routes with declared error responses (see trap 8)
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams
+  api/responses.py    error_responses() — shared OpenAPI responses-dict builder
   clients/database.py  SessionDep — AsyncSession from the container's session factory
-  data_models/       7 ORM modules + base.py + auth.py (LoginRequest/LoginResponse) — the full schema, already written
-  services/auth_service.py  login, token issuance/verification, password hashing — the only service written so far
-  exceptions/        AuthError family (401) + ForbiddenError (403), each with its own main.py handler
+  data_models/       7 ORM modules + base.py + auth.py + errors.py — the full schema, already written
+  services/auth_service.py  login, token issuance/verification, password hashing
+  services/user_service.py  Story 1.3's User CRUD, the last-admin lock guard, denial logging
+  exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409), UserNotFoundError (404)
+  exceptions/handlers.py    register_exception_handlers(app) — the one place new exception families get wired
 ```
 
 - `data_models/` is complete and mirrors `docs/database-schema.md`: `user.py`, `menu.py`,
-  `recipe.py`, `order.py`, `inventory.py`, `ai.py`, `base.py`, plus `auth.py` for request/response
-  schemas. **Do not treat the schema as unwritten.**
-- `services/` has `auth_service.py` and `user_service.py` (Story 1.3). Every other domain rule in
-  the epics still has to be written.
+  `recipe.py`, `order.py`, `inventory.py`, `ai.py`, `base.py`, plus `auth.py`/`errors.py` for
+  request/response schemas. **Do not treat the schema as unwritten.**
+- `services/` has `auth_service.py` and `user_service.py`. Every other domain rule in the epics
+  still has to be written.
 - `api/` has `router.py` (health, mounted inline), `auth.py`, and `admin.py` (Story 1.3, the first
   real domain router and the reference implementation for role-gated routes, see trap 8).
 - `alembic/versions/` now holds two revisions: the baseline, and `f1743862f1b1` (case-insensitive
   unique index on username, Story 1.3).
 
-**Frontend — scaffold only.** `src/App.tsx`, `src/main.tsx`, `src/config/config.ts`, and four
-intentionally empty folders (`pages/`, `components/`, `services/`, `types/`, each holding a
-`.gitkeep`). No routing, no component library, no state management, no screens.
-`src/setupTests.ts` (jest-dom matchers) and `src/App.test.tsx` (smoke test) exist as the
-harness's proof-of-life; delete or replace the latter once `App` has real content.
+**Frontend — shell and routing skeleton, no domain screens yet (Story 1.4).**
+
+```
+frontend/src/
+  App.tsx              provider composition root: QueryClientProvider, ConnectionStatusProvider,
+                        ThemeModeProvider, RouterProvider (react-router core export, not "/dom",
+                        see Testing)
+  main.tsx              mounts <App/>, unchanged since Story 1.0
+  router.tsx             the route tree (13 IA-surface routes + /login), exported as `routes` so
+                        tests build their own createMemoryRouter from the same config
+  config/config.ts       import.meta.env access (unchanged)
+  config/theme.ts         lightTheme/darkTheme (accent-color override only, everything else stock
+                        MUI) + DENSE_ROW_HEIGHT
+  types/user.ts           UserRole, CurrentUser (mirrors UserResponse's JSON shape, snake_case)
+  services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing
+  services/authService.ts  useCurrentUser / useLogin, the only TanStack Query hooks so far
+  components/shell/        RequireAuth (route guard), AppShell (app bar + nav + Outlet),
+                        ThemeModeProvider/ThemeToggle, ConnectionStatusContext/ReconnectingBanner,
+                        RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
+                        ROLE_PATH_PREFIX, the single source of truth the nav and the guard both read)
+  pages/{role}/           one placeholder component per IA surface (just the surface's own title),
+                        real content ships per-surface in its own later story
+```
+
+No state management library beyond TanStack Query for server state and React Context/`useState` for
+local UI state (theme mode, connection status), matching AD-13. `services/` is not yet organized
+per-domain (only `authService.ts` exists); later stories add one file per domain the same way
+`user_service.py` did on the backend.
 
 ---
 
@@ -357,6 +386,22 @@ from `frontend/`.
   account creation and login can never diverge on cost or salt settings.
 - No `pytest-xdist` and no CI pipeline exist yet, so the session-scoped test database fixture has
   no per-worker isolation. Fine today; revisit if parallel test execution is introduced.
+- **`frontend/src/setupTests.ts` calls `@testing-library/react`'s `cleanup()` in an explicit
+  `afterEach` (Story 1.4).** RTL's own auto-cleanup only registers itself if it detects a global
+  `afterEach`, and `vite.config.ts`'s `globals: false` deliberately does not provide one (every test
+  file imports `describe`/`it`/`expect` itself). Without the explicit call, a second `it()` in the
+  same file that renders another component leaves the first render's DOM in place, so queries like
+  `getByRole` start matching more than one element. Any new test file with more than one `render()`
+  call across its `it()` blocks needs nothing extra, `setupTests.ts` already covers it.
+- **Import `RouterProvider` from `"react-router"`, never `"react-router/dom"` (Story 1.4).** The
+  `/dom` subpath's `RouterProvider` is a thin wrapper that also passes `flushSync: ReactDOM.flushSync`
+  to the real one; under this project's React 19.2.6 + react-router 7.8.0 + jsdom/Vitest combination,
+  that wrapper reproducibly breaks the Router context, `useLocation`/`useNavigate`/`NavLink` anywhere
+  in the tree then throw "may be used only in the context of a `<Router>` component," even outside
+  tests (verified with a two-line repro, not a testing-only quirk). Everything else routing-related
+  (`createBrowserRouter`, `createMemoryRouter`, `NavLink`, `Navigate`, `Outlet`, `useLocation`,
+  `useNavigate`) already lives on the core `"react-router"` export, so there is no reason to reach for
+  `/dom` at all in this codebase.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria — those are the tests.
 
@@ -422,5 +467,18 @@ normalization rule. Current-state tree updated for `services/user_service.py`, `
 the second Alembic revision. Testing note: the suite is 107 tests; `tests/conftest.py`'s `client`
 fixture uses an `https` base URL because the session cookie is `Secure` and httpx, unlike a
 browser, has no localhost exemption.
+
+**2026-08-10 patch (Story 1.4, application shell/routing/nav):** installed-vs-decided table updated,
+react-router, MUI (+icons +emotion), and @tanstack/react-query all landed, nothing left pending on
+the frontend side. `GET /api/auth/me` added to `api/auth.py`, not named by any FR/AC but required
+infrastructure: the frontend's only way to learn who is logged in and what Role they hold across a
+page reload, since the session cookie is httpOnly. Backend and frontend current-state trees both
+rewritten (frontend was "scaffold only," now has the full shell: routing, per-role nav, theme,
+Skeleton/Reconnecting scaffolds; backend tree also caught up to Story 1.3's `admin.py`/
+`user_service.py`/`exceptions/handlers.py`, which the prior patch missed). Two new Testing entries:
+`setupTests.ts` needs an explicit `afterEach(cleanup)` because `globals: false` defeats
+`@testing-library/react`'s own auto-cleanup detection; `RouterProvider` must come from `"react-router"`
+core, never `"react-router/dom"` (its `flushSync` wrapper reproducibly breaks Router context under
+this project's React 19.2.6 + react-router 7.8.0 combination). Backend suite is 109 tests.
 
 Last Updated: 2026-08-10

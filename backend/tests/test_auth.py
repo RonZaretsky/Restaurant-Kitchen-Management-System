@@ -235,6 +235,37 @@ async def test_configured_token_lifetime_is_the_eight_hour_shift() -> None:
 
 
 @pytest.mark.asyncio
+async def test_me_returns_the_authenticated_users_profile(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _create_user(db_session, username="waiter_me", role=UserRole.waiter)
+    await client.post("/api/auth/login", json={"username": "waiter_me", "password": _PASSWORD})
+
+    # Act
+    response = await client.get("/api/auth/me")
+
+    # Assert
+    body = response.json()
+    assert response.status_code == 200
+    assert body["username"] == "waiter_me"
+    assert body["role"] == "waiter"
+    assert body["is_active"] is True
+    assert "password_hash" not in body
+    assert set(body.keys()) == {"id", "username", "full_name", "role", "is_active", "created_at"}
+
+
+@pytest.mark.asyncio
+async def test_me_without_a_session_is_rejected(client: AsyncClient) -> None:
+    # Act
+    response = await client.get("/api/auth/me")
+
+    # Assert
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Not authenticated"}
+
+
+@pytest.mark.asyncio
 async def test_service_rejects_a_nonsense_expiry_setting() -> None:
     # Act / Assert
     # Config values arrive as raw strings, so a typo must fail loudly at construction
