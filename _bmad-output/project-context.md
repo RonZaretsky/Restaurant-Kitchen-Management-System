@@ -45,24 +45,32 @@ after editing a manifest; never hand-edit a lockfile.
 
 ```
 backend/
-  main.py            app factory + lifespan (init/shutdown container resources)
-  container.py       DeclarativeContainer: config, logging, database — all providers.Resource
+  main.py            app factory + lifespan; registers the AuthError -> 401 and ForbiddenError -> 403 handlers
+  container.py       DeclarativeContainer: config, logging, database, auth_service — all providers
   constants.py       SETTINGS (app name, version, config path)
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
   entrypoint.sh       Docker CMD: alembic upgrade head, then the app. Never in the lifespan.
   alembic/            async-template migration environment; alembic/versions/ has the baseline
-  tests/              pytest suite: conftest.py, test_health.py, test_migrations.py, test_container.py
-  api/router.py      ONE router, ONE route: GET /health
+  tests/              conftest.py, test_health.py, test_migrations.py, test_container.py, test_auth.py, test_authorization.py
+  api/router.py      aggregator; include_router()s auth (login) — no domain router mounted yet
+  api/auth.py        POST /auth/login, sets the JWT httpOnly cookie
+  api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams
   clients/database.py  SessionDep — AsyncSession from the container's session factory
-  data_models/       7 ORM modules + base.py — the full schema, already written
-  services/          EMPTY (only __init__.py) — no business logic exists yet
+  data_models/       7 ORM modules + base.py + auth.py (LoginRequest/LoginResponse) — the full schema, already written
+  services/auth_service.py  login, token issuance/verification, password hashing — the only service written so far
+  exceptions/        AuthError family (401) + ForbiddenError (403), each with its own main.py handler
 ```
 
 - `data_models/` is complete and mirrors `docs/database-schema.md`: `user.py`, `menu.py`,
-  `recipe.py`, `order.py`, `inventory.py`, `ai.py`, `base.py`. **Do not treat the schema as unwritten.**
-- `services/` is empty. Every domain rule in the epics still has to be written.
-- `api/` has exactly one health route. Every domain router is still to be created.
+  `recipe.py`, `order.py`, `inventory.py`, `ai.py`, `base.py`, plus `auth.py` for request/response
+  schemas. **Do not treat the schema as unwritten.**
+- `services/` has `auth_service.py` and `user_service.py` (Story 1.3). Every other domain rule in
+  the epics still has to be written.
+- `api/` has `router.py` (health, mounted inline), `auth.py`, and `admin.py` (Story 1.3, the first
+  real domain router and the reference implementation for role-gated routes, see trap 8).
+- `alembic/versions/` now holds two revisions: the baseline, and `f1743862f1b1` (case-insensitive
+  unique index on username, Story 1.3).
 
 **Frontend — scaffold only.** `src/App.tsx`, `src/main.tsx`, `src/config/config.ts`, and four
 intentionally empty folders (`pages/`, `components/`, `services/`, `types/`, each holding a
@@ -98,7 +106,7 @@ These are the ones that cost hours because nothing errors:
    `api/dependencies.py` provides `CurrentUserDep`, the one shared seam AD-3 requires. A route
    without it is still fully public, and nothing warns you. Every protected route must declare
    `user: CurrentUserDep`, and it must never re-derive a user from the cookie itself. Story 1.2
-   builds role enforcement on top of this.
+   built role enforcement on top of this (see trap 8).
 
 5. **RESOLVED by Story 1.1.** The stray `backend/data_models/exceptions/` package is gone.
    Top-level `backend/exceptions/` is the single designated location, and it now holds the
@@ -120,6 +128,47 @@ These are the ones that cost hours because nothing errors:
    with no error anywhere. Accepted scope for v1 (review 2026-08-08); revisit with a real
    cookie-transport setting if the app ever needs to be reached off-box.
 
+8. **RESOLVED by Story 1.3, and now the live pattern every domain router copies.**
+   `api/dependencies.py` exports `require_role(*roles)`, layered on `CurrentUserDep` so a request
+   is authenticated before it is role-checked. Call it, never pass it bare:
+   `Depends(require_role(UserRole.admin))` is correct; `Depends(require_role)` registers without
+   error but makes FastAPI read the roles as a query param, silently running zero authorization.
+   `ForbiddenError` (a sibling of `AuthError`, not a subclass) maps to 403 via its own handler in
+   `main.py`. `api/admin.py` is the reference implementation: one module-level
+   `AdminDep = Annotated[User, Depends(require_role(UserRole.admin))]` reused by every route.
+   The two obligations Story 1.2 deferred here are both discharged, and both are now standing
+   rules: (a) **every route declares the error statuses it can return**, each with a body schema
+   (`_errors()` in `api/admin.py`, `ErrorResponse` in `data_models/errors.py`) — these exceptions
+   are plain `Exception` subclasses, so FastAPI infers nothing and an undeclared status is simply
+   absent from the contract Story 1.4's client builds against; (b) **`api/` stays non-logging and
+   services log their own rejections** through the injected loguru logger with the acting user id
+   (`actor` is threaded into every `UserService` method for exactly this).
+
+9. **A business rule enforced by a read-then-write in a service is not enforced at all under
+   concurrency.** Story 1.3's AD-15 last-admin guard counted active admins in an unlocked
+   `SELECT`, so two admins deactivating each other simultaneously both passed and both committed,
+   leaving zero active admins and locking user management permanently. Fixed with an id-ordered
+   `SELECT ... FOR UPDATE` over the active-admin rows before counting (consistent lock order, so
+   concurrent callers serialize instead of deadlocking). **Apply the same shape to every
+   invariant of the form "reject if this would leave zero/too few X"** — AD-6's guarded status
+   transitions and AD-8's last-recipe-row rule are the same class of problem. AD-5's
+   last-write-wins covers ordinary field edits, never an invariant check.
+
+10. **Pydantic's `max_length` counts characters; bcrypt's limit is bytes.** A 72-character
+    password of Hebrew or accented text is 144 bytes, passes a `max_length=72` field, and then
+    raises `ValueError` out of `hash_password` as an unhandled 500. Password fields use a
+    byte-length validator (`_require_hashable_password` in `data_models/user.py`), never a
+    character bound. Any future field whose real limit is a byte budget needs the same treatment.
+
+11. **Usernames are case-insensitive and trimmed, enforced in three places that must stay in
+    agreement.** `data_models/user.py` strips whitespace and rejects blank-after-strip;
+    `UserService.create_user` compares with `func.lower(...)`; `AuthService.authenticate` looks up
+    the same way; and a functional `UNIQUE INDEX ON users (lower(username))` (revision
+    `f1743862f1b1`) is the final arbiter. Changing any one of these without the others either
+    makes an account unreachable at login or lets two confusable accounts exist. Decided
+    2026-08-10 during Story 1.3's review, after establishing that nothing in the PRD, epics,
+    schema doc, or spine had ever specified username case at all.
+
 ---
 
 ## Where code goes
@@ -135,8 +184,13 @@ These are the ones that cost hours because nothing errors:
   live here.
 - `clients/` — anything reached over a network or driver (`database.py` today; `llm.py` for OpenAI
   later). Constructed by the container, never instantiated ad hoc inside a service.
-- `data_models/` — ORM schema only. No business logic.
-- `exceptions/` — custom exceptions (top-level; currently absent, create it when first needed).
+- `data_models/` — ORM schema only. No business logic. **Clarified 2026-08-08:** `api/` may import
+  type-level names from here (Pydantic schemas, an enum like `UserRole`, an ORM class used only as
+  a type annotation) for declaration purposes; querying, mutation, and domain rules still must stay
+  in `services/`.
+- `exceptions/` — top-level, holds the `AuthError` family plus `ForbiddenError` (a sibling, not a
+  subclass, since it maps to 403 on an already-verified identity vs. 401). Add new exception types
+  the same way rather than raising inline or building a second handler.
 
 **Frontend** — respect the existing empty-but-intentional folders: `pages/` (route-level),
 `components/` (reusable UI), `services/` (API calls), `types/` (shared types), `config/`.
@@ -345,8 +399,28 @@ trusted for later stories.
 the live rules they became; traps 6 and 7 added for the new `.env` secret mechanism and the
 localhost-only cookie scope; installed-vs-decided table updated (bcrypt, pyjwt and python-dotenv
 are installed, only openai is still pending); Testing updated for the new per-test truncation and
-the `AuthService.hash_password` seam. The current-state tree above still predates Story 1.1 and
-does not list `api/auth.py`, `api/dependencies.py`, `services/auth_service.py` or
-`exceptions/`; verify against disk before trusting it.
+the `AuthService.hash_password` seam.
 
-Last Updated: 2026-08-08
+**2026-08-08 patch (Story 1.2, PR #124 merged to main):** current-state tree brought up to date
+(`api/auth.py`, `api/dependencies.py`, `services/auth_service.py`, `exceptions/` now listed; no
+more "predates Story 1.1" warning). Trap 8 added for `require_role`/`ForbiddenError`: built, wired
+to a 403 handler, but not yet used by any route, with two review-deferred obligations
+(OpenAPI 403 documentation, service-layer denial logging) that land on the story that adds the
+first protected route. "Where code goes" updated for the architecture spine's same-day
+type-vs-behaviour clarification on `api/` importing from `data_models/`, and for `exceptions/`
+now existing rather than being a placeholder. No new packages landed in Story 1.2; the
+installed-vs-decided table is unchanged. Next story per sprint-status.yaml: **1.3, Admin Manages
+User Accounts** (backend-only scope expected, matching 1.0-1.3's pattern; the Users screen UI
+depends on Story 1.4's shell/routing/MUI setup, which has not landed).
+
+**2026-08-10 patch (Story 1.3 + its code review):** trap 8 rewritten as resolved, since Story 1.3
+mounted the first `require_role` route and discharged both of Story 1.2's deferred obligations;
+`api/admin.py` named as the reference implementation. Traps 9, 10 and 11 added from the review,
+all three generalizable beyond this story: read-then-write invariant checks need row locks,
+byte-vs-character bounds on password fields, and the three-places-must-agree username
+normalization rule. Current-state tree updated for `services/user_service.py`, `api/admin.py`, and
+the second Alembic revision. Testing note: the suite is 107 tests; `tests/conftest.py`'s `client`
+fixture uses an `https` base URL because the session cookie is `Secure` and httpx, unlike a
+browser, has no localhost exemption.
+
+Last Updated: 2026-08-10

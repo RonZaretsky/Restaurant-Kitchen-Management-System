@@ -8,7 +8,7 @@ from loguru import logger
 
 from constants import SETTINGS
 from container import Container
-from exceptions import AuthError, ForbiddenError
+from exceptions import AuthError, ConflictError, ForbiddenError, UserNotFoundError
 from utils import load_config
 from api.router import router
 
@@ -19,7 +19,7 @@ container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 
 # Every later story that adds @inject to a new module appends its name here,
 # never replaces the list (AD-1).
-container.wire(modules=["api.auth", "api.dependencies"])
+container.wire(modules=["api.auth", "api.dependencies", "api.admin"])
 
 
 @asynccontextmanager
@@ -84,6 +84,37 @@ async def _forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSO
     return JSONResponse(status_code=403, content={"detail": exc.detail})
 
 
+async def _conflict_error_handler(request: Request, exc: ConflictError) -> JSONResponse:
+    """Turn a business-rule or uniqueness conflict into a 409 carrying its message.
+
+    One handler for the whole ConflictError family (duplicate username,
+    last-admin lockout), so each message stays defined in exactly one place.
+
+    Args:
+        request: The incoming request that triggered the error.
+        exc: The raised ConflictError subclass, whose detail becomes the
+            response body.
+
+    Returns:
+        A 409 JSON response.
+    """
+    return JSONResponse(status_code=409, content={"detail": exc.detail})
+
+
+async def _user_not_found_error_handler(request: Request, exc: UserNotFoundError) -> JSONResponse:
+    """Turn a missing-User lookup into a 404 carrying its message.
+
+    Args:
+        request: The incoming request that triggered the error.
+        exc: The raised UserNotFoundError, whose detail becomes the response
+            body.
+
+    Returns:
+        A 404 JSON response.
+    """
+    return JSONResponse(status_code=404, content={"detail": exc.detail})
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=SETTINGS.APP_NAME,
@@ -101,6 +132,8 @@ def create_app() -> FastAPI:
     )
     app.add_exception_handler(AuthError, _auth_error_handler)
     app.add_exception_handler(ForbiddenError, _forbidden_error_handler)
+    app.add_exception_handler(ConflictError, _conflict_error_handler)
+    app.add_exception_handler(UserNotFoundError, _user_not_found_error_handler)
     app.include_router(router)
     return app
 

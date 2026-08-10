@@ -127,7 +127,10 @@ async def db_session(migrated_database: str) -> AsyncGenerator[AsyncSession, Non
 async def client(migrated_database: str) -> AsyncGenerator[AsyncClient, None]:
     # Entering the lifespan initialises and disposes container resources exactly as the
     # app does for real. migrated_database is depended on so the schema exists first.
+    # base_url is https (not http): the session cookie is Secure-flagged (AD-3), and
+    # unlike a browser, httpx enforces Secure literally with no localhost exemption, so
+    # an http base_url would silently drop the cookie on every request after login.
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as http_client:
+        async with AsyncClient(transport=transport, base_url="https://test") as http_client:
             yield http_client

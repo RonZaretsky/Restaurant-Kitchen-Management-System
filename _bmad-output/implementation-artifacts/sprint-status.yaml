@@ -1,5 +1,5 @@
 # generated: 2026-08-08
-# last_updated: 2026-08-08
+# last_updated: 2026-08-10
 # project: Restaurant-Kitchen-Management-System
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 #     all emit over its channel and depend on the {domain}.{event} naming it fixes.
 
 generated: 2026-08-08
-last_updated: 2026-08-08
+last_updated: 2026-08-10
 project: Restaurant-Kitchen-Management-System
 project_key: NOKEY
 tracking_system: file-system
@@ -64,7 +64,7 @@ development_status:
   1-0-project-foundation-test-harness-and-migration-baseline: done
   1-1-user-login: done
   1-2-role-based-authorization-enforcement: done
-  1-3-admin-manages-user-accounts: backlog
+  1-3-admin-manages-user-accounts: done
   1-4-application-shell-routing-and-per-role-navigation: backlog
   1-5-real-time-push-transport: backlog
   epic-1-retrospective: optional
