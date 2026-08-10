@@ -1,15 +1,15 @@
 from collections.abc import Sequence
-from typing import Annotated, Any
+from typing import Annotated
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends
 
 from api.dependencies import require_role
+from api.responses import error_responses
 from clients.database import SessionDep
 from container import Container
 from data_models import (
     CreateUserRequest,
-    ErrorResponse,
     ResetPasswordRequest,
     UpdateUserRequest,
     User,
@@ -24,28 +24,8 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 # CurrentUserDep, layered inside require_role) and Role == admin.
 AdminDep = Annotated[User, Depends(require_role(UserRole.admin))]
 
-
-def _errors(*statuses: int) -> dict[int | str, dict[str, Any]]:
-    """Build the OpenAPI `responses` entries for the given error statuses.
-
-    Settles the gap Story 1.2 deferred here. The exceptions these routes raise
-    are plain Exception subclasses rather than HTTPException, so FastAPI cannot
-    infer any of them and a route would otherwise document only its success
-    case. Each entry carries ErrorResponse as its body schema, so a generated
-    client sees the `detail` contract and not just a status number.
-
-    Args:
-        statuses: The HTTP status codes this route can return as errors.
-
-    Returns:
-        A responses mapping ready to pass to a route decorator.
-    """
-    return {
-        status: {"description": _ERROR_DESCRIPTIONS[status], "model": ErrorResponse}
-        for status in statuses
-    }
-
-
+# Resource-specific wording for this router; error_responses() (api/responses.py)
+# is the shared, router-agnostic builder every domain router uses the same way.
 _ERROR_DESCRIPTIONS = {
     401: "No valid session cookie was supplied",
     403: "Authenticated, but the caller's Role is not admin",
@@ -58,7 +38,7 @@ _ERROR_DESCRIPTIONS = {
     "/users",
     response_model=UserResponse,
     status_code=201,
-    responses=_errors(401, 403, 409),
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403, 409),
 )
 @inject
 async def create_user(
@@ -85,7 +65,11 @@ async def create_user(
     return await user_service.create_user(db, actor, payload)
 
 
-@router.get("/users", response_model=list[UserResponse], responses=_errors(401, 403))
+@router.get(
+    "/users",
+    response_model=list[UserResponse],
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403),
+)
 @inject
 async def list_users(
     actor: AdminDep,
@@ -105,7 +89,11 @@ async def list_users(
     return await user_service.list_users(db)
 
 
-@router.get("/users/{user_id}", response_model=UserResponse, responses=_errors(401, 403, 404))
+@router.get(
+    "/users/{user_id}",
+    response_model=UserResponse,
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403, 404),
+)
 @inject
 async def get_user(
     user_id: int,
@@ -132,7 +120,7 @@ async def get_user(
 
 
 @router.patch(
-    "/users/{user_id}", response_model=UserResponse, responses=_errors(401, 403, 404, 409)
+    "/users/{user_id}", response_model=UserResponse, responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403, 404, 409)
 )
 @inject
 async def update_user(
@@ -167,7 +155,7 @@ async def update_user(
 @router.post(
     "/users/{user_id}/deactivate",
     response_model=UserResponse,
-    responses=_errors(401, 403, 404, 409),
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403, 404, 409),
 )
 @inject
 async def deactivate_user(
@@ -199,7 +187,7 @@ async def deactivate_user(
 @router.post(
     "/users/{user_id}/reactivate",
     response_model=UserResponse,
-    responses=_errors(401, 403, 404),
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403, 404),
 )
 @inject
 async def reactivate_user(
@@ -229,7 +217,7 @@ async def reactivate_user(
 @router.post(
     "/users/{user_id}/reset-password",
     response_model=UserResponse,
-    responses=_errors(401, 403, 404),
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403, 404),
 )
 @inject
 async def reset_password(

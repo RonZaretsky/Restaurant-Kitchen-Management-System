@@ -5,7 +5,7 @@ from httpx import ASGITransport, AsyncClient
 from api.dependencies import get_current_user, require_role
 from data_models import User, UserRole
 from exceptions import AuthError, ForbiddenError, NotAuthenticatedError
-from main import _auth_error_handler, _forbidden_error_handler
+from exceptions.handlers import _auth_error_handler, _forbidden_error_handler
 from main import app as production_app
 
 FORBIDDEN_DETAIL = "You do not have permission to perform this action"
@@ -201,9 +201,9 @@ async def test_role_guard_resolves_through_the_shared_get_current_user_seam() ->
 
 def test_production_app_registers_the_forbidden_handler() -> None:
     # Arrange / Act
-    # Without this, deleting the registration in main.py turns every role denial
-    # into a 500 while the rest of this file stays green, since every other test
-    # here builds its own throwaway app.
+    # Without this, deleting the register_exception_handlers(app) call in main.py's
+    # create_app() turns every role denial into a 500 while the rest of this file
+    # stays green, since every other test here builds its own throwaway app.
     handler = production_app.exception_handlers.get(ForbiddenError)
 
     # Assert
