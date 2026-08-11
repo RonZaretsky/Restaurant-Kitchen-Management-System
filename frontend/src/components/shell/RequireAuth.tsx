@@ -8,6 +8,7 @@ import { ApiError } from "../../services/httpClient";
 import { AppShell } from "./AppShell";
 import { AppShellSkeleton } from "./AppShellSkeleton";
 import { ROLE_HOME_PATH, ROLE_PATH_PREFIX } from "./navigationConfig";
+import { RealtimeProvider } from "./RealtimeProvider";
 
 /**
  * Gates every protected route behind authentication and Role scoping.
@@ -70,5 +71,9 @@ export function RequireAuth() {
     return <Navigate to={homePath} replace />;
   }
 
-  return <AppShell user={user} />;
+  return (
+    <RealtimeProvider>
+      <AppShell user={user} />
+    </RealtimeProvider>
+  );
 }

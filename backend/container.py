@@ -6,7 +6,9 @@ from dependency_injector import containers, providers
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from clients.websocket import ConnectionRegistry
 from services.auth_service import AuthService
+from services.realtime_service import RealtimeService
 from services.user_service import UserService
 
 
@@ -29,6 +31,12 @@ async def _init_database(host: str, port: int, user: str, password: str, name: s
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     yield Database(engine=engine, session_factory=factory)
     await engine.dispose()
+
+
+async def _init_connection_registry(logger) -> AsyncGenerator[ConnectionRegistry, None]:
+    registry = ConnectionRegistry(logger=logger)
+    yield registry
+    await registry.close_all()
 
 
 class Container(containers.DeclarativeContainer):
@@ -59,5 +67,13 @@ class Container(containers.DeclarativeContainer):
 
     user_service = providers.Factory(
         UserService,
+        logger=logging,
+    )
+
+    connection_registry = providers.Resource(_init_connection_registry, logger=logging)
+
+    realtime_service = providers.Factory(
+        RealtimeService,
+        registry=connection_registry,
         logger=logging,
     )

@@ -1,0 +1,340 @@
+import asyncio
+import json
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+
+import httpx
+import jwt
+import pytest
+import uvicorn
+import websockets
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+from websockets.exceptions import ConnectionClosed
+
+import api.websocket as websocket_module
+from constants import SETTINGS
+from data_models import User, UserRole
+from main import app, container
+from services.auth_service import COOKIE_NAME, AuthService
+from utils import load_config
+
+_PASSWORD = "correct-horse-battery-staple"
+_ALLOWED_ORIGIN = load_config(SETTINGS.CONFIG_PATH)["cors"]["allow_origin"]
+_POLICY_VIOLATION = 1008
+_SERVER_START_TIMEOUT = 10
+
+
+async def _create_user(
+    db_session, username: str, role: UserRole = UserRole.cook
+) -> User:
+    user = User(
+        username=username,
+        password_hash=AuthService.hash_password(_PASSWORD),
+        full_name="Test User",
+        role=role,
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+def _cookie_header(token: str) -> dict:
+    return {"cookie": f"{COOKIE_NAME}={token}"}
+
+
+def _login(client: TestClient, username: str) -> str:
+    client.post("/api/auth/login", json={"username": username, "password": _PASSWORD})
+    token = client.cookies.get(COOKIE_NAME)
+    # Guards every test below: without this, a broken login turns the cookie into
+    # the literal string "None", and the rejection tests would pass for the wrong reason.
+    assert token, "login did not set a session cookie"
+    return token
+
+
+@asynccontextmanager
+async def _running_server():
+    # A real uvicorn.Server bound to an ephemeral port, run as a task in this test's own
+    # event loop. TestClient's websocket_connect runs the ASGI app in a separate thread
+    # with its own event loop, which would make a broadcast call from a test race the
+    # connection registry across two loops; a real server sharing this loop avoids that.
+    #
+    # lifespan="on" is deliberate, and symmetric on purpose: each test's server both
+    # initialises and tears down container.init_resources()/shutdown_resources() itself,
+    # exactly once. The earlier version of this test left resources initialised but never
+    # torn down between tests, which pinned the database engine to a pytest-asyncio event
+    # loop that a later test's own event loop had already replaced -- surfacing as
+    # asyncpg's "another operation is in progress" in whichever test ran next.
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning", lifespan="on")
+    server = uvicorn.Server(config)
+    server_task = asyncio.create_task(server.serve())
+    try:
+        async with asyncio.timeout(_SERVER_START_TIMEOUT):
+            while not server.started:
+                await asyncio.sleep(0.01)
+        yield server.servers[0].sockets[0].getsockname()[1]
+    finally:
+        server.should_exit = True
+        # Bounded, so a server that fails to shut down fails the suite rather than hanging it.
+        async with asyncio.timeout(_SERVER_START_TIMEOUT):
+            await server_task
+
+
+async def _connect(port: int, token: str):
+    return await websockets.connect(
+        f"ws://127.0.0.1:{port}/api/ws",
+        origin=_ALLOWED_ORIGIN,
+        additional_headers=_cookie_header(token),
+    )
+
+
+async def _login_over_http(port: int, username: str) -> str:
+    async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+        response = await http_client.post(
+            "/api/auth/login", json={"username": username, "password": _PASSWORD}
+        )
+    token = response.cookies.get(COOKIE_NAME)
+    assert token, "login did not set a session cookie"
+    return token
+
+
+@pytest.mark.asyncio
+async def test_valid_session_connects(db_session) -> None:
+    # Arrange
+    user = await _create_user(db_session, "ws_valid")
+
+    with TestClient(app, base_url="https://test") as client:
+        token = _login(client, "ws_valid")
+
+        # Act
+        headers = {"origin": _ALLOWED_ORIGIN, **_cookie_header(token)}
+        with client.websocket_connect("/api/ws", headers=headers):
+            # Assert: the handshake completed and the connection is actually
+            # registered, rather than merely "did not raise".
+            registry = await container.connection_registry()
+            assert user.id in registry._connections
+
+
+@pytest.mark.asyncio
+async def test_missing_cookie_is_rejected_before_accept() -> None:
+    # Act / Assert
+    with TestClient(app, base_url="https://test") as client:
+        with pytest.raises(WebSocketDisconnect) as rejection:
+            with client.websocket_connect("/api/ws", headers={"origin": _ALLOWED_ORIGIN}):
+                pass
+    assert rejection.value.code == _POLICY_VIOLATION
+
+
+@pytest.mark.asyncio
+async def test_expired_token_is_rejected_before_accept(db_session) -> None:
+    # Arrange
+    user = await _create_user(db_session, "ws_expired")
+    secret = load_config(SETTINGS.CONFIG_PATH)["auth"]["secret_key"]
+    expired_token = jwt.encode(
+        {"sub": str(user.id), "exp": datetime.now(timezone.utc) - timedelta(hours=1)},
+        secret,
+        algorithm="HS256",
+    )
+
+    # Act / Assert
+    with TestClient(app, base_url="https://test") as client:
+        headers = {"origin": _ALLOWED_ORIGIN, **_cookie_header(expired_token)}
+        with pytest.raises(WebSocketDisconnect) as rejection:
+            with client.websocket_connect("/api/ws", headers=headers):
+                pass
+    assert rejection.value.code == _POLICY_VIOLATION
+
+
+@pytest.mark.asyncio
+async def test_token_signed_with_wrong_key_is_rejected_before_accept(db_session) -> None:
+    # Arrange
+    user = await _create_user(db_session, "ws_forged")
+    forged_token = jwt.encode(
+        {"sub": str(user.id), "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+        "not-the-real-signing-key",
+        algorithm="HS256",
+    )
+
+    # Act / Assert
+    with TestClient(app, base_url="https://test") as client:
+        headers = {"origin": _ALLOWED_ORIGIN, **_cookie_header(forged_token)}
+        with pytest.raises(WebSocketDisconnect) as rejection:
+            with client.websocket_connect("/api/ws", headers=headers):
+                pass
+    assert rejection.value.code == _POLICY_VIOLATION
+
+
+@pytest.mark.asyncio
+async def test_mismatched_origin_is_rejected_before_accept(db_session) -> None:
+    # Arrange
+    # CORSMiddleware does not inspect the websocket ASGI scope at all, so this
+    # rejection is entirely the route's own manual check, not a side effect of
+    # the middleware stack.
+    await _create_user(db_session, "ws_bad_origin")
+
+    with TestClient(app, base_url="https://test") as client:
+        token = _login(client, "ws_bad_origin")
+
+        # Act / Assert
+        headers = {"origin": "http://evil.example", **_cookie_header(token)}
+        with pytest.raises(WebSocketDisconnect) as rejection:
+            with client.websocket_connect("/api/ws", headers=headers):
+                pass
+    assert rejection.value.code == _POLICY_VIOLATION
+
+
+@pytest.mark.asyncio
+async def test_broadcast_delivered_within_two_seconds(db_session) -> None:
+    # Arrange
+    await _create_user(db_session, "ws_broadcast")
+
+    async with _running_server() as port:
+        token = await _login_over_http(port, "ws_broadcast")
+
+        # Act
+        async with await _connect(port, token) as ws:
+            realtime_service = await container.realtime_service()
+            await realtime_service.broadcast([UserRole.cook], "test.smoke", {"ok": True})
+
+            # Assert
+            message = await asyncio.wait_for(ws.recv(), timeout=2)
+            assert json.loads(message) == {"event": "test.smoke", "payload": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_broadcast_is_scoped_to_the_targeted_role(db_session) -> None:
+    # Arrange: one cook and one waiter, both connected.
+    await _create_user(db_session, "ws_scope_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_scope_waiter", role=UserRole.waiter)
+
+    async with _running_server() as port:
+        cook_token = await _login_over_http(port, "ws_scope_cook")
+        waiter_token = await _login_over_http(port, "ws_scope_waiter")
+
+        async with await _connect(port, cook_token) as cook_ws:
+            async with await _connect(port, waiter_token) as waiter_ws:
+                # Act: target cooks only.
+                realtime_service = await container.realtime_service()
+                await realtime_service.broadcast([UserRole.cook], "test.scoped", {"n": 1})
+
+                # Assert: the cook receives it, the waiter does not.
+                message = await asyncio.wait_for(cook_ws.recv(), timeout=2)
+                assert json.loads(message) == {"event": "test.scoped", "payload": {"n": 1}}
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(waiter_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_reaches_every_targeted_role(db_session) -> None:
+    # Arrange
+    await _create_user(db_session, "ws_multi_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_multi_waiter", role=UserRole.waiter)
+
+    async with _running_server() as port:
+        cook_token = await _login_over_http(port, "ws_multi_cook")
+        waiter_token = await _login_over_http(port, "ws_multi_waiter")
+
+        async with await _connect(port, cook_token) as cook_ws:
+            async with await _connect(port, waiter_token) as waiter_ws:
+                # Act: one emission, two audiences (AC4).
+                realtime_service = await container.realtime_service()
+                await realtime_service.broadcast(
+                    [UserRole.cook, UserRole.waiter], "order.item_status_changed", {"id": 7}
+                )
+
+                # Assert
+                expected = {"event": "order.item_status_changed", "payload": {"id": 7}}
+                assert json.loads(await asyncio.wait_for(cook_ws.recv(), timeout=2)) == expected
+                assert json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2)) == expected
+
+
+@pytest.mark.asyncio
+async def test_second_connection_for_a_user_replaces_the_first(db_session) -> None:
+    # Arrange
+    await _create_user(db_session, "ws_single")
+
+    async with _running_server() as port:
+        token = await _login_over_http(port, "ws_single")
+        first = await _connect(port, token)
+        try:
+            # Act: the same session opens a second socket.
+            async with await _connect(port, token) as second:
+                # Assert: the first is closed, and only the second is delivered to.
+                with pytest.raises(ConnectionClosed):
+                    await asyncio.wait_for(first.recv(), timeout=2)
+
+                realtime_service = await container.realtime_service()
+                await realtime_service.broadcast([UserRole.cook], "test.single", {"ok": True})
+                message = await asyncio.wait_for(second.recv(), timeout=2)
+                assert json.loads(message) == {"event": "test.single", "payload": {"ok": True}}
+        finally:
+            # The server already closed its end when the second connection registered;
+            # this just releases the client-side handle so it cannot keep the server's
+            # graceful shutdown (which waits for every connection to close) waiting.
+            await first.close()
+
+
+@pytest.mark.asyncio
+async def test_binary_frame_does_not_break_the_connection(db_session) -> None:
+    # Arrange
+    await _create_user(db_session, "ws_binary")
+
+    async with _running_server() as port:
+        token = await _login_over_http(port, "ws_binary")
+
+        async with await _connect(port, token) as ws:
+            # Act: the client is never supposed to send, but a stray binary frame
+            # must not fault the handler (receive_text would raise KeyError on it).
+            await ws.send(b"\x00\x01\x02")
+            await asyncio.sleep(0.2)
+
+            # Assert: still connected and still receiving.
+            realtime_service = await container.realtime_service()
+            await realtime_service.broadcast([UserRole.cook], "test.after_binary", {"ok": True})
+            message = await asyncio.wait_for(ws.recv(), timeout=2)
+            assert json.loads(message) == {"event": "test.after_binary", "payload": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_connection_is_closed_once_its_session_stops_verifying(db_session, monkeypatch) -> None:
+    # Arrange: re-verify almost immediately rather than on the production interval.
+    monkeypatch.setattr(websocket_module, "REVERIFY_INTERVAL_SECONDS", 0.2)
+    user = await _create_user(db_session, "ws_revoked")
+
+    async with _running_server() as port:
+        token = await _login_over_http(port, "ws_revoked")
+
+        async with await _connect(port, token) as ws:
+            # Act: deactivate the account out from under the open connection.
+            user.is_active = False
+            db_session.add(user)
+            await db_session.commit()
+
+            # Assert: the socket is closed by the re-verification tick, not left open.
+            with pytest.raises(ConnectionClosed) as closed:
+                await asyncio.wait_for(ws.recv(), timeout=5)
+            assert closed.value.rcvd.code == _POLICY_VIOLATION
+
+
+@pytest.mark.asyncio
+async def test_unserializable_payload_does_not_unsubscribe_the_client(db_session) -> None:
+    # Arrange
+    await _create_user(db_session, "ws_bad_payload")
+
+    async with _running_server() as port:
+        token = await _login_over_http(port, "ws_bad_payload")
+
+        async with await _connect(port, token) as ws:
+            realtime_service = await container.realtime_service()
+
+            # Act: a sender-side bug, not a dead client.
+            await realtime_service.broadcast(
+                [UserRole.cook], "test.bad", {"when": datetime.now(timezone.utc)}
+            )
+
+            # Assert: the connection survives and still receives the next good event.
+            await realtime_service.broadcast([UserRole.cook], "test.good", {"ok": True})
+            message = await asyncio.wait_for(ws.recv(), timeout=2)
+            assert json.loads(message) == {"event": "test.good", "payload": {"ok": True}}
