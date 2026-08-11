@@ -160,3 +160,25 @@
   WebSocket to drive `status`, and implement AC7's "automatic retry" there. The context's shape is
   the contract 1.5 must match, so it should not be changed without revisiting `ReconnectingBanner`.
   Until 1.5 lands, AC7 is only half met and the banner has no runtime coverage.
+
+## Deferred from: code review of story-1.5 (2026-08-11)
+
+- **The `Secure` + `SameSite=Lax` session cookie limits the WebSocket transport to same-site /
+  localhost, and it fails silently.** Story 1.5's cookie-on-upgrade design works only because
+  `localhost` gets the potentially-trustworthy exemption for `Secure` and because `:3000`/`:8000`
+  are same-site. Any deployment where the frontend and API are cross-site, or reached over `ws://`
+  on a LAN address, drops the cookie on the upgrade. The observable symptom is a permanent
+  "Reconnecting..." banner with a 30s retry loop, no server-side log, and no client-side
+  distinction between "rejected" and "network down". `api/auth.py` already carries a review note
+  that LAN access silently drops this cookie, so Story 1.5 inherits this constraint rather than
+  introducing it. **Action:** revisit when the app is first deployed anywhere other than
+  localhost — likely a token-in-subprotocol handshake, or serving both origins behind one host.
+
+- **Removing the app-wide `ConnectionStatusProvider` lets a future consumer outside `RequireAuth`
+  silently read a fake "connected".** Story 1.5 moved the provider from `App.tsx` down into
+  `RequireAuth`, so it now wraps only the authenticated subtree. `ConnectionStatusContext`'s
+  default value is `"connected"`, so a consumer mounted outside that subtree (login screen, 404,
+  error boundary) would read a status that reflects nothing, with no warning. Nothing is wrong
+  today: the only consumer is `ReconnectingBanner` inside `AppShell`, which is inside the provider.
+  **Action:** if connection status is ever needed outside the authenticated shell, make the
+  context default `undefined` and have `useConnectionStatus()` throw outside a provider.

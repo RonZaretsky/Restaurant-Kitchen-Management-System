@@ -9,9 +9,10 @@ interface ConnectionStatusContextValue {
 /**
  * Transport-agnostic connection signal.
  *
- * Defaults to "connected", there is no real transport to observe yet.
- * Story 1.5 replaces this default with a live WebSocket signal; this
- * context's shape (`{ status }`) is the contract that story must match.
+ * Defaults to "connected". Story 1.5's RealtimeProvider is the live
+ * WebSocket signal that drives this via ConnectionStatusProvider; this
+ * default only matters for a consumer rendered outside that provider (there
+ * is none today, RealtimeProvider wraps the whole authenticated shell).
  */
 export const ConnectionStatusContext = createContext<ConnectionStatusContextValue>({
   status: "connected",
