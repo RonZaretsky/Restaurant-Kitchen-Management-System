@@ -6,7 +6,7 @@ story: 4
 
 # Story 1.4: Application Shell, Routing and Per-Role Navigation
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -21,7 +21,9 @@ so that every screen built in later epics has somewhere to live and I never see 
 1. React Router v7 is wired with a route per IA surface, and an authenticated-route guard redirects any unauthenticated visit to Login. (AD-3, UX-DR19)
 2. The nav lists only the current Role's own surfaces, with no cross-role navigation anywhere, and login lands the User on their Role's home surface: Waiter -> Tables, Cook -> Kitchen Display, Warehouse Manager -> Ingredients, Admin -> Menu Management. (FR-2, UX-DR19)
 3. The Login screen is built per [key-login.html](../planning-artifacts/ux-designs/ux-Restaurant-Kitchen-Management-System-2026-07-31/mockups/key-login.html), showing the generic "Invalid username or password" copy inline on failure. (FR-1, UX-DR17, UX-DR19)
-4. The theme toggle in the app bar flips light/dark and persists per browser/terminal (not per user account); Kitchen Display initializes dark, every other role's home initializes light. (UX-DR7)
+4. The theme toggle in the app bar flips light/dark and persists per browser/terminal (not per user account); a Cook's surfaces initialize dark, every other role's home initializes light. (UX-DR7)
+
+   _Amended 2026-08-11 during code review (decision 3). Originally read "Kitchen Display initializes dark", which named a single surface while Task 5 and the implementation key the default off the Cook Role. Keyed to the Role so the theme does not flip as a Cook moves between Kitchen Display, Dishes and Smart Chef during a shift on the same kitchen terminal._
 5. The MUI theme overrides `primary` with `{colors.accent}` (light) / `{colors.accent-dark}` (dark); every other Button variant stays stock MUI; dense-row styling (`size="small"`, 36px rows) is available as the shared list/table convention. (UX-DR6, UX-DR8)
 6. Any surface loading data for the first time renders MUI `Skeleton` rows/cards matching its expected layout, the shared cold-load pattern every later screen reuses. (UX-DR15)
 7. One app-wide "Reconnecting..." state exists with automatic retry and no local-first write queue, driven by a transport-agnostic connection signal; Story 1.5 wires it to the live WebSocket. (UX-DR16)
@@ -44,7 +46,7 @@ PRD, epics, or UX spine that calls for one; the session simply expires after 8 h
 
 ## Tasks / Subtasks
 
-- [x] **Task 1: Backend — `GET /api/auth/me`** (AC: 1, 2)
+- [x] **Task 1: Backend, `GET /api/auth/me`** (AC: 1, 2)
   - [x] The frontend's route guard and per-role nav need to know who is logged in and what Role they
     hold **after a page reload**, when all that exists client-side is an httpOnly cookie JavaScript
     cannot read. No endpoint for this exists yet (verified: `grep` across `backend/api/` finds no
@@ -551,7 +553,7 @@ claude-sonnet-5 (Claude Sonnet 5)
 - `backend/api/auth.py` (modified) - added `GET /api/auth/me`
 - `backend/tests/test_auth.py` (modified) - added `test_me_returns_the_authenticated_users_profile`, `test_me_without_a_session_is_rejected`
 
-**Frontend — new**
+**Frontend, new**
 - `frontend/src/types/user.ts`
 - `frontend/src/services/httpClient.ts`
 - `frontend/src/services/httpClient.test.ts`
@@ -585,7 +587,7 @@ claude-sonnet-5 (Claude Sonnet 5)
 - `frontend/src/pages/admin/UsersPage.tsx`
 - `frontend/src/pages/admin/TablesSetupPage.tsx`
 
-**Frontend — modified**
+**Frontend, modified**
 - `frontend/src/App.tsx` (provider composition root, replacing the placeholder `<h1>`)
 - `frontend/src/App.test.tsx` (rewritten smoke test)
 - `frontend/src/setupTests.ts` (added explicit `afterEach(cleanup)`)
@@ -594,13 +596,69 @@ claude-sonnet-5 (Claude Sonnet 5)
 - `frontend/pnpm-lock.yaml` (regenerated)
 - `frontend/Dockerfile` (copies the new `nginx.conf` over nginx's stock default site config)
 
-**Frontend — new (deployment)**
+**Frontend, new (deployment)**
 - `frontend/nginx.conf` - SPA history fallback (`try_files $uri $uri/ /index.html`), without which a
-  refresh or direct hit on any client-side route (`/login`, `/admin/users`, ...) 404s
+  refresh or direct hit on any client-side route (`/login`, `/admin/users`, ...) 404s. Code review
+  added an `/assets/` `=404` guard ahead of the fallback and `no-cache` on `index.html`
+
+**Frontend, new (added during code review)**
+- `frontend/src/components/shell/AppShellSkeleton.tsx` - the cold-load stand-in that renders the app
+  bar's shape, replacing the bare three-bar Box that did not match Task 7
+- `frontend/src/appIntegration.test.tsx` - the one test file that does not mock `authService`,
+  driving login through to the Role home over a stubbed `fetch`
 
 **Planning artifacts**
 - `_bmad-output/project-context.md` (installed-vs-decided table, both current-state trees, two new
   Testing entries, dated patch note)
+
+### Review Findings
+
+Code review 2026-08-11 (Opus, three parallel layers: adversarial general, edge-case hunter,
+acceptance auditor). Severities are the reviewer's own, assigned after reading the source at each
+location rather than from the diff alone.
+
+**Decisions (resolved 2026-08-11 by Ofek)**
+
+- [x] [Review][Decision] AC7's "automatic retry" is absent, and the Reconnecting banner is unreachable in the running app - `App.tsx` mounts `ConnectionStatusProvider` with no `status` prop and no producer exists anywhere, so the value is permanently `"connected"` and `ReconnectingBanner` is dead code outside tests. AC7 names "automatic retry," which is not implemented in any form. **Decided: accept the scaffold.** The transport-agnostic `{ status }` contract is this story's real deliverable and Story 1.5 must match it; a retry loop with no transport to retry against would be speculative and thrown away. AC7's producer and retry behaviour are deferred to Story 1.5 (recorded in `deferred-work.md` so the obligation is not lost with the story).
+- [x] [Review][Decision] Active nav link fails WCAG 2.2 AA contrast in light mode - `AppShell.tsx:26` uses `rgba(255,255,255,0.18)` behind white 13px text on the `#0B6E8F` app bar, measured at ~4.03:1 against the 4.5:1 AA floor for normal text. AC8 requires the baseline "in both themes"; dark mode passes at ~9.4:1. **Decided: darken the active pill to `rgba(0,0,0,0.2)`** (measured ~7.9:1), which clears AA in both themes and reads as a pressed state. This diverges from `key-login.html`'s sibling mockup chrome, which carries the same defect, so the mockup should be amended to match rather than the reverse. Becomes a patch.
+- [x] [Review][Decision] AC4 scopes the dark default to a surface, the code scopes it to a Role - AC4 says "Kitchen Display initializes dark"; `ThemeModeProvider.tsx:60` implements `user?.role === "cook"`, so a Cook's Dishes and Smart Chef surfaces also initialize dark. **Decided: the Role-keyed implementation is correct and AC4's wording is amended** to "a Cook's surfaces initialize dark, every other Role's home initializes light." Flipping the theme as a Cook moves between Kitchen Display, Dishes and Smart Chef mid-shift would be jarring, and the whole Cook session happens on the same low-light kitchen terminal. Becomes a documentation patch, no code change.
+- [x] [Review][Decision] Login failure renders a full MUI `Alert` where the mockup shows a small inline line - `key-login.html` renders failure as a 12px red line with a warning glyph between the password field and the button; `LoginPage.tsx:83-87` renders an `Alert severity="error"` box. **Decided: match the mockup's compact inline treatment but keep `role="alert"`** so the message is still announced, and link it from both fields with `aria-describedby`. Gets AC3's stated fidelity without losing the accessibility the Alert was providing for free. Becomes a patch, folded into the Login form plumbing item below.
+
+**Patches**
+
+- [x] [Review][Patch] **FALSE POSITIVE, corrected during the fix** (was rated high) Post-login navigation was reported to race the session refetch and bounce the user through Login [frontend/src/services/authService.ts:66-68] - the reported chain was: `useLogin`'s `onSuccess` does not return the `invalidateQueries` promise, so `LoginPage` navigates while the cache still holds the pre-login 401, and `RequireAuth` reads `isError` and redirects back to `/login`. **This does not happen, and the reviewer's premise about React Query v5 was wrong.** Refetching a query that errored *without ever holding data* does not keep `status === "error"`: `fetchState` clears it, `...(data === undefined && { error: null, status: 'pending' })`, so the guard reads "still loading" and renders its skeleton, not a rejected session. Proven empirically rather than by reading: with the promise deliberately left un-returned, `appIntegration.test.tsx` drives a real login over a stubbed fetch with a 25ms `/me` delay (a microtask-resolved stub cannot open the window at all) and the router's visited-path log contains no second `/login`. The `return` was kept anyway, because it removes a skeleton flash and stops the handover depending on a subtle framework internal, but it is a determinism improvement, not a correctness fix. Recorded here because the original finding, its "high" severity, and my own initial verification of it were all wrong.
+- [x] [Review][Patch] (high) Login shows raw backend and network text instead of AC3's generic copy [frontend/src/pages/login/LoginPage.tsx:85] - the Alert renders `loginMutation.error.message` verbatim. `LoginRequest` enforces `min_length=1` and the form does no client validation, so an empty submit (the most common user error) returns 422 and displays Pydantic's "String should have at least 1 character". A dropped connection displays "Failed to fetch"; a timeout displays the AbortError text. Map 401 to the generic credentials copy and everything else to a neutral fallback.
+- [x] [Review][Patch] (medium) Any `/me` failure is treated as "logged out" [frontend/src/components/shell/RequireAuth.tsx:37] - redirects on `isError` without inspecting status, though `ApiError.status` is available. A backend blip, a 500, or the client's own 5s abort all silently sign the user out of the UI, with `retry: false` allowing not even one retry. Discriminate on `status === 401`.
+- [x] [Review][Patch] (medium) `httpClient` hardening [frontend/src/services/httpClient.ts:61-87] - `fetch` is wrapped in `try/finally` with no `catch`, so network and abort rejections escape un-wrapped as raw `TypeError`/`AbortError` (this is what makes the two findings above unfixable at the call site); `Content-Type: application/json` is forced onto bodyless GETs, costing a CORS preflight on every `/me`; a 2xx with an empty or non-JSON body throws a bare `SyntaxError` (line 86 has no `.catch`, unlike the error path); and `{...init.headers}` silently drops headers passed as a `Headers` instance or tuple array.
+- [x] [Review][Patch] (medium) Cold-load state renders no app bar chrome, contrary to Task 7 [frontend/src/components/shell/RequireAuth.tsx:29-35] - Task 7 requires "the app bar's shape with `RowsSkeleton` standing in for the nav links and user chip, not a blank screen". What ships is a bare padded `Box` with three full-width bars, which does not match AC6's "matching its expected layout". The task checkbox is ticked and the AC6 test only asserts `getByRole("status")` exists, so nothing catches it.
+- [x] [Review][Patch] (medium) Nav links have no `:focus-visible` ring [frontend/src/components/shell/AppShell.tsx:20-28,53] - `NavLink` gets a `style` callback, and inline styles cannot express `:focus-visible`, so the links fall back to the user-agent ring over a saturated `#0B6E8F` bar rather than the MUI ring EXPERIENCE.md's accessibility floor is calibrated for. AC8 requires a visible focus ring on every interactive element, and no test asserts one anywhere.
+- [x] [Review][Patch] (medium) Login form omits standard field and a11y plumbing, and its error treatment is heavier than the mockup [frontend/src/pages/login/LoginPage.tsx:62-87] - no `name`, no `autoComplete="username"`/`"current-password"`, no `required`, so password managers will neither fill nor save. Both fields are marked `aria-invalid` via `error` while the explanatory error is not linked with `aria-describedby`. The error state never clears while the user corrects the fields. The card title is `variant="h6"` with no `component="h1"`, so the page (and the authenticated shell) has no `h1` at all, weakening AC8. **Includes resolved decision 4:** replace the MUI `Alert` box with the mockup's compact inline red line plus warning glyph, keeping `role="alert"` and wiring `aria-describedby` from both fields.
+- [x] [Review][Patch] (medium) Active nav link fails AA contrast in light mode [frontend/src/components/shell/AppShell.tsx:26] - from resolved decision 2: change the active background from `rgba(255,255,255,0.18)` (~4.03:1) to `rgba(0,0,0,0.2)` (~7.9:1). Verify both themes still read correctly after the change, and flag the sibling mockup chrome for the same amendment.
+- [x] [Review][Patch] (low) Amend AC4's wording to match the Role-keyed implementation [this story file] - from resolved decision 3: AC4 should read that a Cook's surfaces initialize dark rather than naming Kitchen Display alone. Documentation only, no code change.
+- [x] [Review][Patch] (medium) Missing docstrings and `@returns` across new frontend code - project-context.md requires a docstring on every function and an explicit `@returns`. Missing entirely: `navLinkStyle` (`AppShell.tsx:20`), `login` and `fetchCurrentUser` (`authService.ts:24,31`), `ApiError`'s constructor (`httpClient.ts:12`). Missing `@returns`: `App`, `ThemeToggle`, `ReconnectingBanner`, `LoginPage`, and all 12 placeholder pages. Documentation carries roughly the weight of the implementation on this project.
+- [x] [Review][Patch] (medium) The post-login navigation test encodes the inverted ordering it claims to mirror [frontend/src/router.test.tsx:193-204] - the fake `mutate` calls `mockAuthenticated("cook")` synchronously before invoking `onSuccess`, and the comment describes this as mirroring "the real `invalidateQueries()`-triggered refetch landing before the destination route's own guard re-evaluates". That is precisely backwards, and it is why the race above shipped green. Rewrite once the race is fixed.
+- [x] [Review][Patch] (medium) No frontend test exercises the real `authService` [frontend/src/{App,router,pages/login/LoginPage,components/shell/ThemeModeProvider}.test.*] - all four `vi.mock` the module, so `retry: false`, the invalidation, and the query-to-guard interaction never execute. `httpClient.test.ts` correctly mocks at `fetch`, but nothing covers the integration. Add one test with a real `QueryClient` and a mocked `fetch` driving login through to the destination route.
+- [x] [Review][Patch] (medium) `POST /api/auth/login` declares no error responses, and `/me` lacks two tests [backend/api/auth.py, backend/tests/test_auth.py] - trap 8's standing rule is that every route declares the statuses it can return with a body schema. `/me` does this correctly via `error_responses()`; `/login` was left bare, and this story is its first consumer. `/me`'s tests cover only the happy path and the no-cookie path, with nothing for a still-valid cookie belonging to a since-deactivated user or an expired token, despite mid-session Role/status change being the endpoint's stated justification.
+- [x] [Review][Patch] (low) `localStorage` is read and written unguarded at the provider root [frontend/src/components/shell/ThemeModeProvider.tsx:24,64] - `getItem` runs inside a `useState` initializer in the provider that wraps `RouterProvider`, so a blocked-storage context throws during first render and the whole app fails to mount rather than falling back to the Role default.
+- [x] [Review][Patch] (low) `nginx.conf` sets no cache policy and no asset guard [frontend/nginx.conf] - `index.html` may be cached by browsers, so a redeploy can serve a stale shell against fresh hashed asset names. A missing hashed asset also falls through to `index.html`, returning HTML with a 200 for a `.js` request. Add `Cache-Control: no-cache` for `index.html` and a `location /assets/ { try_files $uri =404; }` ahead of the catch-all.
+- [x] [Review][Patch] (low) `project-context.md` not brought up to date for the nginx change - the frontend current-state tree and the patch-note block never mention `nginx.conf` or the SPA-fallback requirement, the archetypal silent trap that file exists to record, and `Last Updated:` still reads 2026-08-10. While editing, also record that `RequireAuth`'s role-prefix check is a UX affordance and not a security boundary (`startsWith` also matches `/adminfoo`, and `require_role` on the backend is the only real enforcement), so later stories do not mistake it for one.
+- [x] [Review][Patch] (low) Placeholder page titles disagree with the nav labels and route table - "Tables Setup" vs `navigationConfig`'s "Tables setup"; "Ingredient Detail" vs "Ingredient detail"; "Table / Order Detail" vs "Table/Order detail".
+- [x] [Review][Patch] (low) The AC8 tab-order test is tautological [frontend/src/router.test.tsx:172-184] - `expectedLabels` is derived from `getAllByRole("link")`, i.e. DOM order, then asserted to equal tab order. For plain anchors with no `tabindex` that holds by construction and cannot fail on a nav-ordering regression. Compare against `ROLE_NAV_ITEMS.admin`'s declared order instead.
+- [x] [Review][Patch] (low) `Dockerfile` runs `pnpm install` rather than `--frozen-lockfile` [frontend/Dockerfile:8] - the image build can drift from the committed lockfile, contradicting Task 2's stated reason for committing it.
+- [x] [Review][Patch] (low) Em dashes in newly generated documentation - new lines in `project-context.md` and this story file use em dashes, against the standing preference for a comma or hyphen. All application code and comments in the diff are clean.
+
+**Deferred**
+
+- [x] [Review][Defer] The frontend image bakes `http://localhost:8000` as the API origin [frontend/Dockerfile:12, docker-compose.yml] - deferred, matches project-context.md trap 7's accepted localhost-only scope for v1. `nginx.conf` would be the natural place to terminate this with an `/api` proxy if the app ever needs to be reached off-box.
+- [x] [Review][Defer] Session expiry discards the attempted deep link [frontend/src/components/shell/RequireAuth.tsx:38] - deferred, no AC requires preserving it; `useLocation` is already read, so `state={{ from: location }}` plus a `LoginPage` handler would be the fix.
+- [x] [Review][Defer] The catch-all route is unreachable and there is no real 404 surface [frontend/src/router.tsx:49] - deferred, benign. `RequireAuth` redirects before `Outlet` renders, so the catch-all's `<Navigate to="/" replace />` is dead code; any mistyped URL silently lands on the Role home, which hides broken links but breaks nothing.
+- [x] [Review][Defer] `types/user.ts` is not pinned to the backend's `UserResponse` [frontend/src/types/user.ts] - deferred, a backend field rename would fail only at runtime, but no contract-testing tooling exists on this project and adding it is new scope.
+- [x] [Review][Defer] An unknown Role at runtime would crash the shell [frontend/src/components/shell/{RequireAuth,AppShell}.tsx] - deferred, TypeScript's exhaustive `Record<UserRole, ...>` covers this at build time; it can only bite if the backend enum grows without a frontend update, which is the same class as the item above.
+- [x] [Review][Defer] A Cook's dark default flashes light on every cold load [frontend/src/components/shell/ThemeModeProvider.tsx:60] - deferred, cosmetic, and the obvious fix (persist the Role-derived default) conflicts with AC4's per-browser-not-per-account semantics on a shared kitchen terminal, where it would leave the next Waiter in dark mode.
+
+**Dismissed as noise (6)**
+
+Recorded so they are not re-raised: the `react-router/dom` ban was challenged as an unverified workaround masking duplicate module copies, so I re-ran the repro against the current clean tree and confirmed the failure resolves through the single installed `react-router@7.8.0` copy, the rule is legitimate; `AppBar` not showing the dark accent is stock MUI `enableColorOnDark` behaviour and DESIGN.md does not list the app bar as an accent surface; `DENSE_ROW_HEIGHT` having no table consumer satisfies AC5's "available as the shared convention" and adding one would breach the scope note; `createBrowserRouter` at module scope is the documented `routes`/`router` split and is harmless; mixed exact/caret dependency pinning is normal with a committed lockfile; and the "all ACs ticked without a browser check" process criticism is already discharged by the 2026-08-11 manual verification and the nginx fix it produced.
 
 ## Change Log
 
@@ -608,4 +666,5 @@ claude-sonnet-5 (Claude Sonnet 5)
 |---|---|
 | 2026-08-10 | Story drafted from `epics.md` Story 1.4, the UX spine (`DESIGN.md`/`EXPERIENCE.md`), and the architecture spine's AD-13. Route table sourced from the mockups' own address bars rather than invented. Flagged one backend addition (`GET /api/auth/me`) as necessary infrastructure not named by any FR/AC. |
 | 2026-08-10 | Implemented: `GET /api/auth/me`; the full frontend shell (routing, per-role nav, MUI theme, theme toggle, connection-status and Skeleton scaffolds, route guard, Login screen, 12 placeholder pages). Fixed two test-infrastructure gaps found during implementation (RTL auto-cleanup, `react-router/dom`'s broken `RouterProvider`) and documented both in `project-context.md`. 109 backend tests and 24 frontend tests passing; `tsc -b` and `vite build` both clean. |
+| 2026-08-11 | Code review (Opus, three parallel adversarial layers). 4 decisions resolved, 19 patches applied, 6 items deferred, 6 dismissed. Headlines: the login screen no longer renders raw backend or browser text where AC3 mandates generic copy; the route guard now distinguishes a rejected session (401) from a transport failure instead of signing a working session out on any error, with `httpClient` reporting an unreachable backend as `ApiError` status 0; the active nav pill was darkened to clear WCAG AA, which it failed at ~4.03:1; the cold-load state now renders the app bar's shape per Task 7; and the Login form gained `name`/`autoComplete`/`required`, `aria-describedby`, error-clear-on-edit and an `h1`. One reported "high" finding, a post-login race supposedly bouncing the User through Login, was **disproven** by reintroducing it under a genuinely async test and observing no bounce: React Query resets a data-less errored query to `pending` on refetch, so the guard shows its skeleton. Suites are now 111 backend and 34 frontend tests, `tsc -b` and `vite build` clean, and the patched build was re-verified against the running Docker stack. |
 | 2026-08-11 | Manual verification against a real Docker Compose stack surfaced a deployment-side routing defect the mocked tests could not see: the frontend image shipped nginx's stock config, so refreshing or directly opening any client-side route returned 404. Added `frontend/nginx.conf` with the SPA history fallback and wired it into the image. `/login` and `/admin/users` now return 200 on a direct request. |

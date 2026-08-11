@@ -59,13 +59,13 @@ backend/
   api/admin.py        Story 1.3's User-management routes, the reference implementation for
                      role-gated routes with declared error responses (see trap 8)
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams
-  api/responses.py    error_responses() — shared OpenAPI responses-dict builder
+  api/responses.py    error_responses(), shared OpenAPI responses-dict builder
   clients/database.py  SessionDep — AsyncSession from the container's session factory
-  data_models/       7 ORM modules + base.py + auth.py + errors.py — the full schema, already written
+  data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written
   services/auth_service.py  login, token issuance/verification, password hashing
   services/user_service.py  Story 1.3's User CRUD, the last-admin lock guard, denial logging
   exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409), UserNotFoundError (404)
-  exceptions/handlers.py    register_exception_handlers(app) — the one place new exception families get wired
+  exceptions/handlers.py    register_exception_handlers(app), the one place new exception families get wired
 ```
 
 - `data_models/` is complete and mirrors `docs/database-schema.md`: `user.py`, `menu.py`,
@@ -78,7 +78,7 @@ backend/
 - `alembic/versions/` now holds two revisions: the baseline, and `f1743862f1b1` (case-insensitive
   unique index on username, Story 1.3).
 
-**Frontend — shell and routing skeleton, no domain screens yet (Story 1.4).**
+**Frontend, shell and routing skeleton, no domain screens yet (Story 1.4).**
 
 ```
 frontend/src/
@@ -92,14 +92,19 @@ frontend/src/
   config/theme.ts         lightTheme/darkTheme (accent-color override only, everything else stock
                         MUI) + DENSE_ROW_HEIGHT
   types/user.ts           UserRole, CurrentUser (mirrors UserResponse's JSON shape, snake_case)
-  services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing
+  services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
+                        Every failure leaves as an ApiError, including an unreachable backend and a
+                        timeout, which carry status 0 (see trap 12)
   services/authService.ts  useCurrentUser / useLogin, the only TanStack Query hooks so far
   components/shell/        RequireAuth (route guard), AppShell (app bar + nav + Outlet),
+                        AppShellSkeleton (the cold-load stand-in: app bar shape, not a blank page),
                         ThemeModeProvider/ThemeToggle, ConnectionStatusContext/ReconnectingBanner,
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
                         ROLE_PATH_PREFIX, the single source of truth the nav and the guard both read)
-  pages/{role}/           one placeholder component per IA surface (just the surface's own title),
-                        real content ships per-surface in its own later story
+  pages/{role}/           one placeholder component per IA surface (just the surface's own title,
+                        as the page's h1), real content ships per-surface in its own later story
+frontend/
+  nginx.conf            the production image's site config (see trap 13)
 ```
 
 No state management library beyond TanStack Query for server state and React Context/`useState` for
@@ -197,6 +202,35 @@ These are the ones that cost hours because nothing errors:
     makes an account unreachable at login or lets two confusable accounts exist. Decided
     2026-08-10 during Story 1.3's review, after establishing that nothing in the PRD, epics,
     schema doc, or spine had ever specified username case at all.
+
+12. **A single-page app needs a history fallback in the image, and no test can see that it is
+    missing.** Every route below `/` exists only in React Router. Nginx serves literal files, so
+    `frontend/nginx.conf` has to answer unmatched paths with `index.html` or a refresh, a bookmark,
+    or a pasted link on any surface returns 404 while the app itself looks perfect in dev and green
+    in every test. Found by manually opening the Docker stack, not by the 24-test suite that shipped
+    with Story 1.4. Two neighbouring rules in that same file: `/assets/` must `try_files $uri =404`
+    ahead of the catch-all (otherwise a stale asset request is answered with HTML and a 200), and
+    `index.html` must be sent `no-cache` (otherwise a redeploy serves a cached shell pointing at
+    asset hashes that no longer exist). **Anything else served by that image, and any future route
+    prefix, has to be reconciled with these three blocks.**
+
+13. **Only a 401 means "signed out". Every other failure is a transport problem.** `httpClient`
+    turns every failure into an `ApiError`, using **status 0 for "no response ever arrived"**
+    (dead network, CORS, or its own `AbortController` timeout), precisely so callers can tell that
+    apart from a rejected session. `RequireAuth` redirects to Login only when
+    `error instanceof ApiError && error.status === 401`, and offers a Retry for anything else.
+    Treating a bare `isError` as "not logged in", which is what shipped first, silently ejects a
+    working session to the Login screen on a momentary blip, and `retry: false` on `useCurrentUser`
+    means there is not even one retry to hide it. **Any future query whose failure drives navigation
+    or an auth decision needs the same discrimination**, not a bare `isError`.
+
+14. **`RequireAuth`'s Role-prefix check is a navigation affordance, not a security boundary.**
+    `location.pathname.startsWith(ROLE_PATH_PREFIX[user.role])` keeps a Waiter from landing on an
+    Admin URL, but it is plain prefix matching (so `/adminfoo` also matches `/admin`) and it runs
+    entirely in the browser, where anyone can edit it. **The backend's `require_role` is the only
+    real enforcement** (trap 8). As later stories put real data behind these surfaces, every one of
+    them still needs its own role-gated endpoint; never treat "the nav does not show it" or "the
+    guard redirected" as protection.
 
 ---
 
@@ -403,7 +437,22 @@ from `frontend/`.
   `useNavigate`) already lives on the core `"react-router"` export, so there is no reason to reach for
   `/dom` at all in this codebase.
 
-Every story in `epics.md` is written as Given/When/Then acceptance criteria — those are the tests.
+- **Mocking a service in every test hides the wiring between that service and its callers
+  (Story 1.4 review).** Story 1.4 shipped with `authService` `vi.mock`ed in all four component test
+  files, so `retry: false`, the login invalidation, and the query-to-guard handover never actually
+  ran anywhere. `frontend/src/appIntegration.test.tsx` is the counterweight and the pattern to copy:
+  **one file per feature that mocks only `fetch`** and drives the real hooks, real router and real
+  guard end to end. Component tests may keep mocking the service; at least one test must not.
+- **A regression test that cannot fail is worse than none, so make it fail first.** Two traps hit
+  during the same review. A stubbed `fetch` that resolves in a microtask lands before React
+  re-renders, so any ordering bug it is meant to catch is invisible, use a real `setTimeout` delay
+  when the timing *is* the thing under test. And an assertion derived from the DOM (reading tab
+  order out of `getAllByRole("link")` and then asserting tab order) is a tautology, derive expected
+  values from the config the code reads, e.g. `ROLE_NAV_ITEMS`. **Before trusting a new regression
+  test, reintroduce the bug and watch it go red.** Doing exactly that is what proved one of the
+  review's own "high severity" findings was a false positive.
+
+Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
 
 ---
 
@@ -481,4 +530,17 @@ Skeleton/Reconnecting scaffolds; backend tree also caught up to Story 1.3's `adm
 core, never `"react-router/dom"` (its `flushSync` wrapper reproducibly breaks Router context under
 this project's React 19.2.6 + react-router 7.8.0 combination). Backend suite is 109 tests.
 
-Last Updated: 2026-08-10
+**2026-08-11 patch (Story 1.4 code review):** three traps added, all generalizable beyond this
+story. Trap 12: a single-page app needs an nginx history fallback in the image, plus an `/assets/`
+404 guard and a `no-cache` on `index.html`, and no test in the suite can see when it is missing.
+Trap 13: only a 401 means "signed out", so `httpClient` now reports an unreachable backend as
+`ApiError` with **status 0** and `RequireAuth` discriminates on it instead of redirecting on any
+error. Trap 14: the guard's Role-prefix check is a navigation affordance, not a security boundary,
+the backend's `require_role` remains the only enforcement. Two Testing entries added, on the
+service-mocking blind spot (with `appIntegration.test.tsx` as the pattern to copy) and on proving a
+regression test can actually fail before trusting it. Frontend current-state tree updated for
+`AppShellSkeleton` and `nginx.conf`. AC4's wording was amended to key the dark default off the Cook
+Role rather than the Kitchen Display surface, matching the implementation. Suites are now **111
+backend and 34 frontend tests**.
+
+Last Updated: 2026-08-11
