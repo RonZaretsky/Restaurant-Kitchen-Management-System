@@ -5,7 +5,9 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install
+# Frozen, so the image can never resolve different versions than the committed
+# lockfile, which is the whole reason that lockfile is tracked.
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
