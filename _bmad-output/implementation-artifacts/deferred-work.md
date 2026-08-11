@@ -113,3 +113,50 @@
   `AuthError` family Story 1.1 added has the same shape, so the honest fix changes that family
   too. Worth doing the first time a call site genuinely needs a specific message; harmless while
   every raise site uses the default.
+
+## Deferred from: code review of story-1.4 (2026-08-11)
+
+- **The frontend image bakes `http://localhost:8000` as the API origin** — `docker-compose.yml`
+  passes it as a build arg into `frontend/Dockerfile:12`, so the built image only works when the
+  browser runs on the same machine as the stack; from any other device `localhost` resolves to the
+  client. Matches `project-context.md` trap 7's accepted localhost-only scope for v1, so deferred
+  rather than fixed. The new `frontend/nginx.conf` is the natural place to terminate this if the app
+  ever needs to be reached off-box: an `/api` proxy makes requests same-origin, which removes the
+  baked host and the CORS allow-list at the same time.
+- **Session expiry discards the attempted deep link** — `RequireAuth` at
+  `frontend/src/components/shell/RequireAuth.tsx:38` redirects to `/login` without carrying the path
+  the user was trying to reach, so a Waiter whose 8-hour session lapses on `/waiter/tables/12` lands
+  back on their home surface after logging in. `useLocation()` is already read in that component, so
+  the fix is `state={{ from: location }}` plus a `LoginPage` handler that honours it. No AC requires
+  it; worth doing when deep links start being shared between staff.
+- **The catch-all route is unreachable and there is no real 404 surface** —
+  `frontend/src/router.tsx:49` places `{ path: "*", element: <Navigate to="/" replace /> }` inside
+  the guarded layout, but `RequireAuth` returns its own redirect before `Outlet` ever renders, so
+  that element is dead code. The practical effect is that any mistyped or stale URL silently lands
+  on the Role home instead of saying anything, which will hide broken links in later stories.
+  Benign today; revisit if a real 404 surface is ever wanted.
+- **`frontend/src/types/user.ts` is not pinned to the backend's `UserResponse`** — the two are kept
+  in agreement by hand, so a backend field rename fails only at runtime, in the route guard, as a
+  redirect to Login. No contract-testing tooling exists on this project and adding it is new scope,
+  so this is deferred rather than solved. Same class as the item below.
+- **An unknown Role at runtime would crash the shell** — `ROLE_HOME_PATH[user.role]`,
+  `ROLE_PATH_PREFIX[user.role]` and `ROLE_NAV_ITEMS[user.role]` are exhaustive `Record<UserRole, ...>`
+  maps, so TypeScript covers this at build time; it can only bite if the backend's `UserRole` enum
+  grows without a matching frontend change, at which point `navItems.map` throws and blanks the
+  entire app bar. A `?? []` / `?? homePath` fallback would degrade instead of crashing.
+- **A Cook's dark default flashes light on every cold load** — `ThemeModeProvider.tsx:60` derives
+  `mode` from `user?.role`, which is `undefined` while `GET /api/auth/me` is still in flight, so the
+  first paint is light and then flips. Cosmetic, and deliberately left alone: the obvious fix
+  (persisting the Role-derived default to `localStorage` once known) conflicts with AC4's
+  per-browser-not-per-account semantics on a shared kitchen terminal, where it would leave the next
+  Waiter to sign in stuck in dark mode.
+- **AC7's connection producer and automatic retry ship with Story 1.5** — reviewed and **decided
+  2026-08-11 (Ofek): the scaffold is accepted as satisfying Story 1.4's half of AC7.**
+  `frontend/src/components/shell/ConnectionStatusContext.tsx` defines the transport-agnostic
+  `{ status }` contract and `ReconnectingBanner` consumes it, but `App.tsx` mounts the provider with
+  no `status` prop and nothing anywhere can ever set `"reconnecting"`, so the banner is unreachable
+  in the running app and no retry exists. Building a producer now (polling a health endpoint, say)
+  would invent a transport that 1.5 immediately replaces. **Action for Story 1.5:** wire the live
+  WebSocket to drive `status`, and implement AC7's "automatic retry" there. The context's shape is
+  the contract 1.5 must match, so it should not be changed without revisiting `ReconnectingBanner`.
+  Until 1.5 lands, AC7 is only half met and the banner has no runtime coverage.

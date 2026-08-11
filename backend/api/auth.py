@@ -1,15 +1,24 @@
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Response
 
+from api.dependencies import CurrentUserDep
+from api.responses import error_responses
 from clients.database import SessionDep
 from container import Container
-from data_models import LoginRequest, LoginResponse
+from data_models import LoginRequest, LoginResponse, User, UserResponse
 from services.auth_service import COOKIE_NAME, AuthService
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+_LOGIN_ERROR_DESCRIPTIONS = {401: "The username or password was rejected"}
+_ME_ERROR_DESCRIPTIONS = {401: "No valid session cookie was supplied"}
 
-@router.post("/login", response_model=LoginResponse)
+
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    responses=error_responses(_LOGIN_ERROR_DESCRIPTIONS, 401),
+)
 @inject
 async def login(
     payload: LoginRequest,
@@ -55,3 +64,31 @@ async def login(
     )
 
     return LoginResponse(role=user.role)
+
+
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    responses=error_responses(_ME_ERROR_DESCRIPTIONS, 401),
+)
+async def get_own_profile(user: CurrentUserDep) -> User:
+    """Return the authenticated User's own profile.
+
+    The frontend's only way to learn who is logged in and what Role they
+    hold after a page reload, since the session cookie is httpOnly and
+    unreadable by JavaScript (AD-3).
+
+    Args:
+        user: The authenticated User, resolved by the shared CurrentUserDep
+            seam.
+
+    Returns:
+        The caller's own User record.
+
+    Raises:
+        NotAuthenticatedError: Propagated from get_current_user, handled
+            globally as a 401, if no valid session cookie is present.
+        SessionExpiredError: Same handling, if the cookie's token has
+            expired.
+    """
+    return user

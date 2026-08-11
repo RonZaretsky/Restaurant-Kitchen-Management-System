@@ -10,7 +10,7 @@ from starlette.middleware.cors import CORSMiddleware
 from data_models import MAX_PASSWORD_BYTES, User, UserRole
 from exceptions import NotAuthenticatedError, SessionExpiredError
 from main import app
-from services.auth_service import AuthService
+from services.auth_service import COOKIE_NAME, AuthService
 from utils import load_config
 from constants import SETTINGS
 
@@ -232,6 +232,83 @@ async def test_configured_token_lifetime_is_the_eight_hour_shift() -> None:
     # Assert
     # AD-3 fixes 8 hours as an invariant, a work shift, not a free-tuning knob.
     assert configured_hours == 8
+
+
+@pytest.mark.asyncio
+async def test_me_returns_the_authenticated_users_profile(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _create_user(db_session, username="waiter_me", role=UserRole.waiter)
+    await client.post("/api/auth/login", json={"username": "waiter_me", "password": _PASSWORD})
+
+    # Act
+    response = await client.get("/api/auth/me")
+
+    # Assert
+    body = response.json()
+    assert response.status_code == 200
+    assert body["username"] == "waiter_me"
+    assert body["role"] == "waiter"
+    assert body["is_active"] is True
+    assert "password_hash" not in body
+    assert set(body.keys()) == {"id", "username", "full_name", "role", "is_active", "created_at"}
+
+
+@pytest.mark.asyncio
+async def test_me_without_a_session_is_rejected(client: AsyncClient) -> None:
+    # Act
+    response = await client.get("/api/auth/me")
+
+    # Assert
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Not authenticated"}
+
+
+@pytest.mark.asyncio
+async def test_me_rejects_a_valid_cookie_whose_account_was_deactivated(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    # Mid-session deactivation is the whole reason /me is re-read rather than the
+    # frontend caching the login response, so the route, not just the service, has
+    # to reject it.
+    user = await _create_user(db_session, username="waiter_me_deactivated")
+    await client.post(
+        "/api/auth/login", json={"username": "waiter_me_deactivated", "password": _PASSWORD}
+    )
+    user.is_active = False
+    await db_session.commit()
+
+    # Act
+    response = await client.get("/api/auth/me")
+
+    # Assert
+    assert response.status_code == 401
+    assert "password_hash" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_me_rejects_an_expired_session_cookie(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    # AD-3 has no refresh flow, so an ended shift must surface as a plain 401 at the
+    # route the shell polls, not as a 500 out of token decoding.
+    user = await _create_user(db_session, username="waiter_me_expired")
+    secret_key = load_config(SETTINGS.CONFIG_PATH)["auth"]["secret_key"]
+    expired_token = jwt.encode(
+        {"sub": str(user.id), "exp": datetime.now(timezone.utc) - timedelta(hours=1)},
+        secret_key,
+        algorithm="HS256",
+    )
+    client.cookies.set(COOKIE_NAME, expired_token)
+
+    # Act
+    response = await client.get("/api/auth/me")
+
+    # Assert
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio

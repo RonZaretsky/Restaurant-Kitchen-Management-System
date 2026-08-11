@@ -5,7 +5,9 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install
+# Frozen, so the image can never resolve different versions than the committed
+# lockfile, which is the whole reason that lockfile is tracked.
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
@@ -19,6 +21,7 @@ RUN pnpm build
 FROM nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

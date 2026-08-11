@@ -1,19 +1,42 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import * as authService from "./services/authService";
+import { ApiError } from "./services/httpClient";
+
+// App.tsx became the provider composition root in Story 1.4, replacing the
+// old bare-<h1> placeholder this file used to assert on. This smoke test
+// covers the same ground at the new root: an unauthenticated visitor ends
+// up on the Login screen, proving the full provider stack (Query, theme,
+// router, route guard) wires together correctly.
+vi.mock("./services/authService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./services/authService")>();
+  return { ...actual, useCurrentUser: vi.fn(), useLogin: vi.fn() };
+});
 
 describe("App", () => {
-  it("renders the application title", () => {
+  it("sends an unauthenticated visitor to the Login screen", async () => {
     // Arrange
-    render(<App />);
+    vi.mocked(authService.useCurrentUser).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      isSuccess: false,
+      error: new ApiError(401, "Not authenticated"),
+    } as unknown as ReturnType<typeof authService.useCurrentUser>);
+    vi.mocked(authService.useLogin).mockReturnValue({
+      mutate: vi.fn(),
+      reset: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+    } as unknown as ReturnType<typeof authService.useLogin>);
 
     // Act
-    const heading = screen.getByRole("heading", {
-      name: /restaurant kitchen management system/i,
-    });
+    render(<App />);
 
     // Assert
-    expect(heading).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });
 });
