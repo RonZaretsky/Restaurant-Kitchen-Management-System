@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from clients.websocket import ConnectionRegistry
 from services.auth_service import AuthService
 from services.inventory_service import InventoryService
+from services.menu_service import MenuService
 from services.realtime_service import RealtimeService
 from services.user_service import UserService
 
@@ -73,6 +74,11 @@ class Container(containers.DeclarativeContainer):
 
     inventory_service = providers.Factory(
         InventoryService,
+        logger=logging,
+    )
+
+    menu_service = providers.Factory(
+        MenuService,
         logger=logging,
     )
 

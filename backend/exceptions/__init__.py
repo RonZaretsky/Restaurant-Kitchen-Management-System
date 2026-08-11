@@ -92,7 +92,35 @@ class DuplicateIngredientNameError(ConflictError):
     detail = "That ingredient name already exists"
 
 
+class DuplicateCategoryNameError(ConflictError):
+    """Raised when creating a Menu Category with a name that already exists."""
+
+    detail = "That category name already exists"
+
+
+class EmptyRecipeError(ConflictError):
+    """Raised when attempting to mark a Dish available with zero Recipe Ingredient lines.
+
+    AD-8: a Dish must have a defined recipe before it can be ordered, so
+    automatic stock deduction is never silently a no-op for a live menu item.
+    """
+
+    detail = "Cannot mark available, recipe has no ingredients"
+
+
 class UserNotFoundError(Exception):
     """Raised when an admin action targets a User id that does not exist."""
 
     detail = "User not found"
+
+
+class CategoryNotFoundError(Exception):
+    """Raised when a request references a category_id that does not exist."""
+
+    detail = "Category not found"
+
+
+class DishNotFoundError(Exception):
+    """Raised when an admin action targets a Dish id that does not exist."""
+
+    detail = "Dish not found"
