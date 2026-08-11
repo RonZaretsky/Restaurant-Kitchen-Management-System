@@ -1,8 +1,8 @@
-import type { CSSProperties } from "react";
 import AppBar from "@mui/material/AppBar";
 import Box from "@mui/material/Box";
 import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
+import { styled } from "@mui/material/styles";
 import { NavLink, Outlet } from "react-router";
 
 import type { CurrentUser, UserRole } from "../../types/user";
@@ -17,23 +17,43 @@ const ROLE_LABELS: Record<UserRole, string> = {
   warehouse_manager: "Warehouse Manager",
 };
 
-const navLinkStyle = ({ isActive }: { isActive: boolean }): CSSProperties => ({
+/**
+ * A nav link in the app bar.
+ *
+ * Styled rather than given an inline `style` callback so the active and
+ * focus-visible states can be expressed as real CSS. NavLink appends its own
+ * `active` class on top of the one MUI generates, which is what `&.active`
+ * hooks into.
+ *
+ * The active background is a darkened wash, not a lightened one. Over the
+ * light theme's `#0B6E8F` app bar, lightening drops white label text to about
+ * 4.03:1 and fails WCAG 2.2 AA, while darkening lifts it to roughly 7.9:1 and
+ * passes in both themes (AC8). The focus ring uses `currentColor` because the
+ * app bar's text is light in both themes while its background is not.
+ */
+const NavItem = styled(NavLink)(({ theme }) => ({
   color: "inherit",
   textDecoration: "none",
   padding: "8px 14px",
-  borderRadius: 4,
-  fontSize: "0.8125rem",
-  backgroundColor: isActive ? "rgba(255,255,255,0.18)" : "transparent",
-  fontWeight: isActive ? 500 : 400,
-});
+  borderRadius: theme.shape.borderRadius,
+  fontSize: theme.typography.pxToRem(13),
+  "&:focus-visible": {
+    outline: "2px solid currentColor",
+    outlineOffset: 2,
+  },
+  "&.active": {
+    backgroundColor: "rgba(0,0,0,0.2)",
+    fontWeight: 500,
+  },
+}));
 
 /**
  * The app bar, the current Role's own nav, and the routed page content.
  *
- * Only ever rendered once the current User is known, RequireAuth is the
- * caller that guarantees this. Nav links come only from
- * ROLE_NAV_ITEMS[user.role], which is the literal mechanism behind AC2's
- * "no cross-role navigation anywhere."
+ * Only ever rendered once the current User is known, RequireAuth is the caller
+ * that guarantees this. Nav links come only from ROLE_NAV_ITEMS[user.role],
+ * which is the literal mechanism behind AC2's "no cross-role navigation
+ * anywhere."
  *
  * @param user - The authenticated User whose Role drives the nav.
  * @returns The app shell chrome wrapping the active route's page.
@@ -50,9 +70,9 @@ export function AppShell({ user }: { user: CurrentUser }) {
           </Typography>
           <Box component="nav" sx={{ display: "flex", gap: 0.5, flexGrow: 1 }}>
             {navItems.map((item) => (
-              <NavLink key={item.path} to={item.path} style={navLinkStyle}>
+              <NavItem key={item.path} to={item.path}>
                 {item.label}
-              </NavLink>
+              </NavItem>
             ))}
           </Box>
           <Typography variant="body2">

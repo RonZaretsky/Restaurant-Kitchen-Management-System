@@ -8,6 +8,8 @@ import { useConnectionStatus } from "./ConnectionStatusContext";
  * Renders nothing while connected. Mounted once in AppShell, above the
  * routed page content, so it is genuinely a single app-wide instance
  * (AC7), not one per page.
+ *
+ * @returns The banner while reconnecting, otherwise null.
  */
 export function ReconnectingBanner() {
   const status = useConnectionStatus();

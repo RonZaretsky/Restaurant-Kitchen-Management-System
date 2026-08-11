@@ -10,10 +10,15 @@ from services.auth_service import COOKIE_NAME, AuthService
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+_LOGIN_ERROR_DESCRIPTIONS = {401: "The username or password was rejected"}
 _ME_ERROR_DESCRIPTIONS = {401: "No valid session cookie was supplied"}
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    responses=error_responses(_LOGIN_ERROR_DESCRIPTIONS, 401),
+)
 @inject
 async def login(
     payload: LoginRequest,

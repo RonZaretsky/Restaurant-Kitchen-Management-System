@@ -9,6 +9,8 @@ import { useThemeMode } from "./ThemeModeProvider";
  *
  * Stock MUI IconButton, no visual override, per DESIGN.md's
  * {components.theme-toggle}.
+ *
+ * @returns The toggle button, labelled with the mode it will switch to.
  */
 export function ThemeToggle() {
   const { mode, toggleMode } = useThemeMode();

@@ -18,11 +18,37 @@ const ThemeModeContext = createContext<ThemeModeContextValue | undefined>(undefi
 /**
  * Reads and validates the browser's stored theme preference.
  *
- * @returns The stored mode, or null if nothing valid is stored yet.
+ * Storage access can throw outright where site data is blocked, and this runs
+ * inside a useState initializer in the provider that wraps the whole app, so
+ * an unguarded read would stop the app mounting at all rather than costing a
+ * theme preference.
+ *
+ * @returns The stored mode, or null if nothing valid is stored or storage
+ *   cannot be read.
  */
 function readStoredMode(): ThemeMode | null {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return stored === "light" || stored === "dark" ? stored : null;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persists the chosen theme mode, ignoring a storage failure.
+ *
+ * The mode still applies for the rest of the session when this fails, it just
+ * will not survive a reload.
+ *
+ * @param mode - The mode to remember for this browser.
+ */
+function writeStoredMode(mode: ThemeMode): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, mode);
+  } catch {
+    // A blocked or full store costs persistence, never the toggle itself.
+  }
 }
 
 /**
@@ -61,7 +87,7 @@ export function ThemeModeProvider({ children }: { children: ReactNode }) {
 
   const toggleMode = () => {
     const next: ThemeMode = mode === "light" ? "dark" : "light";
-    localStorage.setItem(STORAGE_KEY, next);
+    writeStoredMode(next);
     setStoredMode(next);
   };
 

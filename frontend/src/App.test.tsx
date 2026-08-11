@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import * as authService from "./services/authService";
+import { ApiError } from "./services/httpClient";
 
 // App.tsx became the provider composition root in Story 1.4, replacing the
 // old bare-<h1> placeholder this file used to assert on. This smoke test
@@ -22,10 +23,11 @@ describe("App", () => {
       isLoading: false,
       isError: true,
       isSuccess: false,
-      error: new Error("Not authenticated"),
+      error: new ApiError(401, "Not authenticated"),
     } as unknown as ReturnType<typeof authService.useCurrentUser>);
     vi.mocked(authService.useLogin).mockReturnValue({
       mutate: vi.fn(),
+      reset: vi.fn(),
       isPending: false,
       isError: false,
       error: null,

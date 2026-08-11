@@ -4,9 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ROLE_NAV_ITEMS } from "./components/shell/navigationConfig";
 import { ThemeModeProvider } from "./components/shell/ThemeModeProvider";
 import { routes } from "./router";
 import * as authService from "./services/authService";
+import { ApiError } from "./services/httpClient";
 import type { CurrentUser, UserRole } from "./types/user";
 
 vi.mock("./services/authService", async (importOriginal) => {
@@ -36,12 +38,14 @@ function mockAuthenticated(role: UserRole) {
 }
 
 function mockUnauthenticated() {
+  // A real ApiError with status 401, because the guard now distinguishes a
+  // rejected session from a transport failure and only the former signs out.
   vi.mocked(authService.useCurrentUser).mockReturnValue({
     data: undefined,
     isLoading: false,
     isError: true,
     isSuccess: false,
-    error: new Error("Not authenticated"),
+    error: new ApiError(401, "Not authenticated"),
   } as unknown as ReturnType<typeof authService.useCurrentUser>);
 }
 
@@ -58,6 +62,7 @@ function mockLoading() {
 function mockNoOpLogin() {
   vi.mocked(authService.useLogin).mockReturnValue({
     mutate: vi.fn(),
+    reset: vi.fn(),
     isPending: false,
     isError: false,
     error: null,
@@ -167,11 +172,12 @@ describe("route guard and per-role navigation", () => {
     const user = userEvent.setup();
 
     // Act
+    // The expected order comes from the nav config, not from the rendered DOM.
+    // Deriving it from the DOM made this assertion tautological: plain anchors
+    // with no tabindex are always tabbed in DOM order, so it could not fail.
+    const expectedLabels = ROLE_NAV_ITEMS.admin.map((item) => item.label);
     renderAt("/");
-    const nav = await screen.findByRole("navigation");
-    const expectedLabels = within(nav)
-      .getAllByRole("link")
-      .map((link) => link.textContent);
+    await screen.findByRole("navigation");
 
     document.body.focus();
     const focusedLabels: (string | null)[] = [];
@@ -185,10 +191,16 @@ describe("route guard and per-role navigation", () => {
   });
 
   it("navigates to the role's home surface immediately after a successful login (AC2, AC3)", async () => {
-    // Arrange: LoginPage must render its form first (current-user query still
-    // unauthenticated), then flip to authenticated the moment the mutation
-    // "succeeds", mirroring the real invalidateQueries()-triggered refetch
-    // landing before the destination route's own guard re-evaluates.
+    // Arrange: LoginPage renders its form first (current-user query still
+    // unauthenticated), then the session is already refreshed by the time the
+    // mutation reports success.
+    //
+    // The ordering is supplied by this mock, it is NOT evidence that the real
+    // code produces it. The real handover, where useLogin must await its own
+    // cache invalidation before the caller navigates, is covered end to end in
+    // appIntegration.test.tsx against the real service. What this test pins is
+    // narrower: that LoginPage routes to the Role home named by the mutation
+    // result rather than to a fixed path.
     mockUnauthenticated();
     vi.mocked(authService.useLogin).mockReturnValue({
       mutate: (
@@ -198,6 +210,7 @@ describe("route guard and per-role navigation", () => {
         mockAuthenticated("cook");
         options?.onSuccess?.({ role: "cook" });
       },
+      reset: vi.fn(),
       isPending: false,
       isError: false,
       error: null,
@@ -206,8 +219,8 @@ describe("route guard and per-role navigation", () => {
 
     // Act
     renderAt("/login");
-    await user.type(screen.getByLabelText("Username"), "acohen");
-    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.type(screen.getByLabelText(/Username/), "acohen");
+    await user.type(screen.getByLabelText(/Password/), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     // Assert
