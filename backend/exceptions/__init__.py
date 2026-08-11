@@ -83,6 +83,15 @@ class LastAdminLockoutError(ConflictError):
     detail = "Rejected, at least one admin must stay active"
 
 
+class DuplicateIngredientNameError(ConflictError):
+    """Raised when creating an Ingredient with a name that already exists.
+
+    Compared case-insensitively (see the functional index on ingredients.name).
+    """
+
+    detail = "That ingredient name already exists"
+
+
 class UserNotFoundError(Exception):
     """Raised when an admin action targets a User id that does not exist."""
 
