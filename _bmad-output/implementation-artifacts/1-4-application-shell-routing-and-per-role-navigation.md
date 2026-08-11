@@ -592,6 +592,11 @@ claude-sonnet-5 (Claude Sonnet 5)
 - `frontend/package.json` (react-router, @mui/material, @mui/icons-material, @emotion/react,
   @emotion/styled, @tanstack/react-query added; @testing-library/user-event added as a devDependency)
 - `frontend/pnpm-lock.yaml` (regenerated)
+- `frontend/Dockerfile` (copies the new `nginx.conf` over nginx's stock default site config)
+
+**Frontend — new (deployment)**
+- `frontend/nginx.conf` - SPA history fallback (`try_files $uri $uri/ /index.html`), without which a
+  refresh or direct hit on any client-side route (`/login`, `/admin/users`, ...) 404s
 
 **Planning artifacts**
 - `_bmad-output/project-context.md` (installed-vs-decided table, both current-state trees, two new
@@ -603,3 +608,4 @@ claude-sonnet-5 (Claude Sonnet 5)
 |---|---|
 | 2026-08-10 | Story drafted from `epics.md` Story 1.4, the UX spine (`DESIGN.md`/`EXPERIENCE.md`), and the architecture spine's AD-13. Route table sourced from the mockups' own address bars rather than invented. Flagged one backend addition (`GET /api/auth/me`) as necessary infrastructure not named by any FR/AC. |
 | 2026-08-10 | Implemented: `GET /api/auth/me`; the full frontend shell (routing, per-role nav, MUI theme, theme toggle, connection-status and Skeleton scaffolds, route guard, Login screen, 12 placeholder pages). Fixed two test-infrastructure gaps found during implementation (RTL auto-cleanup, `react-router/dom`'s broken `RouterProvider`) and documented both in `project-context.md`. 109 backend tests and 24 frontend tests passing; `tsc -b` and `vite build` both clean. |
+| 2026-08-11 | Manual verification against a real Docker Compose stack surfaced a deployment-side routing defect the mocked tests could not see: the frontend image shipped nginx's stock config, so refreshing or directly opening any client-side route returned 404. Added `frontend/nginx.conf` with the SPA history fallback and wired it into the image. `/login` and `/admin/users` now return 200 on a direct request. |
