@@ -41,28 +41,34 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend — layered and wired, domain logic now covers auth, users, real-time push, inventory, and menu.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables.**
 
 ```
 backend/
   main.py            app factory + lifespan; calls exceptions/handlers.py's register_exception_handlers(app)
   container.py       DeclarativeContainer: config, logging, database, connection_registry, auth_service,
-                     user_service, inventory_service, menu_service, realtime_service — all providers
+                     user_service, inventory_service, menu_service, table_service, realtime_service
   constants.py       SETTINGS (app name, version, config path)
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
   entrypoint.sh       Docker CMD: alembic upgrade head, then the app. Never in the lifespan.
-  alembic/            async-template migration environment; alembic/versions/ has 3 revisions
+  alembic/            async-template migration environment; alembic/versions/ still has 3 revisions.
+                     Neither Story 2.3 nor 2.4 needed one, both ORM schemas already fit
   tests/              conftest.py + one test file per module below
-  api/router.py      aggregator; include_router()s auth, admin, inventory, menu, websocket
+  api/router.py      aggregator; include_router()s auth, admin, inventory, menu, tables, websocket
   api/auth.py        POST /auth/login (sets the JWT httpOnly cookie), GET /auth/me (Story 1.4, the
                      frontend's only way to learn who is logged in across a page reload)
   api/admin.py        Story 1.3's User-management routes, the reference implementation for
                      role-gated routes with declared error responses (see trap 8)
   api/inventory.py    Story 2.1: POST /api/inventory/ingredients, the first route to permit more
-                     than one Role (admin, warehouse_manager) via require_role
-  api/menu.py         Story 2.2: POST /api/menu/categories, POST /api/menu/dishes,
-                     PATCH /api/menu/dishes/{id}, all admin-only
+                     than one Role (admin, warehouse_manager). Story 2.3 added GET on the same two
+                     Roles (InventoryReadDep); Story 4.3 should extend it, not duplicate it
+  api/menu.py         Story 2.2: POST /categories, POST /dishes, PATCH /dishes/{id}, admin-only.
+                     Story 2.3 added GET /categories, GET /dishes, and Recipe Ingredient CRUD at
+                     /dishes/{dish_id}/recipe-ingredients (GET/POST/PATCH/DELETE)
+  api/tables.py       Story 2.4: GET /api/tables, POST /api/tables, PATCH /api/tables/{id},
+                     admin-only. Note the collection paths have NO trailing slash, matching the
+                     sibling routers; a trailing slash shipped first and was corrected in review
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -74,36 +80,43 @@ backend/
                      closing a User's prior socket on a new one; broadcast_to_roles() targets several Roles
                      in one emission
   data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written.
-                     recipe.py and menu.py now also hold their own Pydantic request/response schemas
-                     (CreateIngredientRequest/IngredientResponse, CreateCategoryRequest/CategoryResponse/
-                     CreateDishRequest/UpdateDishRequest/DishResponse), colocated with their ORM class,
-                     matching user.py's existing shape
+                     recipe.py, menu.py and order.py also hold their own Pydantic request/response
+                     schemas colocated with their ORM class, matching user.py's shape. menu.py owns
+                     _INT4_MAX; recipe.py and order.py import it from there rather than redeclaring
   services/auth_service.py  login, token issuance/verification, password hashing
   services/user_service.py  Story 1.3's User CRUD, the last-admin lock guard, denial logging
-  services/inventory_service.py  Story 2.1: Ingredient creation, case-insensitive duplicate check
-  services/menu_service.py  Story 2.2: Category/Dish creation and Dish edits, the AD-8 availability gate
+  services/inventory_service.py  Story 2.1: Ingredient creation, case-insensitive duplicate check.
+                     Story 2.3 added list_ingredients
+  services/menu_service.py  Story 2.2: Category/Dish creation and edits, AD-8's availability gate.
+                     Story 2.3 added list_categories/list_dishes, Recipe Ingredient CRUD, AD-8's
+                     second half, a unit-mismatch guard, and _lock_dish (see trap 9)
+  services/table_service.py  Story 2.4: Table creation/listing and the guarded-UPDATE edit path
+                     (see trap 18)
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
-                     calls into services/ (AD-1); broadcast(roles, event, payload)
-  exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409:
-                     DuplicateUsernameError, LastAdminLockoutError, DuplicateIngredientNameError,
-                     DuplicateCategoryNameError, EmptyRecipeError), UserNotFoundError/
-                     CategoryNotFoundError/DishNotFoundError (404, each a separate bare Exception, see trap 17)
-  exceptions/handlers.py    register_exception_handlers(app), the one place new exception families get wired
+                     calls into services/ (AD-1); broadcast(roles, event, payload). Still has NO
+                     producers: no service emits anything yet (see Domain rules)
+  exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409),
+                     NotFoundError family (404, one shared base since Story 2.3, see trap 17)
+  exceptions/handlers.py    register_exception_handlers(app); exactly four handlers, one per family
 ```
 
 - `data_models/` is complete and mirrors `docs/database-schema.md`: `user.py`, `menu.py`,
   `recipe.py`, `order.py`, `inventory.py`, `ai.py`, `base.py`, plus `auth.py`/`errors.py` for
   request/response schemas. **Do not treat the schema as unwritten.**
 - `services/` has `auth_service.py`, `user_service.py`, `inventory_service.py`, `menu_service.py`,
-  and `realtime_service.py`. Every other domain rule in the epics still has to be written.
+  `table_service.py`, and `realtime_service.py`. Every other domain rule in the epics still has to
+  be written.
 - `api/` has `router.py` (health, mounted inline), `auth.py`, `admin.py` (Story 1.3, the reference
-  implementation for role-gated routes, see trap 8), `inventory.py` (Story 2.1), `menu.py`
-  (Story 2.2), and `websocket.py` (Story 1.5).
-- `alembic/versions/` now holds three revisions: the baseline, `f1743862f1b1` (case-insensitive
+  implementation for role-gated routes, see trap 8), `inventory.py` (2.1/2.3), `menu.py` (2.2/2.3),
+  `tables.py` (2.4), and `websocket.py` (Story 1.5).
+- `alembic/versions/` still holds three revisions: the baseline, `f1743862f1b1` (case-insensitive
   unique index on username, Story 1.3), and `daca523f69f5` (the same fix applied to
-  `Ingredient.name`, Story 2.1, see trap 11).
+  `Ingredient.name`, Story 2.1, see trap 11). Stories 2.2, 2.3 and 2.4 all needed none.
+- **Every `ConflictError`/`NotFoundError` subclass now lives in one family with one handler each.**
+  Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
+  makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing skeleton plus a live real-time transport, still no domain screens (Story 1.4, Story 1.5).**
+**Frontend, shell/routing plus a live real-time transport, and the first two real domain screens (Menu Management, Tables setup). The other 11 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -118,10 +131,18 @@ frontend/src/
   config/theme.ts         lightTheme/darkTheme (accent-color override only, everything else stock
                         MUI) + DENSE_ROW_HEIGHT
   types/user.ts           UserRole, CurrentUser (mirrors UserResponse's JSON shape, snake_case)
+  types/menu.ts           Unit, Category, Dish, RecipeIngredient (Story 2.3)
+  types/inventory.ts      Ingredient (Story 2.3)
+  types/table.ts          TableStatus, Table (Story 2.4)
   services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12)
-  services/authService.ts  useCurrentUser / useLogin, the only TanStack Query hooks so far
+  services/authService.ts  useCurrentUser / useLogin
+  services/menuService.ts  Story 2.3: categories/dishes/recipe-ingredient hooks
+  services/inventoryService.ts  Story 2.3: useIngredients
+  services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable
+  components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
+                        component folder outside components/shell/)
   components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
                         AppShell (app bar + nav + Outlet), AppShellSkeleton (the cold-load
                         stand-in: app bar shape, not a blank page), ThemeModeProvider/ThemeToggle,
@@ -131,16 +152,40 @@ frontend/src/
                         subscribe(event, handler) for later stories to consume push events),
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
                         ROLE_PATH_PREFIX, the single source of truth the nav and the guard both read)
-  pages/{role}/           one placeholder component per IA surface (just the surface's own title,
-                        as the page's h1), real content ships per-surface in its own later story
+  pages/{role}/           placeholder components for the 11 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Two are now real:
+                        admin/MenuManagementPage.tsx (Story 2.3) and admin/TablesSetupPage.tsx
+                        (Story 2.4), each with its own *.test.tsx alongside
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
 
 No state management library beyond TanStack Query for server state and React Context/`useState` for
-local UI state (theme mode, connection status), matching AD-13. `services/` is not yet organized
-per-domain (only `authService.ts` exists); later stories add one file per domain the same way
-`user_service.py` did on the backend.
+local UI state (theme mode, connection status), matching AD-13. `services/` is now organized
+per-domain (`authService`, `menuService`, `inventoryService`, `tableService`), the same way the
+backend's `services/` is; later stories add one file per domain.
+
+**The shape every new domain screen should copy** (established by 2.3, corrected by 2.4's review):
+
+- Every query hook sets `retry: false`. The app-level `QueryClient` sets no default, so TanStack's
+  3 retries otherwise turn a 401/403/404 into four requests and a multi-second wait.
+- A list query handles **four distinct states**: loading, error (with a Retry action), empty, and
+  loaded. Collapsing error into empty makes a failed fetch render as an authoritative "there is
+  nothing here", which is trap 13's reasoning applied to data rather than auth.
+- **Every mutation renders its own `isError`.** A mutation whose failure is never displayed is the
+  single most repeated defect in this codebase's reviews.
+- Mutations that can be rejected because the caller's copy is stale invalidate `onSettled`, not
+  `onSuccess`: a 409 is exactly when the row most needs refreshing.
+- Inline editors use **controlled** inputs that resync from the server, but **never while the field
+  is dirty**, or a background refetch silently overwrites what the user is typing.
+- **Never diff a form against cached data to decide what to send.** Send the fields; let the server
+  decide what changed. Diffing against a stale cache produces an empty payload, so no request is
+  sent and the row looks saved while the server still holds something else (Story 2.4 review).
+- Parse numeric inputs explicitly. `Number("abc")` is `NaN`, which `JSON.stringify` serializes as
+  `null`, and a nullable backend field reads that as "not provided" and half-applies the update
+  (see trap 19).
+- A disabled control's reason must be **visible text**, not only a `Tooltip`: tooltips never appear
+  on touch or keyboard-primary interaction.
 
 ---
 
@@ -293,13 +338,50 @@ These are the ones that cost hours because nothing errors:
     unless the column is `BigInteger`.** Check this for every new request schema, do not wait for
     review to catch it a third time.
 
-17. **`CategoryNotFoundError`/`DishNotFoundError` duplicate `UserNotFoundError`'s handler shape
-    rather than sharing a common `NotFoundError` base**, a deliberate, explicit decision made
-    during Story 2.2 (touching `UserNotFoundError` would mean editing Story 1.3's code, out of
-    that story's scope). There are now three near-identical bare-`Exception`-plus-hand-copied-404-
-    handler pairs. **If a fourth `*NotFoundError` is ever added, that is the signal to stop
-    duplicating and introduce a shared `NotFoundError(Exception)` base with one handler**, the same
-    way `ConflictError` already covers every 409.
+17. **RESOLVED by Story 2.3.** The `*NotFoundError` types now share one `NotFoundError(Exception)`
+    base with a single handler, the same way `ConflictError` covers every 409. Story 2.3 crossed
+    the fourth-instance threshold this trap named and did the refactor. The live rule from here:
+    **a new 404 type subclasses `NotFoundError` and nothing else**, no new handler, no
+    registration. Forgetting to subclass it does not fail loudly, it makes that error an
+    unhandled 500, so `tests/test_migrations.py` carries an assertion that every class whose name
+    ends in `NotFoundError` inherits the base.
+
+18. **A rule of the form "only allow this while the row is in state X" must be one guarded
+    `UPDATE`, never a read-then-write.** Story 2.4's Table edit is the reference implementation:
+    `UPDATE ... WHERE id = ? AND status = 'available'`, with `rowcount == 0` meaning "rejected"
+    (`TableService.update_table`). Reading the row, checking `.status` in Python, and then writing
+    is the version that looks correct and silently permits the edit when someone changes the row in
+    between. Two related sharp edges found in the same review:
+    (a) **an early return for "nothing actually changed" skips the guard.** Story 2.4 shipped
+    `if not changed_fields: return table`, which answered 200 for a no-op edit against an *occupied*
+    table, reproduced against a live database. Any short-circuit before the guarded write has to
+    re-check the state condition itself.
+    (b) **a test that sets the row to the blocking state before the request starts proves nothing.**
+    That is the plain "already in state X" case, and a naive read-then-write passes it identically.
+    A real test has to change the state *between* the service's read and its write (patch the
+    read method to commit the change from a second connection on its way out). See Testing.
+    This generalizes AD-6's OrderItem transitions and is distinct from trap 9: use a guarded
+    `UPDATE` when one row's own column gates its own write, and `SELECT ... FOR UPDATE` when the
+    invariant spans multiple rows or multiple write paths (AD-8's `_lock_dish`).
+
+19. **`Number()` on a form field, plus a nullable backend field, equals a silent partial write.**
+    `Number("abc")` is `NaN`, and `JSON.stringify` serializes `NaN` as `null`. A Pydantic
+    `int | None` field guarded by `if payload.x is not None` cannot tell an explicit `null` from an
+    omitted field, so the null is skipped and the *other* fields in the same request are applied,
+    returning 200. Reproduced in Story 2.4: `{"table_number": null, "capacity": 8}` answered 200
+    having changed only the capacity, so the Admin believed both saved. Also note `Number("")` and
+    `Number(" ")` are both `0`, so a non-empty check is not a validity check. **Fix both ends:**
+    parse and validate the field in the browser before sending (never coerce with bare `Number()`),
+    and reject an explicit `null` server-side rather than treating it as absent.
+
+20. **`await db.rollback()` expires every object in the session, including `actor`.** Reading
+    `actor.id` in a log line *after* the rollback triggers an implicit lazy load with no greenlet
+    context to run it in, raising an unhandled `MissingGreenlet`, so the 409 the handler meant to
+    return becomes a 500. Always log **before** rolling back. This bit four `IntegrityError`
+    handlers across `TableService`, `MenuService` (twice) and `InventoryService`; all four are
+    fixed, but the shape is easy to reintroduce because **no test reaches these branches**: a
+    duplicate-check-before-insert always wins in a single-threaded test, so the handler only runs
+    under a genuine concurrent race in production.
 
 ---
 
@@ -432,11 +514,13 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
 - **AD-7** `OrderItem.price_at_add` is stored; Order totals always computed from it over non-cancelled
   items — never a live Dish-price lookup.
 - **AD-8** Reject marking a Dish available with zero `RecipeIngredient` rows; reject removing the last
-  row while available. **First half built in Story 2.2** (`MenuService.update_dish`'s
-  `_reject_if_recipe_empty`, a `RecipeIngredient` count check); the second half (rejecting removing
-  the last row while available) belongs to Story 2.3, which owns Recipe Ingredient CRUD and does
-  not exist yet. Every Dish stays unavailable until 2.3 ships, since nothing can populate
-  `RecipeIngredient` rows before then, that is expected sequencing.
+  row while available. **Both halves are now built** (first in Story 2.2's
+  `MenuService.update_dish`/`_reject_if_recipe_empty`, second in Story 2.3's
+  `remove_recipe_ingredient`). The two halves guard the same invariant from opposite directions and
+  would otherwise interleave, so both take the same `_lock_dish` row lock (trap 9). Story 2.3 also
+  added a rule AD-8 does not state but Epic 5 depends on: **a Recipe Ingredient line's unit must
+  match its Ingredient's own unit**, since nothing in this system converts between units and a
+  mismatch would make automatic deduction subtract the wrong amount silently.
 - **AD-11** Cancelling an `in_preparation` OrderItem does **not** reverse its stock deduction. Ingredients
   are treated as already used. No compensating movement is created automatically.
 - **AD-12** All OpenAI calls go through a `clients/` adapter behind an interface — never called from `services/`.
@@ -460,7 +544,19 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   Table; every Cook sees every chat session. "Current user's items first" is a *sort*, never a filter.
 - An Admin sets a new User's **initial password** at creation and can **reset** it later. No
   self-service signup, no email recovery. Passwords are bcrypt-hashed, never logged or returned.
-- Tables are **added and edited, never deleted.** Editing is gated on the table being `available`.
+- Tables are **added and edited, never deleted.** Editing is gated on the table being `available`,
+  enforced by a guarded conditional `UPDATE` (trap 18), and the Tables setup screen has no delete
+  affordance anywhere by design (PRD Non-Goals). `GET /api/tables` is currently **Admin-only**,
+  which contradicts the Role-level rule two bullets down and is a deliberate Story 2.4 scoping
+  choice: Epic 3 widens it when Waiters need table reads. No test asserts a Waiter is refused, so
+  widening breaks nothing.
+- **`RealtimeService` has no producers yet.** The transport is live (Story 1.5) and
+  `useRealtime()`'s `subscribe(event, handler)` exists on the frontend, but no service emits any
+  event, so nothing in the UI updates from another user's action, only from its own mutations or a
+  window-focus refetch. AD-2 governs the naming when the first producer lands. Story 2.4's AC4
+  ("re-enable the moment the table returns to available") is the first AC this shortfall leaves
+  partially unmet, deferred to Epic 3 by decision (see `deferred-work.md`). **Any story whose AC
+  says "live", "instantly", or "the moment" needs to check whether a producer exists yet.**
 - A Recipe Suggestion never writes to a live Dish — Admin confirmation is the only path to the menu.
 - A newly created Dish is **unconditionally unavailable**, regardless of anything a caller submits
   (`CreateDishRequest` has no `is_available` field at all). Menu Categories are **create-only** in
@@ -550,8 +646,28 @@ from `frontend/`.
   the abstract. A first attempt at the Story 2.1 precision test used a value that turned out to be
   exactly at the boundary (accepted, not rejected); caught only by running it.
 
+- **"Make it fail first" has a specific failure mode: a test that pins the wrong thing.** This rule
+  has now been broken three times, twice by tests whose *shape* made them unfalsifiable rather than
+  by a missing red run. Story 2.4's AC6 test is the sharpest example: it was byte-for-byte identical
+  to the AC4 "already occupied" test, so it passed under both the guarded `UPDATE` it was meant to
+  pin **and** the naive read-then-write that AC exists to forbid. The check that catches this is not
+  "did I watch it go red once", it is **"if I implement the wrong thing, does this test notice?"**
+  For any test guarding a concurrency rule, write the wrong implementation, run the test, and
+  confirm it fails. Two related shapes already documented above: an assertion derived from the DOM
+  it is asserting on, and a stubbed `fetch` that resolves before React re-renders.
+- **Testing a race needs the state change to land mid-request.** Setting the row to its blocking
+  state before calling the endpoint tests the ordinary rejection, not the race. `test_tables.py`'s
+  `test_race_between_form_load_and_save_is_rejected` is the pattern: `monkeypatch` the service's
+  read method so it commits the conflicting change from the test's own session on its way out,
+  which puts the change strictly between the read and the write. Assert both the 409 **and** that
+  the write did not land.
+- **A backend `IntegrityError`/rollback branch is usually unreachable from the suite.** Any handler
+  that only runs when a pre-check loses a race will never execute in a single-threaded test, so it
+  can carry a crashing bug (trap 20) while the suite stays green. When writing one, verify its
+  mechanism directly (a focused probe) rather than assuming coverage.
+
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **158 tests**, frontend **47 tests** (as of Story 2.2).
+Backend suite is now **212 tests**, frontend **66 tests** (as of Story 2.4).
 
 ---
 
@@ -677,5 +793,36 @@ section gained notes on Dish's unconditional-unavailable-at-creation rule, Categ
 case-sensitive scope, and the WebSocket one-connection-per-session/periodic-re-verification
 behavior (the latter carried over from Story 1.5, missed by that patch). Suites are now **158
 backend and 47 frontend tests**.
+
+**2026-08-12 patch (Story 2.3, Define a Dish's Recipe, plus its code review):** Recipe Ingredient
+CRUD landed on `api/menu.py`/`MenuService`, closing AD-8's second half, alongside three enabling
+reads (`GET /menu/categories`, `GET /menu/dishes`, `GET /inventory/ingredients`). Trap 17 marked
+**resolved**: this story crossed the fourth-`*NotFoundError` threshold it named, so the shared
+`NotFoundError` base plus one handler now exists and three near-duplicate handlers were collapsed
+into one; `tests/test_migrations.py` gained an assertion pinning the inheritance, since forgetting
+it yields a silent 500. AD-8's entry rewritten (both halves built) and extended with the
+unit-must-match-the-Ingredient rule, which no AD states but Epic 5's deduction depends on. Trap 9's
+prescription was applied to AD-8 for the first time (`MenuService._lock_dish`), after the review
+found that this story's own spec had wrongly told the developer to skip the lock: two concurrent
+deletes could leave an available Dish with an empty recipe. **First real domain screens** on the
+frontend (`MenuManagementPage` + `components/menu/DishRecipeEditor`), plus the first per-domain
+service files beyond `authService`. The frontend current-state tree and a new "shape every domain
+screen should copy" list capture the review's UI findings, all of which were silent-failure states.
+
+**2026-08-12 patch (Story 2.4, Manage Restaurant Tables, plus its code review):** `api/tables.py` +
+`services/table_service.py` + `TablesSetupPage`, completing Epic 2's authoring surfaces. Three new
+traps, all generalizable. **Trap 18**: a "only while the row is in state X" rule must be one guarded
+`UPDATE`, not a read-then-write, with two sharp edges the review found in this story's own code (a
+no-op early return that skipped the guard and answered 200 on an occupied table, and a race test
+that could not fail because it set the blocking state before the request started). It also draws the
+line between trap 18's guarded `UPDATE` and trap 9's `SELECT ... FOR UPDATE`. **Trap 19**:
+`Number()` on a form field plus a nullable backend field equals a silent partial write, reproduced
+end to end. **Trap 20**: `db.rollback()` expires `actor`, so logging `actor.id` afterward raises
+`MissingGreenlet` and turns an intended 409 into a 500; four handlers carried this, all now fixed,
+and none of them is reachable from the test suite. Domain rules gained the note that
+`RealtimeService` still has **no producers**, which is what leaves Story 2.4's AC4 partially unmet
+(deferred to Epic 3 by decision). Testing section gained the "a test that pins the wrong thing"
+lesson, the mid-request race-testing pattern, and the warning that rollback branches are unreachable
+from the suite. Suites are now **212 backend and 66 frontend tests**.
 
 Last Updated: 2026-08-12
