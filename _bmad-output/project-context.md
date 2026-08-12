@@ -41,50 +41,76 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend — layered, wired, and almost entirely empty of domain logic.**
+**Backend — layered and wired, domain logic now covers auth, users, real-time push, inventory, and menu.**
 
 ```
 backend/
   main.py            app factory + lifespan; calls exceptions/handlers.py's register_exception_handlers(app)
-  container.py       DeclarativeContainer: config, logging, database, auth_service, user_service — all providers
+  container.py       DeclarativeContainer: config, logging, database, connection_registry, auth_service,
+                     user_service, inventory_service, menu_service, realtime_service — all providers
   constants.py       SETTINGS (app name, version, config path)
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
   entrypoint.sh       Docker CMD: alembic upgrade head, then the app. Never in the lifespan.
-  alembic/            async-template migration environment; alembic/versions/ has 2 revisions
+  alembic/            async-template migration environment; alembic/versions/ has 3 revisions
   tests/              conftest.py + one test file per module below
-  api/router.py      aggregator; include_router()s auth and admin
+  api/router.py      aggregator; include_router()s auth, admin, inventory, menu, websocket
   api/auth.py        POST /auth/login (sets the JWT httpOnly cookie), GET /auth/me (Story 1.4, the
                      frontend's only way to learn who is logged in across a page reload)
   api/admin.py        Story 1.3's User-management routes, the reference implementation for
                      role-gated routes with declared error responses (see trap 8)
-  api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams
+  api/inventory.py    Story 2.1: POST /api/inventory/ingredients, the first route to permit more
+                     than one Role (admin, warehouse_manager) via require_role
+  api/menu.py         Story 2.2: POST /api/menu/categories, POST /api/menu/dishes,
+                     PATCH /api/menu/dishes/{id}, all admin-only
+  api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
+                     periodic session re-verification while the connection stays open
+  api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
+                     also CurrentUserWsDep/verify_ws_origin, the WebSocket-route counterparts (Story 1.5)
   api/responses.py    error_responses(), shared OpenAPI responses-dict builder
-  clients/database.py  SessionDep — AsyncSession from the container's session factory
-  data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written
+  clients/database.py  SessionDep, session_scope() — a short-lived-session context manager any non-request
+                     caller (a WebSocket handshake, a periodic re-verification tick) uses directly (see trap 15)
+  clients/websocket.py ConnectionRegistry (Story 1.5): tracks open sockets keyed by user id (not just Role),
+                     closing a User's prior socket on a new one; broadcast_to_roles() targets several Roles
+                     in one emission
+  data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written.
+                     recipe.py and menu.py now also hold their own Pydantic request/response schemas
+                     (CreateIngredientRequest/IngredientResponse, CreateCategoryRequest/CategoryResponse/
+                     CreateDishRequest/UpdateDishRequest/DishResponse), colocated with their ORM class,
+                     matching user.py's existing shape
   services/auth_service.py  login, token issuance/verification, password hashing
   services/user_service.py  Story 1.3's User CRUD, the last-admin lock guard, denial logging
-  exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409), UserNotFoundError (404)
+  services/inventory_service.py  Story 2.1: Ingredient creation, case-insensitive duplicate check
+  services/menu_service.py  Story 2.2: Category/Dish creation and Dish edits, the AD-8 availability gate
+  services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
+                     calls into services/ (AD-1); broadcast(roles, event, payload)
+  exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409:
+                     DuplicateUsernameError, LastAdminLockoutError, DuplicateIngredientNameError,
+                     DuplicateCategoryNameError, EmptyRecipeError), UserNotFoundError/
+                     CategoryNotFoundError/DishNotFoundError (404, each a separate bare Exception, see trap 17)
   exceptions/handlers.py    register_exception_handlers(app), the one place new exception families get wired
 ```
 
 - `data_models/` is complete and mirrors `docs/database-schema.md`: `user.py`, `menu.py`,
   `recipe.py`, `order.py`, `inventory.py`, `ai.py`, `base.py`, plus `auth.py`/`errors.py` for
   request/response schemas. **Do not treat the schema as unwritten.**
-- `services/` has `auth_service.py` and `user_service.py`. Every other domain rule in the epics
-  still has to be written.
-- `api/` has `router.py` (health, mounted inline), `auth.py`, and `admin.py` (Story 1.3, the first
-  real domain router and the reference implementation for role-gated routes, see trap 8).
-- `alembic/versions/` now holds two revisions: the baseline, and `f1743862f1b1` (case-insensitive
-  unique index on username, Story 1.3).
+- `services/` has `auth_service.py`, `user_service.py`, `inventory_service.py`, `menu_service.py`,
+  and `realtime_service.py`. Every other domain rule in the epics still has to be written.
+- `api/` has `router.py` (health, mounted inline), `auth.py`, `admin.py` (Story 1.3, the reference
+  implementation for role-gated routes, see trap 8), `inventory.py` (Story 2.1), `menu.py`
+  (Story 2.2), and `websocket.py` (Story 1.5).
+- `alembic/versions/` now holds three revisions: the baseline, `f1743862f1b1` (case-insensitive
+  unique index on username, Story 1.3), and `daca523f69f5` (the same fix applied to
+  `Ingredient.name`, Story 2.1, see trap 11).
 
-**Frontend, shell and routing skeleton, no domain screens yet (Story 1.4).**
+**Frontend, shell/routing skeleton plus a live real-time transport, still no domain screens (Story 1.4, Story 1.5).**
 
 ```
 frontend/src/
-  App.tsx              provider composition root: QueryClientProvider, ConnectionStatusProvider,
-                        ThemeModeProvider, RouterProvider (react-router core export, not "/dom",
-                        see Testing)
+  App.tsx              provider composition root: QueryClientProvider, ThemeModeProvider,
+                        RouterProvider (react-router core export, not "/dom", see Testing).
+                        ConnectionStatusProvider no longer sits here (Story 1.5): RealtimeProvider
+                        renders it internally, further down the tree, see below
   main.tsx              mounts <App/>, unchanged since Story 1.0
   router.tsx             the route tree (13 IA-surface routes + /login), exported as `routes` so
                         tests build their own createMemoryRouter from the same config
@@ -96,9 +122,13 @@ frontend/src/
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12)
   services/authService.ts  useCurrentUser / useLogin, the only TanStack Query hooks so far
-  components/shell/        RequireAuth (route guard), AppShell (app bar + nav + Outlet),
-                        AppShellSkeleton (the cold-load stand-in: app bar shape, not a blank page),
-                        ThemeModeProvider/ThemeToggle, ConnectionStatusContext/ReconnectingBanner,
+  components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
+                        AppShell (app bar + nav + Outlet), AppShellSkeleton (the cold-load
+                        stand-in: app bar shape, not a blank page), ThemeModeProvider/ThemeToggle,
+                        ConnectionStatusContext/ReconnectingBanner, RealtimeProvider (Story 1.5:
+                        owns the single WebSocket connection, drives ConnectionStatusContext with
+                        real state, capped exponential backoff reconnect, exposes useRealtime()'s
+                        subscribe(event, handler) for later stories to consume push events),
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
                         ROLE_PATH_PREFIX, the single source of truth the nav and the guard both read)
   pages/{role}/           one placeholder component per IA surface (just the surface's own title,
@@ -202,6 +232,12 @@ These are the ones that cost hours because nothing errors:
     makes an account unreachable at login or lets two confusable accounts exist. Decided
     2026-08-10 during Story 1.3's review, after establishing that nothing in the PRD, epics,
     schema doc, or spine had ever specified username case at all.
+    **Reused verbatim by Story 2.1 for `Ingredient.name`** (revision `daca523f69f5`), so this is
+    now a two-instance precedent, not a username-only quirk. `Category.name` (Story 2.2)
+    deliberately does **not** get this treatment: no epics AC or UX doc pairs category names into
+    the case-insensitive-duplicate convention, so it stays plain case-sensitive `unique=True`. Do
+    not assume every future `unique` string column needs the functional-index treatment, check the
+    epics/UX docs for that field specifically first.
 
 12. **A single-page app needs a history fallback in the image, and no test can see that it is
     missing.** Every route below `/` exists only in React Router. Nginx serves literal files, so
@@ -231,6 +267,39 @@ These are the ones that cost hours because nothing errors:
     real enforcement** (trap 8). As later stories put real data behind these surfaces, every one of
     them still needs its own role-gated endpoint; never treat "the nav does not show it" or "the
     guard redirected" as protection.
+
+15. **A `yield` dependency on a `@websocket` route stays open for the connection's entire
+    lifetime, not just one request.** `get_session_ws` (Story 1.5's first draft) was shaped like
+    the REST `get_session`, so a session opened per-connection instead of per-query, pinning one
+    pooled database connection for as long as the socket stayed open. Confirmed empirically: 6
+    open sockets checked out 6 pooled connections, released only on disconnect, against a default
+    `pool_size=5` + `max_overflow=10`, so the 16th concurrent device would exhaust the pool and
+    block every REST request. Fixed with `clients/database.py`'s `session_scope()`, a context
+    manager any non-request caller (a WebSocket handshake, `api/websocket.py`'s periodic
+    re-verification tick) opens and closes around one query, never around the connection's
+    lifetime. **Any future long-lived connection (a background task, a second WebSocket route)
+    must use `session_scope()`, never a `yield` dependency shaped for a request/response cycle.**
+
+16. **A `Numeric`/`Integer` column needs a matching Pydantic bound, or an out-of-range value
+    500s instead of 422ing.** Hit twice, both from code review, not from writing the story fresh.
+    Story 2.1: `Ingredient.min_stock_threshold`/`current_stock` (`Numeric(10, 3)`) had no
+    `max_digits`/`decimal_places`, so a value with more digits than the column allowed reached
+    Postgres and raised an unhandled `asyncpg.NumericValueOutOfRangeError`. Story 2.2: `Dish.price`
+    got the `Numeric(8, 2)` bound applied proactively from that lesson, but `category_id`/
+    `prep_time_minutes` (plain `Integer`, i.e. int4) had no upper bound at all, and a value beyond
+    Postgres's int4 range raised `asyncpg.DataError: value out of int32 range` the same way.
+    **Every `Decimal` field needs `Field(max_digits=..., decimal_places=...)` matching its
+    `Numeric(p, s)` column exactly; every plain-`Integer`-backed `int` field needs `Field(le=2_147_483_647)`
+    unless the column is `BigInteger`.** Check this for every new request schema, do not wait for
+    review to catch it a third time.
+
+17. **`CategoryNotFoundError`/`DishNotFoundError` duplicate `UserNotFoundError`'s handler shape
+    rather than sharing a common `NotFoundError` base**, a deliberate, explicit decision made
+    during Story 2.2 (touching `UserNotFoundError` would mean editing Story 1.3's code, out of
+    that story's scope). There are now three near-identical bare-`Exception`-plus-hand-copied-404-
+    handler pairs. **If a fourth `*NotFoundError` is ever added, that is the signal to stop
+    duplicating and introduce a shared `NotFoundError(Exception)` base with one handler**, the same
+    way `ConflictError` already covers every 409.
 
 ---
 
@@ -363,7 +432,11 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
 - **AD-7** `OrderItem.price_at_add` is stored; Order totals always computed from it over non-cancelled
   items — never a live Dish-price lookup.
 - **AD-8** Reject marking a Dish available with zero `RecipeIngredient` rows; reject removing the last
-  row while available.
+  row while available. **First half built in Story 2.2** (`MenuService.update_dish`'s
+  `_reject_if_recipe_empty`, a `RecipeIngredient` count check); the second half (rejecting removing
+  the last row while available) belongs to Story 2.3, which owns Recipe Ingredient CRUD and does
+  not exist yet. Every Dish stays unavailable until 2.3 ships, since nothing can populate
+  `RecipeIngredient` rows before then, that is expected sequencing.
 - **AD-11** Cancelling an `in_preparation` OrderItem does **not** reverse its stock deduction. Ingredients
   are treated as already used. No compensating movement is created automatically.
 - **AD-12** All OpenAI calls go through a `clients/` adapter behind an interface — never called from `services/`.
@@ -389,6 +462,14 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   self-service signup, no email recovery. Passwords are bcrypt-hashed, never logged or returned.
 - Tables are **added and edited, never deleted.** Editing is gated on the table being `available`.
 - A Recipe Suggestion never writes to a live Dish — Admin confirmation is the only path to the menu.
+- A newly created Dish is **unconditionally unavailable**, regardless of anything a caller submits
+  (`CreateDishRequest` has no `is_available` field at all). Menu Categories are **create-only** in
+  v1 so far (no update/delete endpoint exists, Story 2.2's explicit scope), and their name
+  uniqueness is plain case-sensitive, unlike User/Ingredient names (trap 11).
+- The single WebSocket connection (`/api/ws`, Story 1.5) is **one per authenticated session**: a
+  second connection from the same User closes the first. A connection's session is re-verified
+  periodically while it stays open, so a socket cannot outlive its JWT or survive a Role change/
+  deactivation indefinitely (bounded by the re-verification interval, not instant).
 
 ---
 
@@ -452,7 +533,25 @@ from `frontend/`.
   test, reintroduce the bug and watch it go red.** Doing exactly that is what proved one of the
   review's own "high severity" findings was a false positive.
 
+- **A WebSocket broadcast test needs a real `uvicorn.Server`, not `TestClient` (Story 1.5).**
+  `TestClient.websocket_connect` runs the ASGI app in a separate thread with its own event loop, so
+  a broadcast call from the test would race the connection registry across two loops.
+  `tests/test_websocket.py` instead runs a real `uvicorn.Server` on an ephemeral port, sharing the
+  test's own event loop, `lifespan="on"` so the server's own startup/shutdown pairs with
+  `container.init_resources()`/`shutdown_resources()` symmetrically. Do **not** call
+  `container.init_resources()` manually alongside `lifespan="off"`, that leaves the database engine
+  bound to a pytest-asyncio event loop a later test's own loop has already replaced, surfacing as
+  `asyncpg.InterfaceError: another operation is in progress` in whichever test runs next.
+  `TestClient.websocket_connect` also does not reuse the client's HTTP cookie jar, pass the session
+  cookie explicitly via a `Cookie` header.
+- **Verify a numeric claim against a live Postgres before writing the assertion.** Two review
+  findings (trap 16) were confirmed by actually sending the oversized value against a running
+  database and reading the real exception, not by reasoning about Pydantic's field constraints in
+  the abstract. A first attempt at the Story 2.1 precision test used a value that turned out to be
+  exactly at the boundary (accepted, not rejected); caught only by running it.
+
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
+Backend suite is now **158 tests**, frontend **47 tests** (as of Story 2.2).
 
 ---
 
@@ -543,4 +642,40 @@ regression test can actually fail before trusting it. Frontend current-state tre
 Role rather than the Kitchen Display surface, matching the implementation. Suites are now **111
 backend and 34 frontend tests**.
 
-Last Updated: 2026-08-11
+**2026-08-11 patch (Story 1.5, Real-Time Push Transport, plus its code review):** first WebSocket
+transport landed: `api/websocket.py` (the single `/api/ws` endpoint), `clients/websocket.py`
+(`ConnectionRegistry`, keyed by user id so one connection per session is enforceable and a
+broadcast can target several Roles in one call), `services/realtime_service.py`, and the frontend's
+`RealtimeProvider.tsx` (replacing the static `ConnectionStatusProvider` in `App.tsx`, now mounted
+inside `RequireAuth`). Trap 15 added (a WebSocket `yield` dependency pins a pooled DB connection for
+the connection's whole lifetime, confirmed by reproducing pool exhaustion directly); `clients/database.py`
+gained `session_scope()` as the fix. `api/dependencies.py` gained the WebSocket-route counterparts
+`CurrentUserWsDep`/`verify_ws_origin`. A new Testing entry documents the real-`uvicorn.Server`
+pattern needed for broadcast tests, since `TestClient` cannot share an event loop with the app.
+
+**2026-08-11 patch (Story 2.1, Create and Manage Ingredients, plus its code review):** first
+`inventory` domain router: `api/inventory.py` (`POST /api/inventory/ingredients`, the first route to
+permit two Roles via `require_role`), `services/inventory_service.py`. Trap 11 extended: the
+username case-insensitive-uniqueness fix was reused verbatim for `Ingredient.name` (revision
+`daca523f69f5`), now a two-instance precedent rather than a username-only quirk. Trap 16 added
+(first occurrence): a `Numeric` column needs a matching `max_digits`/`decimal_places` bound or an
+oversized value 500s instead of 422ing, confirmed by reproducing the raw `asyncpg` error against a
+live database.
+
+**2026-08-12 patch (Story 2.2, Manage Menu Categories and Dishes, plus its code review):** first
+`menu` domain router: `api/menu.py` (category create, dish create/update, admin-only),
+`services/menu_service.py`, and AD-8's first half (the availability-toggle gate). Two new
+`ConflictError` subclasses (`DuplicateCategoryNameError`, `EmptyRecipeError`) and two new bare-404
+types (`CategoryNotFoundError`, `DishNotFoundError`) added to `exceptions/`. Trap 16 extended
+(second occurrence, this time on plain `Integer` columns rather than `Numeric`): `category_id`/
+`prep_time_minutes` had no upper bound, so a value beyond Postgres's int4 range also 500'd, fixed
+with `Field(le=2_147_483_647)`. Trap 17 added: `CategoryNotFoundError`/`DishNotFoundError` duplicate
+`UserNotFoundError`'s shape by deliberate choice rather than sharing a base, revisit if a fourth
+`*NotFoundError` ever appears. `Dish.is_available`'s column-level default corrected from `True` to
+`False` to align with AD-8 (no migration needed, it was never a `server_default`). Domain rules
+section gained notes on Dish's unconditional-unavailable-at-creation rule, Category's create-only/
+case-sensitive scope, and the WebSocket one-connection-per-session/periodic-re-verification
+behavior (the latter carried over from Story 1.5, missed by that patch). Suites are now **158
+backend and 47 frontend tests**.
+
+Last Updated: 2026-08-12
