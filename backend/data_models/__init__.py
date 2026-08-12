@@ -19,7 +19,16 @@ from .menu import (
     DishResponse,
     UpdateDishRequest,
 )
-from .recipe import CreateIngredientRequest, Ingredient, IngredientResponse, RecipeIngredient, Unit
+from .recipe import (
+    CreateIngredientRequest,
+    CreateRecipeIngredientRequest,
+    Ingredient,
+    IngredientResponse,
+    RecipeIngredient,
+    RecipeIngredientResponse,
+    Unit,
+    UpdateRecipeIngredientRequest,
+)
 from .order import RestaurantTable, Order, OrderItem, TableStatus, OrderStatus, OrderItemStatus
 from .inventory import StockMovement, MovementType
 from .ai import AIRecipeSuggestion, AIChatSession, AIChatMessage, ChatRole
@@ -32,6 +41,7 @@ __all__ = [
     "Category", "Dish",
     "CreateCategoryRequest", "CategoryResponse", "CreateDishRequest", "UpdateDishRequest", "DishResponse",
     "Ingredient", "RecipeIngredient", "Unit", "CreateIngredientRequest", "IngredientResponse",
+    "CreateRecipeIngredientRequest", "UpdateRecipeIngredientRequest", "RecipeIngredientResponse",
     "RestaurantTable", "Order", "OrderItem", "TableStatus", "OrderStatus", "OrderItemStatus",
     "StockMovement", "MovementType",
     "AIRecipeSuggestion", "AIChatSession", "AIChatMessage", "ChatRole",

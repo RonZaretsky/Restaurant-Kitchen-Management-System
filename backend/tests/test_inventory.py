@@ -228,3 +228,53 @@ async def test_blank_name_is_rejected(client: AsyncClient, db_session: AsyncSess
 
     # Assert
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_can_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.admin, "admin1")
+    create_response = await client.post(
+        "/api/inventory/ingredients",
+        json={"name": "Rosemary", "unit": "kg", "min_stock_threshold": "1.0"},
+    )
+
+    # Act
+    response = await client.get("/api/inventory/ingredients")
+
+    # Assert
+    assert response.status_code == 200
+    assert any(i["id"] == create_response.json()["id"] for i in response.json())
+
+
+@pytest.mark.asyncio
+async def test_warehouse_manager_can_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+
+    # Act
+    response = await client.get("/api/inventory/ingredients")
+
+    # Assert
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_cook_cannot_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "cook1")
+
+    # Act
+    response = await client.get("/api/inventory/ingredients")
+
+    # Assert
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_cannot_list_ingredients(client: AsyncClient) -> None:
+    # Act
+    response = await client.get("/api/inventory/ingredients")
+
+    # Assert
+    assert response.status_code == 401
