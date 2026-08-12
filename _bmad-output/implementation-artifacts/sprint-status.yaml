@@ -70,8 +70,8 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Menu, Recipes, Ingredients & Table Setup
-  epic-2: backlog
-  2-1-create-and-manage-ingredients: backlog
+  epic-2: in-progress
+  2-1-create-and-manage-ingredients: done
   2-2-manage-menu-categories-and-dishes: backlog
   2-3-define-a-dishs-recipe: backlog
   2-4-manage-restaurant-tables: backlog
