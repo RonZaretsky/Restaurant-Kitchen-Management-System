@@ -183,10 +183,60 @@
   **Action:** if connection status is ever needed outside the authenticated shell, make the
   context default `undefined` and have `useConnectionStatus()` throw outside a provider.
 
+## Deferred from: code review of story-2.4 (2026-08-12)
+
+- **AC4's "re-enabling the moment the table returns to `available`" is not implemented, deferred to
+  Epic 3 by decision 2026-08-12 (Ofek).** `TablesSetupPage` derives the Edit control's disabled
+  state from `useTables()`, but nothing refreshes it when a *different* session frees or seats a
+  table: no `refetchInterval`, no `useRealtime()` subscription, and the query is invalidated only by
+  that page's own mutations. A Waiter releasing a table leaves Edit disabled until a manual reload.
+  AD-2 requires the owning service to broadcast every state change, and `RealtimeProvider`'s
+  `subscribe(event, handler)` has been unused since Story 1.5. **Rationale for deferring rather than
+  building it now:** Epic 3 needs live table status for Waiters to satisfy its own ACs, so the
+  `table.*` event contract should be designed there against its real consumers, instead of being
+  invented here for a single one and reworked two stories later. **Action for the Epic 3 story that
+  first needs live table state:** emit `table.created`/`table.updated` from `TableService` (the
+  first real producer on the Story 1.5 transport) and subscribe on both the Waiter surface and
+  `TablesSetupPage`, which closes this AC4 clause retroactively.
+
+- **`TablesSetupPage` diverges from the UX mock's panel layout.** The mock
+  (`mockups/key-tables-setup.html`) has two bordered panels with an "Add table" panel head, a
+  "N tables configured" subtitle, right-aligned row actions, and values rendered as `Table 1` /
+  `2 seats`; the page ships a bare form and a bare table with raw numeric values. Dense-row styling
+  (UX-DR8) itself **is** satisfied, via the theme's `MuiTable: { defaultProps: { size: "small" } }`
+  default. Cosmetic only, no AC-visible behavior depends on it. Worth folding into whichever story
+  next touches an Admin setup screen.
+- **`GET /api/tables/` is Admin-only and Epic 3 will have to widen it.** project-context.md's domain
+  rules state "every Waiter sees every Table", and `router.tsx` already routes `waiter/tables` to a
+  `TablesPage`. Story 2.4 deliberately scoped table reads to Admin (its Scope note says Waiter-facing
+  reads are Epic 3's concern). Nothing blocks the change: no test asserts a Waiter is refused on the
+  list route, only that a Cook is. **Action for the Epic 3 story that needs Waiter table reads:**
+  widen `TablesDep` on the list route to `require_role(UserRole.admin, UserRole.waiter)` (the
+  two-Role precedent `api/inventory.py` already set) rather than adding a second near-duplicate
+  endpoint.
+- **An offline (paused) query renders a blank page and a paused mutation disables its button
+  forever.** With TanStack v5's default `networkMode: "online"`, an offline query is
+  `isPending: true, isFetching: false`, so `isLoading` is false, `isError` is false, and `data` is
+  undefined, leaving all four render branches false. `createMutation.isPending` likewise stays true
+  while paused, disabling Add table with no explanation. Pre-existing codebase-wide shape
+  (`MenuManagementPage` has the identical gap), not introduced by Story 2.4. Fix once, in a shared
+  pattern, rather than per page.
+- **The test-support fake `Response` diverges from the real one.** `jsonResponse` in both
+  `TablesSetupPage.test.tsx` and `MenuManagementPage.test.tsx` supplies only `ok`, `status`, `text`
+  and `json`, with no `headers`, `statusText` or `body`. It works against today's `httpClient`, but a
+  future 204 path, header read, or `response.clone()` will fail with an obscure "not a function"
+  rather than a meaningful assertion. There are now three hand-rolled copies (counting
+  `appIntegration.test.tsx`); lift one shared helper.
+
 ## Deferred from: dev-story of story-2.4 (2026-08-12)
 
-- **Logging `actor.id` after `db.rollback()` raises an unhandled `MissingGreenlet`, latent in three
-  existing `IntegrityError` handlers.** Found and fixed live in `TableService.update_table` while
+- ~~**Logging `actor.id` after `db.rollback()` raises an unhandled `MissingGreenlet`, latent in three
+  existing `IntegrityError` handlers.**~~ **RESOLVED 2026-08-12 during Story 2.4's code review, not
+  deferred.** The review found a fourth instance, freshly introduced in `TableService.create_table`
+  by this very story, and all four call sites were fixed together in that pass (log before rollback,
+  never after). Original finding retained below for the reasoning.
+
+- **(resolved, kept for the why)** Found and fixed live in `TableService.update_table` while
   writing Story 2.4's AC6 race test (the first test in this codebase to actually trigger a
   rollback-then-log path, since every prior duplicate-name check wins on its existence check before
   ever reaching an `IntegrityError`). `AsyncSession.rollback()` expires every object bound to the

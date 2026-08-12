@@ -29,7 +29,7 @@ const TABLES_QUERY_KEY = ["tables"] as const;
 export function useTables(): UseQueryResult<Table[], Error> {
   return useQuery({
     queryKey: TABLES_QUERY_KEY,
-    queryFn: () => apiRequest<Table[]>("/api/tables/"),
+    queryFn: () => apiRequest<Table[]>("/api/tables"),
     // Matches authService's deliberate opt-out (and Story 2.3's review lesson,
     // applied proactively here): the app-level QueryClient sets no retry, so the
     // default of 3 attempts would turn a 401/403 into four requests and a
@@ -48,7 +48,7 @@ export function useCreateTable(): UseMutationResult<Table, Error, CreateTablePay
 
   return useMutation({
     mutationFn: (payload: CreateTablePayload) =>
-      apiRequest<Table>("/api/tables/", {
+      apiRequest<Table>("/api/tables", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
@@ -58,6 +58,12 @@ export function useCreateTable(): UseMutationResult<Table, Error, CreateTablePay
 
 /**
  * Edits a Table's number and/or capacity, only while it is available.
+ *
+ * Invalidates on settle rather than only on success. A rejected save is the
+ * case that most needs a refresh: a 409 "table in use" means this client's copy
+ * of the row is already stale, and without a refetch the row keeps rendering an
+ * `available` Chip and an enabled Save button next to the error, so the Admin
+ * can retry forever against state that will never accept them.
  *
  * @returns The TanStack Query mutation for submitting an edit.
  */
@@ -74,6 +80,6 @@ export function useUpdateTable(): UseMutationResult<
         method: "PATCH",
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY }),
   });
 }

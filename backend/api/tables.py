@@ -15,7 +15,7 @@ from data_models import (
     User,
     UserRole,
 )
-from data_models.order import _INT4_MAX
+from data_models.menu import _INT4_MAX
 from services.table_service import TableService
 
 router = APIRouter(prefix="/api/tables", tags=["tables"])
@@ -38,7 +38,7 @@ _ERROR_DESCRIPTIONS = {
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[TableResponse],
     responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403),
 )
@@ -62,7 +62,7 @@ async def list_tables(
 
 
 @router.post(
-    "/",
+    "",
     response_model=TableResponse,
     status_code=201,
     responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403, 409),

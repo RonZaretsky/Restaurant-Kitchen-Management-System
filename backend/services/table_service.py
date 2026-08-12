@@ -110,12 +110,16 @@ class TableService:
             # The check above loses to a concurrent create of the same number.
             # The unique constraint is the real arbiter, so translate its violation
             # into the same 409 rather than letting it surface as a 500.
-            await db.rollback()
+            # Logging before rollback, not after: rollback() expires every object
+            # bound to this session, actor included, so reading actor.id afterward
+            # would trigger an implicit lazy load with no greenlet context to run
+            # it in, raising an unhandled MissingGreenlet.
             self._logger.warning(
                 "Table creation rejected by user_id={}: table_number={} already exists (lost the race)",
                 actor.id,
                 payload.table_number,
             )
+            await db.rollback()
             raise DuplicateTableNumberError() from exc
         await db.refresh(table)
         self._logger.info(
@@ -165,12 +169,26 @@ class TableService:
         if payload.capacity is not None and payload.capacity != table.capacity:
             changed_fields["capacity"] = payload.capacity
 
-        # An edit submitting the values already stored is not a state change, and
-        # the audit log must not claim one, mirroring MenuService.update_dish. This
-        # only short-circuits when nothing was actually submitted to change, never
-        # as a way to skip the status guard: UpdateTableRequest's own validator
-        # already guarantees at least one field is present.
+        # An edit submitting the values already stored writes nothing, and the audit
+        # log must not claim a change. It is still an edit attempt, though, so AC4's
+        # rule applies: re-read the row under the same availability filter the
+        # guarded UPDATE would use, and reject if the table is in use. Returning
+        # early without this check reports 200 for an operation AC4 says must be
+        # rejected.
         if not changed_fields:
+            still_available = await db.execute(
+                select(RestaurantTable.id).where(
+                    RestaurantTable.id == table_id,
+                    RestaurantTable.status == TableStatus.available,
+                )
+            )
+            if still_available.scalar_one_or_none() is None:
+                self._logger.warning(
+                    "Table update rejected by user_id={}: table_id={} is not available",
+                    actor.id,
+                    table_id,
+                )
+                raise TableInUseError()
             return table
 
         if "table_number" in changed_fields:
@@ -195,32 +213,44 @@ class TableService:
                 .where(RestaurantTable.id == table_id, RestaurantTable.status == TableStatus.available)
                 .values(**changed_fields)
             )
+            if result.rowcount == 0:
+                # Either the table was already occupied/reserved (AC4) or a Waiter
+                # seated it between this request's read and this write (AC6). The
+                # guarded UPDATE cannot tell those apart, and both use one message.
+                self._logger.warning(
+                    "Table update rejected by user_id={}: table_id={} is not available",
+                    actor.id,
+                    table_id,
+                )
+                await db.rollback()
+                raise TableInUseError()
+            # Committed inside the try: a unique violation can surface at commit
+            # rather than at execution, and outside this block it would escape as
+            # an unhandled 500 instead of the 409 below.
+            await db.commit()
         except IntegrityError as exc:
-            # The check above loses to a concurrent rename to the same number.
-            # Logging before rollback, not after: rollback() expires every object
-            # bound to this session, and actor is one of them, so reading actor.id
-            # afterward would trigger an implicit lazy-load with no greenlet
-            # context to run it in (an unhandled MissingGreenlet, reproduced while
-            # writing this story's own tests, not a hypothetical concern).
-            self._logger.warning(
-                "Table update rejected by user_id={}: table_id={} table_number={} already exists (lost the race)",
-                actor.id,
-                table_id,
-                changed_fields.get("table_number"),
-            )
+            # The duplicate check above loses to a concurrent rename to the same
+            # number. Logging before rollback, not after: rollback() expires every
+            # object bound to this session, and actor is one of them, so reading
+            # actor.id afterward would trigger an implicit lazy-load with no
+            # greenlet context to run it in (an unhandled MissingGreenlet,
+            # reproduced while writing this story's own tests).
+            if "table_number" in changed_fields:
+                self._logger.warning(
+                    "Table update rejected by user_id={}: table_id={} table_number={} already exists (lost the race)",
+                    actor.id,
+                    table_id,
+                    changed_fields["table_number"],
+                )
+            else:
+                self._logger.warning(
+                    "Table update failed by user_id={}: table_id={} violated a database constraint",
+                    actor.id,
+                    table_id,
+                )
             await db.rollback()
             raise DuplicateTableNumberError() from exc
 
-        if result.rowcount == 0:
-            self._logger.warning(
-                "Table update rejected by user_id={}: table_id={} is not available",
-                actor.id,
-                table_id,
-            )
-            await db.rollback()
-            raise TableInUseError()
-
-        await db.commit()
         await db.refresh(table)
         self._logger.info(
             "Table updated by user_id={}: table_id={} changed_fields={}",

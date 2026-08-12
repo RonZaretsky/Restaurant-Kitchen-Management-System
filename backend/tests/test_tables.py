@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_models import RestaurantTable, TableStatus, User, UserRole
 from services.auth_service import AuthService
+from services.table_service import TableService
 
 _PASSWORD = "correct-horse-battery-staple"
 
@@ -35,7 +36,7 @@ async def _login_as_admin(client: AsyncClient, db_session: AsyncSession, usernam
 
 async def _create_table(client: AsyncClient, table_number: int, capacity: int = 4) -> dict:
     response = await client.post(
-        "/api/tables/", json={"table_number": table_number, "capacity": capacity}
+        "/api/tables", json={"table_number": table_number, "capacity": capacity}
     )
     assert response.status_code == 201
     return response.json()
@@ -49,7 +50,7 @@ async def test_admin_can_create_a_table_and_it_starts_available(
     await _login_as_admin(client, db_session)
 
     # Act
-    response = await client.post("/api/tables/", json={"table_number": 1, "capacity": 4})
+    response = await client.post("/api/tables", json={"table_number": 1, "capacity": 4})
 
     # Assert
     assert response.status_code == 201
@@ -68,7 +69,7 @@ async def test_duplicate_table_number_on_create_is_rejected(
     await _create_table(client, 5)
 
     # Act
-    response = await client.post("/api/tables/", json={"table_number": 5, "capacity": 2})
+    response = await client.post("/api/tables", json={"table_number": 5, "capacity": 2})
 
     # Assert
     assert response.status_code == 409
@@ -144,25 +145,43 @@ async def test_renaming_a_table_to_another_tables_number_is_rejected(
 
 @pytest.mark.asyncio
 async def test_race_between_form_load_and_save_is_rejected(
-    client: AsyncClient, db_session: AsyncSession
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Arrange: this is AC6, the story's core rule. The Admin "loads the form"
-    # (the table is available at that point); a Waiter "seats the table" by the
-    # time the save commits, simulated by committing a status change via the
-    # test's own db_session (a separate connection from the app's) immediately
-    # before the PATCH, so the guarded UPDATE reads live, already-changed state.
+    # Arrange: this is AC6, the story's core rule, and the only test that can tell
+    # a guarded UPDATE apart from a read-then-write. The table is available when
+    # the request begins and when the service reads it; a Waiter seats it from a
+    # separate connection *after* that read and *before* the write. A naive
+    # implementation that decides from the object it already read would let this
+    # through, so removing the WHERE status = 'available' clause turns this red.
     await _login_as_admin(client, db_session)
     table = await _create_table(client, 1)
-    db_table = await db_session.get(RestaurantTable, table["id"])
-    db_table.status = TableStatus.occupied
-    await db_session.commit()
+    table_id = table["id"]
+
+    original_get_table = TableService.get_table
+
+    async def get_table_then_seat_it(self, db, actor, requested_id):
+        loaded = await original_get_table(self, db, actor, requested_id)
+        # The row the service just read still says available.
+        assert loaded.status is TableStatus.available
+        seated = await db_session.get(RestaurantTable, requested_id)
+        seated.status = TableStatus.occupied
+        await db_session.commit()
+        return loaded
+
+    monkeypatch.setattr(TableService, "get_table", get_table_then_seat_it)
 
     # Act
-    response = await client.patch(f"/api/tables/{table['id']}", json={"capacity": 8})
+    response = await client.patch(f"/api/tables/{table_id}", json={"capacity": 8})
 
     # Assert
     assert response.status_code == 409
     assert response.json()["detail"] == "Rejected, table in use"
+
+    # Assert: and the write really did not land.
+    monkeypatch.undo()
+    db_session.expire_all()
+    unchanged = await db_session.get(RestaurantTable, table_id)
+    assert unchanged.capacity == 4
 
 
 @pytest.mark.asyncio
@@ -197,7 +216,7 @@ async def test_negative_capacity_is_rejected(client: AsyncClient, db_session: As
     await _login_as_admin(client, db_session)
 
     # Act
-    response = await client.post("/api/tables/", json={"table_number": 1, "capacity": -1})
+    response = await client.post("/api/tables", json={"table_number": 1, "capacity": -1})
 
     # Assert
     assert response.status_code == 422
@@ -209,7 +228,7 @@ async def test_zero_table_number_is_rejected(client: AsyncClient, db_session: As
     await _login_as_admin(client, db_session)
 
     # Act
-    response = await client.post("/api/tables/", json={"table_number": 0, "capacity": 4})
+    response = await client.post("/api/tables", json={"table_number": 0, "capacity": 4})
 
     # Assert
     assert response.status_code == 422
@@ -224,7 +243,7 @@ async def test_table_number_exceeding_int4_range_is_rejected(
 
     # Act: without an upper bound, this reaches the database and raises an unhandled
     # asyncpg.DataError ("value out of int32 range") instead of a clean 422.
-    response = await client.post("/api/tables/", json={"table_number": 99999999999999, "capacity": 4})
+    response = await client.post("/api/tables", json={"table_number": 99999999999999, "capacity": 4})
 
     # Assert
     assert response.status_code == 422
@@ -251,7 +270,7 @@ async def test_warehouse_manager_cannot_create_a_table(client: AsyncClient, db_s
     await _login(client, "noa")
 
     # Act
-    response = await client.post("/api/tables/", json={"table_number": 1, "capacity": 4})
+    response = await client.post("/api/tables", json={"table_number": 1, "capacity": 4})
 
     # Assert
     assert response.status_code == 403
@@ -279,7 +298,7 @@ async def test_cook_cannot_list_tables(client: AsyncClient, db_session: AsyncSes
     await _login(client, "cook1")
 
     # Act
-    response = await client.get("/api/tables/")
+    response = await client.get("/api/tables")
 
     # Assert
     assert response.status_code == 403
@@ -288,7 +307,7 @@ async def test_cook_cannot_list_tables(client: AsyncClient, db_session: AsyncSes
 @pytest.mark.asyncio
 async def test_unauthenticated_request_is_rejected(client: AsyncClient) -> None:
     # Act
-    response = await client.post("/api/tables/", json={"table_number": 1, "capacity": 4})
+    response = await client.post("/api/tables", json={"table_number": 1, "capacity": 4})
 
     # Assert
     assert response.status_code == 401
@@ -301,8 +320,66 @@ async def test_admin_can_list_tables(client: AsyncClient, db_session: AsyncSessi
     table = await _create_table(client, 1)
 
     # Act
-    response = await client.get("/api/tables/")
+    response = await client.get("/api/tables")
 
     # Assert
     assert response.status_code == 200
     assert any(t["id"] == table["id"] for t in response.json())
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_edit_on_an_occupied_table_is_still_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: submitting the value a table already holds writes nothing, but it is
+    # still an edit attempt, and AC4 rejects edit attempts on a table in use.
+    await _login_as_admin(client, db_session)
+    table = await _create_table(client, 1, capacity=4)
+    db_table = await db_session.get(RestaurantTable, table["id"])
+    db_table.status = TableStatus.occupied
+    await db_session.commit()
+
+    # Act
+    response = await client.patch(f"/api/tables/{table['id']}", json={"capacity": 4})
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, table in use"
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_edit_on_an_available_table_succeeds(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as_admin(client, db_session)
+    table = await _create_table(client, 1, capacity=4)
+
+    # Act
+    response = await client.patch(f"/api/tables/{table['id']}", json={"capacity": 4})
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["capacity"] == 4
+
+
+@pytest.mark.asyncio
+async def test_an_explicitly_null_field_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: JSON.stringify turns NaN into null, so a browser field that failed to
+    # parse arrives here as an explicit null. Treating that as "field omitted" would
+    # apply only the other field and answer 200, so the caller believes both saved.
+    await _login_as_admin(client, db_session)
+    table = await _create_table(client, 1, capacity=4)
+
+    # Act
+    response = await client.patch(
+        f"/api/tables/{table['id']}", json={"table_number": None, "capacity": 8}
+    )
+
+    # Assert
+    assert response.status_code == 422
+
+    # Assert: and nothing was applied.
+    db_session.expire_all()
+    unchanged = await db_session.get(RestaurantTable, table["id"])
+    assert unchanged.capacity == 4

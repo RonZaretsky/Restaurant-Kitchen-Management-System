@@ -34,12 +34,35 @@ function errorMessage(error: Error): string {
 }
 
 /**
+ * Parses a field that must hold a positive whole number.
+ *
+ * Deliberately stricter than `Number()`: that coerces `""` and `" "` to 0 and
+ * turns anything unparseable into `NaN`, which `JSON.stringify` then serializes
+ * as `null`. A null reaches the backend as a field the caller did supply, so
+ * accepting it here is how a typo in one field silently ships a partial write.
+ *
+ * @param raw - The raw text from the input.
+ * @returns The parsed integer, or null if the text is not a positive integer.
+ */
+function parsePositiveInteger(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+/** Shown when a number field holds something that is not a positive whole number. */
+const INVALID_NUMBER_MESSAGE = "Enter a whole number greater than zero";
+
+/**
  * One row of the Tables list, owning its own edit-mode state.
  *
- * The editable fields are controlled and resync from the server's value
- * whenever it changes, the same pattern Story 2.3's `RecipeLineRow` uses,
- * so a rejected save or another Admin's edit is always reflected back
- * instead of leaving stale text in the field.
+ * The editable fields are controlled and resync from the server's value, but
+ * only while this row is not being edited: resyncing mid-edit would silently
+ * replace text the Admin is still typing whenever the list refetches (on window
+ * focus, or after any sibling row's save).
  *
  * @param table - The Table this row displays and edits.
  * @returns The table row.
@@ -50,12 +73,27 @@ function TableListRow({ table }: { table: RestaurantTable }) {
   const [draftCapacity, setDraftCapacity] = useState(String(table.capacity));
   const updateMutation = useUpdateTable();
 
+  const isAvailable = table.status === "available";
+
   useEffect(() => {
+    if (isEditing) {
+      return;
+    }
     setDraftNumber(String(table.table_number));
     setDraftCapacity(String(table.capacity));
-  }, [table.table_number, table.capacity]);
+  }, [table.table_number, table.capacity, isEditing]);
 
-  const isAvailable = table.status === "available";
+  // A table seated while this row is open can no longer be edited, so drop out
+  // of edit mode rather than leaving a form the next Save can only 409 on.
+  useEffect(() => {
+    if (!isAvailable && isEditing) {
+      setIsEditing(false);
+    }
+  }, [isAvailable, isEditing]);
+
+  const parsedNumber = parsePositiveInteger(draftNumber);
+  const parsedCapacity = parsePositiveInteger(draftCapacity);
+  const hasInvalidDraft = parsedNumber === null || parsedCapacity === null;
 
   const startEdit = () => {
     updateMutation.reset();
@@ -63,25 +101,24 @@ function TableListRow({ table }: { table: RestaurantTable }) {
   };
 
   const cancelEdit = () => {
+    updateMutation.reset();
     setDraftNumber(String(table.table_number));
     setDraftCapacity(String(table.capacity));
     setIsEditing(false);
   };
 
   const save = () => {
-    const payload: { table_number?: number; capacity?: number } = {};
-    if (Number(draftNumber) !== table.table_number) {
-      payload.table_number = Number(draftNumber);
-    }
-    if (Number(draftCapacity) !== table.capacity) {
-      payload.capacity = Number(draftCapacity);
-    }
-    if (Object.keys(payload).length === 0) {
-      setIsEditing(false);
+    if (parsedNumber === null || parsedCapacity === null) {
       return;
     }
+    // Both fields are always sent, never diffed against the cached row. Diffing
+    // makes the request depend on possibly-stale cache: if another Admin has
+    // already changed this value, typing the cached one produces an empty
+    // payload, so no request is sent and the row exits edit mode looking saved
+    // while the server still holds the other value. Letting the server decide
+    // what changed is the only version that cannot silently do nothing.
     updateMutation.mutate(
-      { tableId: table.id, payload },
+      { tableId: table.id, payload: { table_number: parsedNumber, capacity: parsedCapacity } },
       { onSuccess: () => setIsEditing(false) },
     );
   };
@@ -96,6 +133,8 @@ function TableListRow({ table }: { table: RestaurantTable }) {
               label={`Table number for table ${table.table_number}`}
               value={draftNumber}
               onChange={(event) => setDraftNumber(event.target.value)}
+              error={parsedNumber === null}
+              helperText={parsedNumber === null ? INVALID_NUMBER_MESSAGE : undefined}
               slotProps={{ htmlInput: { inputMode: "numeric" } }}
             />
           ) : (
@@ -109,6 +148,8 @@ function TableListRow({ table }: { table: RestaurantTable }) {
               label={`Capacity for table ${table.table_number}`}
               value={draftCapacity}
               onChange={(event) => setDraftCapacity(event.target.value)}
+              error={parsedCapacity === null}
+              helperText={parsedCapacity === null ? INVALID_NUMBER_MESSAGE : undefined}
               slotProps={{ htmlInput: { inputMode: "numeric" } }}
             />
           ) : (
@@ -125,10 +166,15 @@ function TableListRow({ table }: { table: RestaurantTable }) {
         <TableCell>
           {isEditing ? (
             <Box sx={{ display: "flex", gap: 1 }}>
-              <Button size="small" variant="contained" onClick={save} disabled={updateMutation.isPending}>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={save}
+                disabled={updateMutation.isPending || hasInvalidDraft}
+              >
                 Save
               </Button>
-              <Button size="small" onClick={cancelEdit}>
+              <Button size="small" onClick={cancelEdit} disabled={updateMutation.isPending}>
                 Cancel
               </Button>
             </Box>
@@ -175,10 +221,16 @@ export function TablesSetupPage() {
   const { data: tables, isLoading, isError, error, refetch } = useTables();
   const createMutation = useCreateTable();
 
+  const parsedNumber = parsePositiveInteger(tableNumber);
+  const parsedCapacity = parsePositiveInteger(capacity);
+
   const handleCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (parsedNumber === null || parsedCapacity === null) {
+      return;
+    }
     createMutation.mutate(
-      { table_number: Number(tableNumber), capacity: Number(capacity) },
+      { table_number: parsedNumber, capacity: parsedCapacity },
       {
         onSuccess: () => {
           setTableNumber("");
@@ -188,7 +240,9 @@ export function TablesSetupPage() {
     );
   };
 
-  const canSubmit = tableNumber !== "" && capacity !== "" && !createMutation.isPending;
+  // Both fields must parse as positive whole numbers, not merely be non-empty:
+  // Number(" ") is 0 and Number("abc") is NaN, which serializes to JSON null.
+  const canSubmit = parsedNumber !== null && parsedCapacity !== null && !createMutation.isPending;
 
   return (
     <>
@@ -206,6 +260,8 @@ export function TablesSetupPage() {
           label="Table number"
           value={tableNumber}
           onChange={(event) => setTableNumber(event.target.value)}
+          error={tableNumber !== "" && parsedNumber === null}
+          helperText={tableNumber !== "" && parsedNumber === null ? INVALID_NUMBER_MESSAGE : undefined}
           slotProps={{ htmlInput: { inputMode: "numeric" } }}
         />
         <TextField
@@ -213,6 +269,8 @@ export function TablesSetupPage() {
           label="Capacity (seats)"
           value={capacity}
           onChange={(event) => setCapacity(event.target.value)}
+          error={capacity !== "" && parsedCapacity === null}
+          helperText={capacity !== "" && parsedCapacity === null ? INVALID_NUMBER_MESSAGE : undefined}
           slotProps={{ htmlInput: { inputMode: "numeric" } }}
         />
         <Button type="submit" variant="contained" disabled={!canSubmit}>
