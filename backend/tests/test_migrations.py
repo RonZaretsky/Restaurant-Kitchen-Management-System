@@ -47,3 +47,22 @@ async def test_migrations_match_the_models(db_session: AsyncSession) -> None:
     # the check that keeps every later story honest: adding a column to a model
     # without shipping a revision makes this fail.
     assert differences == []
+
+
+def test_every_not_found_error_inherits_the_shared_base():
+    # Arrange: one handler is registered against NotFoundError and Starlette
+    # dispatches by walking the MRO, so a sibling that forgets to inherit it
+    # would become a silent 500 instead of a 404.
+    import exceptions
+
+    # Act
+    not_found_types = [
+        value
+        for name, value in vars(exceptions).items()
+        if name.endswith("NotFoundError") and isinstance(value, type)
+    ]
+
+    # Assert
+    assert not_found_types
+    for error_type in not_found_types:
+        assert issubclass(error_type, exceptions.NotFoundError), error_type.__name__

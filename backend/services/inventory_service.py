@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import func, select
@@ -24,6 +25,21 @@ class InventoryService:
             logger: The loguru logger injected from the container.
         """
         self._logger = logger
+
+    async def list_ingredients(self, db: AsyncSession) -> Sequence[Ingredient]:
+        """List every Ingredient.
+
+        No actor argument: a plain unfiltered read has nothing to reject and
+        nothing worth auditing, permissions are Role-level only.
+
+        Args:
+            db: The active database session.
+
+        Returns:
+            Every Ingredient row, in id order.
+        """
+        result = await db.execute(select(Ingredient).order_by(Ingredient.id))
+        return result.scalars().all()
 
     async def create_ingredient(
         self, db: AsyncSession, actor: User, payload: CreateIngredientRequest

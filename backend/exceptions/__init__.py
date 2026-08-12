@@ -108,19 +108,69 @@ class EmptyRecipeError(ConflictError):
     detail = "Cannot mark available, recipe has no ingredients"
 
 
-class UserNotFoundError(Exception):
+class NotFoundError(Exception):
+    """Base for a request that references an id with no matching row.
+
+    One handler in main.py turns any subclass into a 404 carrying that
+    subclass's detail, mirroring AuthError/ConflictError's shape.
+    """
+
+    detail = "Not found"
+
+
+class UserNotFoundError(NotFoundError):
     """Raised when an admin action targets a User id that does not exist."""
 
     detail = "User not found"
 
 
-class CategoryNotFoundError(Exception):
+class CategoryNotFoundError(NotFoundError):
     """Raised when a request references a category_id that does not exist."""
 
     detail = "Category not found"
 
 
-class DishNotFoundError(Exception):
+class DishNotFoundError(NotFoundError):
     """Raised when an admin action targets a Dish id that does not exist."""
 
     detail = "Dish not found"
+
+
+class IngredientNotFoundError(NotFoundError):
+    """Raised when a request references an ingredient_id that does not exist."""
+
+    detail = "Ingredient not found"
+
+
+class RecipeIngredientNotFoundError(NotFoundError):
+    """Raised when a request targets a Dish/Ingredient pair with no existing Recipe Ingredient line."""
+
+    detail = "Recipe ingredient not found"
+
+
+class DuplicateRecipeIngredientError(ConflictError):
+    """Raised when adding a Recipe Ingredient line for an ingredient already on this Dish's recipe.
+
+    The composite primary key (dish_id, ingredient_id) is the real arbiter;
+    this turns that constraint violation into a clean 409 instead of a 500.
+    """
+
+    detail = "That ingredient is already on this dish's recipe"
+
+
+class CannotRemoveLastRecipeIngredientError(ConflictError):
+    """Raised when removing a Dish's last Recipe Ingredient line while it is available (AD-8, second half)."""
+
+    detail = "Cannot remove the last recipe ingredient while the dish is available"
+
+
+class UnitMismatchError(ConflictError):
+    """Raised when a Recipe Ingredient line's unit differs from its Ingredient's own unit.
+
+    Nothing in this system converts between units, so a line recorded in
+    liters against an ingredient stocked in kilograms would make Epic 5's
+    automatic stock deduction subtract the wrong amount silently. The line
+    must be recorded in the unit the ingredient is stocked in.
+    """
+
+    detail = "The line's unit must match the ingredient's own unit"

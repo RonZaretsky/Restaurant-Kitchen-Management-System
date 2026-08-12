@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,10 @@ from .base import Base
 # convention. Reusing it here (rather than duplicating the blank-after-strip check a
 # second time) keeps that rule defined in exactly one place.
 from .user import _strip_and_require_content
+
+# Reused from menu.py rather than redefined here: ingredient_id is a plain-Integer FK,
+# same int4 upper bound reasoning as menu.py's category_id (trap 16).
+from .menu import _INT4_MAX
 
 
 class Unit(enum.Enum):
@@ -74,3 +78,52 @@ class IngredientResponse(BaseModel):
     min_stock_threshold: Decimal
     created_at: datetime
     updated_at: datetime
+
+
+class CreateRecipeIngredientRequest(BaseModel):
+    """Body of an Admin's request to add a Recipe Ingredient line to a Dish."""
+
+    ingredient_id: int = Field(gt=0, le=_INT4_MAX)
+    # max_digits/decimal_places match RecipeIngredient.quantity's Numeric(10, 3)
+    # column exactly, same reasoning as CreateIngredientRequest's bounds (trap 16).
+    quantity: Decimal = Field(gt=0, max_digits=10, decimal_places=3)
+    unit: Unit
+
+
+class UpdateRecipeIngredientRequest(BaseModel):
+    """Body of an Admin's request to edit a Recipe Ingredient line's quantity and/or unit.
+
+    At least one field must be provided, mirroring UpdateDishRequest's shape.
+    """
+
+    quantity: Decimal | None = Field(default=None, gt=0, max_digits=10, decimal_places=3)
+    unit: Unit | None = None
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "UpdateRecipeIngredientRequest":
+        """Reject an update that changes nothing.
+
+        Returns:
+            This instance, unchanged, if at least one field is set.
+
+        Raises:
+            ValueError: If every field is None.
+        """
+        if self.quantity is None and self.unit is None:
+            raise ValueError("at least one field must be provided")
+        return self
+
+
+class RecipeIngredientResponse(BaseModel):
+    """Body of any menu endpoint response describing a Recipe Ingredient line.
+
+    Maps 1:1 to RecipeIngredient's own columns, matching CategoryResponse and
+    DishResponse's precedent of not enriching a response with joined data.
+    """
+
+    model_config = {"from_attributes": True}
+
+    dish_id: int
+    ingredient_id: int
+    quantity: Decimal
+    unit: Unit

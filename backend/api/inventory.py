@@ -19,11 +19,43 @@ InventoryWriteDep = Annotated[
     User, Depends(require_role(UserRole.admin, UserRole.warehouse_manager))
 ]
 
+# Reads permit the same two Roles as writes here. Named separately from
+# InventoryWriteDep for what each route is actually doing, both resolve to the
+# same require_role call. Story 4.3 (View Ingredient Stock Levels) builds on
+# top of this same list endpoint rather than duplicating it.
+InventoryReadDep = Annotated[
+    User, Depends(require_role(UserRole.admin, UserRole.warehouse_manager))
+]
+
 _ERROR_DESCRIPTIONS = {
     401: "No valid session cookie was supplied",
     403: "Authenticated, but the caller's Role is neither admin nor warehouse_manager",
     409: "An ingredient with this name already exists",
 }
+
+
+@router.get(
+    "/ingredients",
+    response_model=list[IngredientResponse],
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403),
+)
+@inject
+async def list_ingredients(
+    actor: InventoryReadDep,
+    db: SessionDep,
+    inventory_service: InventoryService = Depends(Provide[Container.inventory_service]),
+) -> list[Ingredient]:
+    """List every Ingredient.
+
+    Args:
+        actor: The authenticated Warehouse Manager or Admin making the request.
+        db: The active database session.
+        inventory_service: Injected service handling the read.
+
+    Returns:
+        Every Ingredient.
+    """
+    return await inventory_service.list_ingredients(db)
 
 
 @router.post(

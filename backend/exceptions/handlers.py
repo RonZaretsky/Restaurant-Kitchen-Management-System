@@ -3,11 +3,9 @@ from fastapi.responses import JSONResponse
 
 from exceptions import (
     AuthError,
-    CategoryNotFoundError,
     ConflictError,
-    DishNotFoundError,
     ForbiddenError,
-    UserNotFoundError,
+    NotFoundError,
 )
 
 
@@ -64,41 +62,17 @@ async def _conflict_error_handler(request: Request, exc: ConflictError) -> JSONR
     return JSONResponse(status_code=409, content={"detail": exc.detail})
 
 
-async def _user_not_found_error_handler(request: Request, exc: UserNotFoundError) -> JSONResponse:
-    """Turn a missing-User lookup into a 404 carrying its message.
+async def _not_found_error_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+    """Turn any missing-resource lookup into a 404 carrying its message.
+
+    One handler for the whole NotFoundError family (User, Category, Dish,
+    Ingredient, Recipe Ingredient), so each message stays defined in exactly
+    one place, mirroring _auth_error_handler/_conflict_error_handler's shape.
 
     Args:
         request: The incoming request that triggered the error.
-        exc: The raised UserNotFoundError, whose detail becomes the response
-            body.
-
-    Returns:
-        A 404 JSON response.
-    """
-    return JSONResponse(status_code=404, content={"detail": exc.detail})
-
-
-async def _category_not_found_error_handler(request: Request, exc: CategoryNotFoundError) -> JSONResponse:
-    """Turn a missing-Category lookup into a 404 carrying its message.
-
-    Args:
-        request: The incoming request that triggered the error.
-        exc: The raised CategoryNotFoundError, whose detail becomes the
+        exc: The raised NotFoundError subclass, whose detail becomes the
             response body.
-
-    Returns:
-        A 404 JSON response.
-    """
-    return JSONResponse(status_code=404, content={"detail": exc.detail})
-
-
-async def _dish_not_found_error_handler(request: Request, exc: DishNotFoundError) -> JSONResponse:
-    """Turn a missing-Dish lookup into a 404 carrying its message.
-
-    Args:
-        request: The incoming request that triggered the error.
-        exc: The raised DishNotFoundError, whose detail becomes the response
-            body.
 
     Returns:
         A 404 JSON response.
@@ -122,6 +96,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthError, _auth_error_handler)
     app.add_exception_handler(ForbiddenError, _forbidden_error_handler)
     app.add_exception_handler(ConflictError, _conflict_error_handler)
-    app.add_exception_handler(UserNotFoundError, _user_not_found_error_handler)
-    app.add_exception_handler(CategoryNotFoundError, _category_not_found_error_handler)
-    app.add_exception_handler(DishNotFoundError, _dish_not_found_error_handler)
+    app.add_exception_handler(NotFoundError, _not_found_error_handler)
