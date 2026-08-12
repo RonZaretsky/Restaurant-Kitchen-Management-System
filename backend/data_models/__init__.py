@@ -29,7 +29,17 @@ from .recipe import (
     Unit,
     UpdateRecipeIngredientRequest,
 )
-from .order import RestaurantTable, Order, OrderItem, TableStatus, OrderStatus, OrderItemStatus
+from .order import (
+    CreateTableRequest,
+    Order,
+    OrderItem,
+    OrderItemStatus,
+    OrderStatus,
+    RestaurantTable,
+    TableResponse,
+    TableStatus,
+    UpdateTableRequest,
+)
 from .inventory import StockMovement, MovementType
 from .ai import AIRecipeSuggestion, AIChatSession, AIChatMessage, ChatRole
 
@@ -43,6 +53,7 @@ __all__ = [
     "Ingredient", "RecipeIngredient", "Unit", "CreateIngredientRequest", "IngredientResponse",
     "CreateRecipeIngredientRequest", "UpdateRecipeIngredientRequest", "RecipeIngredientResponse",
     "RestaurantTable", "Order", "OrderItem", "TableStatus", "OrderStatus", "OrderItemStatus",
+    "CreateTableRequest", "UpdateTableRequest", "TableResponse",
     "StockMovement", "MovementType",
     "AIRecipeSuggestion", "AIChatSession", "AIChatMessage", "ChatRole",
 ]

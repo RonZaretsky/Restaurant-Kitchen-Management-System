@@ -2,10 +2,17 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
+# Postgres's integer (int4) column range. table_number and capacity are both plain
+# Integer columns; without this bound a value outside int4 range passes Pydantic and
+# then raises an unhandled asyncpg.DataError ("value out of int32 range") on the
+# query, a 500, instead of a clean 422 (trap 16).
+_INT4_MAX = 2_147_483_647
 
 
 class TableStatus(enum.Enum):
@@ -35,6 +42,48 @@ class RestaurantTable(Base):
     table_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[TableStatus] = mapped_column(Enum(TableStatus), nullable=False, default=TableStatus.available)
+
+
+class CreateTableRequest(BaseModel):
+    """Body of an Admin's request to create a Restaurant Table."""
+
+    table_number: int = Field(gt=0, le=_INT4_MAX)
+    capacity: int = Field(gt=0, le=_INT4_MAX)
+
+
+class UpdateTableRequest(BaseModel):
+    """Body of an Admin's request to edit a Table's number and/or capacity.
+
+    At least one field must be provided, mirroring UpdateDishRequest's shape.
+    """
+
+    table_number: int | None = Field(default=None, gt=0, le=_INT4_MAX)
+    capacity: int | None = Field(default=None, gt=0, le=_INT4_MAX)
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "UpdateTableRequest":
+        """Reject an update that changes nothing.
+
+        Returns:
+            This instance, unchanged, if at least one field is set.
+
+        Raises:
+            ValueError: If every field is None.
+        """
+        if self.table_number is None and self.capacity is None:
+            raise ValueError("at least one field must be provided")
+        return self
+
+
+class TableResponse(BaseModel):
+    """Body of any tables endpoint response describing a Restaurant Table."""
+
+    model_config = {"from_attributes": True}
+
+    id: int
+    table_number: int
+    capacity: int
+    status: TableStatus
 
 
 class Order(Base):

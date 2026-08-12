@@ -183,6 +183,24 @@
   **Action:** if connection status is ever needed outside the authenticated shell, make the
   context default `undefined` and have `useConnectionStatus()` throw outside a provider.
 
+## Deferred from: dev-story of story-2.4 (2026-08-12)
+
+- **Logging `actor.id` after `db.rollback()` raises an unhandled `MissingGreenlet`, latent in three
+  existing `IntegrityError` handlers.** Found and fixed live in `TableService.update_table` while
+  writing Story 2.4's AC6 race test (the first test in this codebase to actually trigger a
+  rollback-then-log path, since every prior duplicate-name check wins on its existence check before
+  ever reaching an `IntegrityError`). `AsyncSession.rollback()` expires every object bound to the
+  session, `actor` included; reading `actor.id` afterward triggers an implicit lazy-load with no
+  greenlet context to run it in. The same ordering (rollback, then `actor.id` in the warning log)
+  exists in `MenuService.create_category` (`backend/services/menu_service.py:83`),
+  `MenuService.add_recipe_ingredient` (`:341`), and `InventoryService.create_ingredient`
+  (`backend/services/inventory_service.py:86`) — none currently reachable by any test, so all three
+  are a real 500 waiting for a genuine concurrent-duplicate race in production, not a hypothetical.
+  **Fix is mechanical**: swap the two lines so the log call reads `actor.id` before `await
+  db.rollback()`, matching what Story 2.4's own `TableService.update_table` now does. Worth a
+  dedicated pass across all four call sites (three existing plus the new one) the next time any of
+  those files is touched, rather than three more stories each rediscovering it independently.
+
 ## Deferred from: code review of story-2.2 (2026-08-11)
 
 - **`UpdateDishRequest` has no way to clear `description` or `prep_time_minutes` back to null
