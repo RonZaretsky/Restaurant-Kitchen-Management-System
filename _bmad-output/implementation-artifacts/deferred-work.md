@@ -182,3 +182,16 @@
   today: the only consumer is `ReconnectingBanner` inside `AppShell`, which is inside the provider.
   **Action:** if connection status is ever needed outside the authenticated shell, make the
   context default `undefined` and have `useConnectionStatus()` throw outside a provider.
+
+## Deferred from: code review of story-2.2 (2026-08-11)
+
+- **`UpdateDishRequest` has no way to clear `description` or `prep_time_minutes` back to null
+  once set.** `MenuService.update_dish` guards every field with `if payload.X is not None`, which
+  cannot distinguish "the caller explicitly sent `null`" from "the caller omitted this field
+  entirely" — both look identical once Pydantic parses the request. A caller can never blank out a
+  previously-set description or prep time via `PATCH /api/menu/dishes/{id}`; the value is
+  permanent once set to anything non-null. No acceptance criterion in Story 2.2 asks for this
+  capability, so it was not built. **Action:** if a later story needs to support clearing an
+  optional field via this endpoint, adopt an explicit "unset" sentinel (e.g. a distinct sentinel
+  object as the field default, checked with `is` rather than `==`, so an explicit `null` can be
+  told apart from an omitted field) rather than plain `Optional[str] = None`.

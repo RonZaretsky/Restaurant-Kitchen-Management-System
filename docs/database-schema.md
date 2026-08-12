@@ -49,7 +49,7 @@ Represents a single item on the restaurant menu.
 | description | TEXT | nullable | Full description shown to waiters/customers |
 | price | DECIMAL(8,2) | NOT NULL | Current price in local currency |
 | category_id | INT | FK → Category.id, NOT NULL | Menu category |
-| is_available | BOOLEAN | NOT NULL, default TRUE | Can the dish be ordered right now |
+| is_available | BOOLEAN | NOT NULL, default FALSE | Can the dish be ordered right now |
 | prep_time_minutes | INT | nullable | Estimated kitchen preparation time |
 | image_url | VARCHAR(255) | nullable | Path or URL to dish photo |
 | created_at | TIMESTAMP | NOT NULL, default NOW() | When dish was added to menu |

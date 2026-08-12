@@ -1,7 +1,14 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from exceptions import AuthError, ConflictError, ForbiddenError, UserNotFoundError
+from exceptions import (
+    AuthError,
+    CategoryNotFoundError,
+    ConflictError,
+    DishNotFoundError,
+    ForbiddenError,
+    UserNotFoundError,
+)
 
 
 async def _auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
@@ -71,6 +78,34 @@ async def _user_not_found_error_handler(request: Request, exc: UserNotFoundError
     return JSONResponse(status_code=404, content={"detail": exc.detail})
 
 
+async def _category_not_found_error_handler(request: Request, exc: CategoryNotFoundError) -> JSONResponse:
+    """Turn a missing-Category lookup into a 404 carrying its message.
+
+    Args:
+        request: The incoming request that triggered the error.
+        exc: The raised CategoryNotFoundError, whose detail becomes the
+            response body.
+
+    Returns:
+        A 404 JSON response.
+    """
+    return JSONResponse(status_code=404, content={"detail": exc.detail})
+
+
+async def _dish_not_found_error_handler(request: Request, exc: DishNotFoundError) -> JSONResponse:
+    """Turn a missing-Dish lookup into a 404 carrying its message.
+
+    Args:
+        request: The incoming request that triggered the error.
+        exc: The raised DishNotFoundError, whose detail becomes the response
+            body.
+
+    Returns:
+        A 404 JSON response.
+    """
+    return JSONResponse(status_code=404, content={"detail": exc.detail})
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register every domain exception's handler on the given app.
 
@@ -88,3 +123,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ForbiddenError, _forbidden_error_handler)
     app.add_exception_handler(ConflictError, _conflict_error_handler)
     app.add_exception_handler(UserNotFoundError, _user_not_found_error_handler)
+    app.add_exception_handler(CategoryNotFoundError, _category_not_found_error_handler)
+    app.add_exception_handler(DishNotFoundError, _dish_not_found_error_handler)
