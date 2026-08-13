@@ -327,3 +327,12 @@
   `new TextEncoder().encode(password).length <= 72`, which agrees with the server exactly rather
   than approximating it. Relevant to this project specifically, since the team and likely users are
   Hebrew-speaking.
+- **No seed script or bootstrap command for a first Admin account.** A fresh `docker compose up`
+  produces an empty `users` table, and every route on the Users screen requires an authenticated
+  Admin, so there is no way to reach the running app at all without hand-inserting a row. Verifying
+  Story 1.6 manually meant hashing a password with `uv run python -c "...AuthService.hash_password"`
+  inside the backend container, then `INSERT`ing via `psql`. This is why Story 1.6's first pass
+  shipped with no live browser check. **Action:** add a small idempotent bootstrap (an Alembic data
+  migration, a `python -m scripts.seed_admin` command, or a first-run "create the first Admin" path)
+  so a fresh clone is reachable. Worth doing before the project is demonstrated or handed in, since
+  a grader cloning the repo currently cannot log in.

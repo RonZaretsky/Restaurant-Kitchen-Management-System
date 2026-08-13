@@ -403,11 +403,24 @@ claude-sonnet-5 (Claude Code, bmad-dev-story workflow)
   project).
 - Backend untouched by this story; `uv run pytest` not re-run, no backend file in the File List
   below.
-- No live Docker Compose / browser check performed: Docker Desktop was not running in this
-  environment, and the project has no seeded admin account or bootstrap script to log in with
-  (a pre-existing gap, not introduced here). Verification relied on the 11 component tests
-  (real `QueryClient`, mocked `fetch`, realistic user interactions covering every AC), the clean
-  type-check, and the clean production build.
+- **Live verification against a running Docker Compose stack, 2026-08-13** (performed after the
+  code-review patches, driving a real Chromium via Playwright against `localhost:3000`). All nine
+  ACs exercised through the actual UI, not the test doubles: created a User with a non-default Role
+  and watched the form clear; hit the duplicate-username 409 and confirmed the exact backend string
+  renders with the form preserved; edited name and Role together; deactivated through the new
+  confirm step and watched the chip flip, then reactivated; reset a password and confirmed the
+  panel closes with the plaintext gone from the DOM; and drove a real last-active-Admin lockout by
+  deactivating the other Admin and then attempting a demoting Role change, which rendered the 409
+  inline with the row's chip still Active. Two review fixes were confirmed specifically: the stale
+  409 cleared once a later edit on the same row succeeded, and the app bar re-read the signed-in
+  Admin's name immediately after a self-rename (the `CURRENT_USER_QUERY_KEY` invalidation). No
+  unexpected console errors, only the expected pre-login 401 and the two deliberately provoked 409s.
+- **Seeding an admin required a manual bcrypt insert.** The project still has no seed script or
+  bootstrap command, so logging in at all meant hashing a password via `uv run python -c` inside the
+  backend container and inserting the row with `psql`. Test data was removed and the database
+  restored to its two pre-existing demo accounts afterwards. Recorded in `deferred-work.md`; this is
+  a pre-existing DX gap, not introduced by this story, but it makes every manual verification pass
+  more expensive than it should be.
 
 ### Completion Notes List
 
