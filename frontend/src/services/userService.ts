@@ -12,9 +12,34 @@ import type {
   ResetPasswordPayload,
   UpdateUserPayload,
 } from "../types/user";
+import { CURRENT_USER_QUERY_KEY } from "./authService";
 import { apiRequest } from "./httpClient";
 
 const USERS_QUERY_KEY = ["admin", "users"] as const;
+
+/**
+ * Invalidates the User list and the signed-in Admin's own profile together.
+ *
+ * An Admin editing, demoting, deactivating or resetting the password on their
+ * *own* row changes the same User the app shell renders from
+ * `CURRENT_USER_QUERY_KEY`. Invalidating only the list leaves the app bar
+ * showing a stale name and, after a self-demotion, a stale Role: the shell
+ * keeps rendering Admin nav and admin routes while every admin request 403s,
+ * until an incidental refetch silently bounces them elsewhere.
+ *
+ * Both keys are invalidated on every mutation rather than only when the target
+ * is self. Comparing ids here would mean each call site re-deriving "is this
+ * me", and the cost of an extra cached-profile refetch is one small request.
+ *
+ * @param queryClient - The client whose caches should be invalidated.
+ * @returns A promise resolving once both invalidations are queued.
+ */
+function invalidateUserCaches(queryClient: ReturnType<typeof useQueryClient>): Promise<void> {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY }),
+    queryClient.invalidateQueries({ queryKey: CURRENT_USER_QUERY_KEY }),
+  ]).then(() => undefined);
+}
 
 /**
  * Fetches every User account.
@@ -45,7 +70,7 @@ export function useCreateUser(): UseMutationResult<CurrentUser, Error, CreateUse
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY }),
+    onSuccess: () => invalidateUserCaches(queryClient),
   });
 }
 
@@ -72,7 +97,7 @@ export function useUpdateUser(): UseMutationResult<
         method: "PATCH",
         body: JSON.stringify(payload),
       }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY }),
+    onSettled: () => invalidateUserCaches(queryClient),
   });
 }
 
@@ -88,7 +113,7 @@ export function useDeactivateUser(): UseMutationResult<CurrentUser, Error, numbe
   return useMutation({
     mutationFn: (userId: number) =>
       apiRequest<CurrentUser>(`/api/admin/users/${userId}/deactivate`, { method: "POST" }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY }),
+    onSettled: () => invalidateUserCaches(queryClient),
   });
 }
 
@@ -103,7 +128,7 @@ export function useReactivateUser(): UseMutationResult<CurrentUser, Error, numbe
   return useMutation({
     mutationFn: (userId: number) =>
       apiRequest<CurrentUser>(`/api/admin/users/${userId}/reactivate`, { method: "POST" }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY }),
+    onSettled: () => invalidateUserCaches(queryClient),
   });
 }
 
@@ -125,6 +150,6 @@ export function useResetPassword(): UseMutationResult<
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY }),
+    onSettled: () => invalidateUserCaches(queryClient),
   });
 }

@@ -693,7 +693,7 @@ from `frontend/`.
   mechanism directly (a focused probe) rather than assuming coverage.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **213 tests**, frontend **87 tests** (as of Story 1.6).
+Backend suite is now **213 tests**, frontend **93 tests** (as of Story 1.6).
 
 ---
 
@@ -882,6 +882,6 @@ type on any future story that wires a screen to an already-shipped endpoint. Res
 now shows "This is you" in place of Deactivate, matching `key-users.html` exactly, going one step
 further than the confirmation-step fix that item suggested. AD-15's last-Admin lockout was already
 enforced server-side; this story only renders its existing 409 inline. Suites are now **213
-backend and 87 frontend tests**.
+backend and 93 frontend tests**.
 
 Last Updated: 2026-08-13

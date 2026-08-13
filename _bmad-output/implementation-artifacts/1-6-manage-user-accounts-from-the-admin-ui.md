@@ -167,10 +167,15 @@ row styling, and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, U
     `isResettingPassword` state, same reasoning as `TablesSetupPage`'s `TableListRow`: editing one
     row must not re-render or reset the whole list.
   - [x] **Edit**: click swaps Full name/Role cells to inline editable controls (`TextField` /
-    `Select`), Save calls `useUpdateUser` with only the changed field(s) — sending both is also
-    correct (server accepts either), but do not send an entirely empty payload (422). Resync local
-    edit state from the server value only while *not* editing, same `useEffect`-guarded-on-editing
-    pattern `TablesSetupPage` uses, so an in-flight edit isn't clobbered by a background refetch.
+    `Select`), Save calls `useUpdateUser` **always sending both fields**, never diffed against the
+    cached row. (Corrected 2026-08-13 during code review — this task originally said "only the
+    changed field(s)", which contradicts project-context.md's standing rule "Never diff a form
+    against cached data to decide what to send" and `TablesSetupPage`'s own six-line comment
+    rejecting it. Diffing lets a save silently revert a concurrent change to the field this Admin
+    never touched, and disables Save entirely when the cache is stale. The backend already skips a
+    no-op edit without committing, so sending both costs nothing.) Resync local edit state from the
+    server value only while *not* editing, same `useEffect`-guarded-on-editing pattern
+    `TablesSetupPage` uses, so an in-flight edit isn't clobbered by a background refetch.
   - [x] **Deactivate / Reactivate**: single button per row, `useDeactivateUser`/`useReactivateUser`
     called with the row's `id`. AC5's 409 renders as an `Alert severity="error"` in a full-width
     extra `TableRow` under that row (`colSpan` = column count), same placement `TablesSetupPage`
@@ -214,6 +219,89 @@ row styling, and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, U
     backend/frontend suite counts, and remove/resolve the Story 1.3 "Users screen still
     unassigned" note this story closes.
   - [x] `sprint-status.yaml` and `epics.md` need no further edits — already registered as Story 1.6.
+
+### Review Findings
+
+Code review 2026-08-13, three parallel adversarial layers (Blind Hunter, Edge Case Hunter,
+Acceptance Auditor), all run on a stronger model than the one that implemented the story, each with
+no prior conversation context. The Acceptance Auditor additionally **mutation-tested** the suite,
+deleting behaviors and re-running the tests, which is how the unpinned-test findings below were
+proven rather than merely suspected.
+
+- [x] [Review][Decision] **RESOLVED 2026-08-13 (Ofek): in-row confirm, no modal.** Deactivating another User had no confirmation step — the action is one
+  click, adjacent to Edit in a dense `flexWrap` row, immediately blocks a staff member's login, and
+  `color="error"` is its only signal (invisible to colour-blind users and to anyone reading the
+  button by name). Reversible via Reactivate, but there is no undo affordance. Notably,
+  `deferred-work.md`'s original Story 1.3 item explicitly anticipated "a confirmation step in the
+  Users screen" — this story delivered that intent only for the *self* row (AC6's "This is you"),
+  not for deactivating others. Deciding needs human input because a confirm dialog would be the
+  **first modal pattern in this codebase** (the story spec deliberately avoided inventing one for
+  the password field), so it is an architectural first, not a local fix.
+
+- [x] [Review][Patch] Edit diffs the form against cached data to decide what to send, forbidden
+  outright by project-context.md:189-191, and can silently revert another Admin's concurrent role
+  change [frontend/src/pages/admin/UsersPage.tsx:94,113-123]
+- [x] [Review][Patch] `deactivateMutation`/`reactivateMutation` are never `reset()`, so a failed
+  Deactivate leaves an undismissable red alert that outlives a later *successful* edit on the same
+  row [frontend/src/pages/admin/UsersPage.tsx:158-159,97-100,130-134]
+- [x] [Review][Patch] `activeError`'s fixed-precedence `??` chain shows a stale earlier error
+  instead of the failure the Admin just caused, telling them the wrong reason
+  [frontend/src/pages/admin/UsersPage.tsx:158-159]
+- [x] [Review][Patch] No mutation invalidates `CURRENT_USER_QUERY_KEY`, so editing or demoting your
+  own account leaves the app shell rendering a stale name and a stale Role, with admin nav still
+  showing after a self-demotion [frontend/src/services/userService.ts:56-128]
+- [x] [Review][Patch] A failed background refetch unmounts the entire table, destroying every open
+  editor and any typed password; an alt-tab is enough to trigger it
+  [frontend/src/pages/admin/UsersPage.tsx:407]
+- [x] [Review][Patch] The Role edit branch is unpinned by any test — mutation-verified, deleting
+  `payload.role = draftRole` leaves 11/11 green, and so does replacing the edit-mode Role Select
+  with a static chip; AC1's create-Role field is equally unpinned
+  [frontend/src/pages/admin/UsersPage.test.tsx:181]
+- [x] [Review][Patch] AC1's "clears the form" test omits Full name — mutation-verified, deleting
+  `setFullName("")` leaves 11/11 green [frontend/src/pages/admin/UsersPage.test.tsx:147-148]
+- [x] [Review][Patch] AC8's "field is cleared" assertion passes unconditionally because the field
+  unmounts on success — mutation-verified, deleting `setDraftPassword("")` leaves 11/11 green
+  [frontend/src/pages/admin/UsersPage.test.tsx:355]
+- [x] [Review][Patch] AC5's demoting-role-change half has no test, only the deactivate 409 is
+  covered [frontend/src/pages/admin/UsersPage.test.tsx:243]
+- [x] [Review][Patch] An over-length full name reports "Full name is required", which misstates the
+  violation and is a client-invented string where UX-DR17 requires the backend's own copy
+  [frontend/src/pages/admin/UsersPage.tsx:93,173]
+- [x] [Review][Patch] `isSelf` fails open when `currentUser` is undefined, rendering a live
+  Deactivate button on the signed-in Admin's own row. Not reachable in the composed app (RequireAuth
+  gates it), but the component's own contract permits undefined and the AC6 test renders the page
+  standalone, which is exactly the configuration where the hole is open
+  [frontend/src/pages/admin/UsersPage.tsx:157]
+- [x] [Review][Patch] Neither password field sets `autoComplete`, so browsers offer to autofill the
+  admin's own credentials into the create form and to save a staff member's new password as the
+  admin's own [frontend/src/pages/admin/UsersPage.tsx:216-222,370-376]
+- [x] [Review][Patch] Both Role `Select`s have only an `aria-label` and no visible label, unlike
+  every sibling control, so sighted users see an unlabelled box reading "Waiter"
+  [frontend/src/pages/admin/UsersPage.tsx:181-186,358-369]
+- [x] [Review][Patch] Header renders "1 staff accounts" for a single-user list
+  [frontend/src/pages/admin/UsersPage.tsx:335-339]
+- [x] [Review][Patch] AC9 divergences from `key-users.html`: the Role chip is not colour-coded (the
+  mock defines four distinct per-Role treatments) and the Actions column is left-aligned where the
+  mock right-aligns it [frontend/src/pages/admin/UsersPage.tsx:194,236,415]
+- [x] [Review][Patch] The create form applies no length validation, so an over-long username or full
+  name round-trips into a raw Pydantic 422, while the row editor does bound the name — inconsistent
+  within one file [frontend/src/pages/admin/UsersPage.tsx:304-308]
+- [x] [Review][Patch] The story spec's own Task 4 authorized "only the changed field(s)", which
+  contradicts project-context.md:189-191; correct the spec text so the next story does not inherit
+  the same wrong instruction [this file, Task 4]
+
+- [x] [Review][Defer] `errorMessage` is now copy-pasted verbatim into a fifth file, and its
+  `instanceof ApiError` fallback is dead code since `apiRequest` throws `ApiError` on every failure
+  path [frontend/src/pages/admin/UsersPage.tsx:48-53] — deferred, pre-existing codebase-wide
+- [x] [Review][Defer] A sixth hand-rolled `jsonResponse` test helper copy was added rather than
+  lifting a shared one [frontend/src/pages/admin/UsersPage.test.tsx:54-62] — deferred, pre-existing;
+  the spec explicitly marked this non-blocking
+- [x] [Review][Defer] Inline edit and password panels are not wrapped in `<form>`, so Enter does
+  nothing, while the create form on the same screen does submit on Enter
+  [frontend/src/pages/admin/UsersPage.tsx:206-234] — deferred, pre-existing in `TableListRow`
+- [x] [Review][Defer] No client-side guard on the password's 72-**byte** bcrypt limit, so a Hebrew
+  password fails at roughly 36 characters with an opaque server message
+  [frontend/src/pages/admin/UsersPage.tsx:307] — deferred, the spec explicitly scoped this out
 
 ## Dev Notes
 
@@ -351,8 +439,8 @@ claude-sonnet-5 (Claude Code, bmad-dev-story workflow)
   has none). Per Dev Notes guidance, edit sends only changed fields (unlike Tables' "always send
   both" — Users' two fields are independent with no stale-cache race rationale requiring both),
   guarded so a true no-op can never fire an empty-payload 422.
-- Frontend suite: 87 passed (up from 76, +11 in `UsersPage.test.tsx`). `tsc -b` and `vite build`
-  both clean. No backend file touched, no Alembic migration, no `container.py`/`main.py` wiring
+- Frontend suite: 93 passed (up from 76, +17 in `UsersPage.test.tsx`, after the code-review
+  patches below). `tsc -b` and `vite build` both clean. No backend file touched, no Alembic migration, no `container.py`/`main.py` wiring
   change.
 
 ### File List
@@ -390,3 +478,12 @@ its contents changed).
 | 2026-08-13 | Implemented AC6: the signed-in Admin's own row renders "This is you" in place of Deactivate, removing self-deactivation from the UI entirely (not just adding a confirmation step) — resolves the corresponding `deferred-work.md` item from Story 1.3's review. |
 | 2026-08-13 | Added `frontend/src/pages/admin/UsersPage.test.tsx`: 11 tests, mocking only `fetch`, covering all 9 ACs including the exact backend rejection strings (AC2/AC5) and the "This is you" / single-Deactivate-button assertion (AC6). Full frontend regression: 87 passed (up from 76). `tsc -b` and `vite build` both clean. |
 | 2026-08-13 | Updated `project-context.md` (current-state tree, services list, suite counts, dated patch entry) and `deferred-work.md` (resolved the self-deactivation item; corrected the unbounded-list item's story reference). |
+| 2026-08-13 | Code review (three parallel adversarial layers, run on a stronger model than the implementation, each with no prior context). 17 patches applied, 1 decision resolved, 4 deferred, 2 dismissed. The Acceptance Auditor mutation-tested the suite and proved four behaviors were pinned by nothing: the Role edit branch, the create-form Role field, `setFullName("")`, and `setDraftPassword("")` could each be deleted with all 11 tests still green. |
+| 2026-08-13 | Review patch: **removed the client-side payload diff**, the most serious finding. `save()` diffed drafts against the cached row to build a partial payload, which project-context.md forbids outright ("Never diff a form against cached data to decide what to send") and which `TablesSetupPage` carries a six-line comment plus a regression test against. Beyond the documented empty-payload trap, it let a save silently **revert a concurrent change** to the field this Admin never touched, and disabled Save entirely when the cache was stale. Both fields are now always sent. The original justification ("sending an unchanged field back is unnecessary work") was verified false: `UserService.update_user` already diffs server-side and returns without committing. Task 4's wording, which authorized the diff, was corrected in this file so the next story does not inherit it. |
+| 2026-08-13 | Review patch: row-level errors no longer outlive the action that caused them. `deactivateMutation`/`reactivateMutation` were never `reset()`, so a 409 alert survived a later *successful* edit on the same row; and `activeError`'s fixed `??` precedence chain showed the oldest failure rather than the one just triggered. All four mutations now reset together via `resetRowErrors()`, and the displayed error is the most recently submitted (`submittedAt`). |
+| 2026-08-13 | Review patch: every mutation now invalidates `CURRENT_USER_QUERY_KEY` alongside the user list. Editing or demoting your own account previously left the app shell rendering a stale name and a stale Role, keeping Admin nav on screen after a self-demotion while every admin request 403'd. |
+| 2026-08-13 | Review patch: a failed background refetch no longer unmounts the table. TanStack retains `data` when a refetch errors, so gating the table on `!isError` destroyed every open editor and any typed password over a momentary blip (an alt-tab was enough). The error banner now renders alongside the retained list. |
+| 2026-08-13 | Review patch (decision, resolved 2026-08-13 by Ofek): deactivating another User is now gated behind an in-row "Deactivate {name}?" confirm with Confirm/Cancel, reusing the same in-place reveal Edit and Reset password use. Chosen over a MUI `Dialog` deliberately: a modal would have been the first in this codebase and would set a precedent for every later story. Naming the user in the prompt makes a misclick on the wrong row visible before it lands. |
+| 2026-08-13 | Review patch: `isSelf` now fails closed. It previously treated an unknown signed-in identity as "not me", rendering a live Deactivate on the Admin's own row; not reachable in the composed app (`RequireAuth` gates it) but open in exactly the standalone configuration the AC6 test renders. |
+| 2026-08-13 | Review patches (smaller): `autoComplete="new-password"`/`"off"` on the credential fields, so browsers stop offering to autofill the admin's own credentials into the create form or save a staff password as the admin's own; visible `InputLabel` on both Role `Select`s (previously `aria-label` only, so sighted users saw an unlabelled box); over-length full name now reports the actual bound instead of "Full name is required"; username/full-name length validation added to the create form to match the row editor; "1 staff account" pluralization; AC9 mock alignment — per-Role `Chip` colours and a right-aligned Actions column. |
+| 2026-08-13 | Review verification: mutation-tested the new tests before trusting them, the lesson this story's first pass skipped. Dropping `role` from the edit payload fails 2 tests; narrowing `resetRowErrors` fails 1; reverting `isSelf` to fail-open and bypassing the confirm fails 5. Full suite after patching: **93 frontend tests passed** (up from 87), `tsc -b` clean. |
