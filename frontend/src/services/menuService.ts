@@ -24,6 +24,18 @@ interface UpdateDishAvailabilityPayload {
   is_available: boolean;
 }
 
+interface CreateCategoryPayload {
+  name: string;
+}
+
+interface CreateDishPayload {
+  name: string;
+  description?: string | null;
+  price: string;
+  category_id: number;
+  prep_time_minutes?: number | null;
+}
+
 const CATEGORIES_QUERY_KEY = ["menu", "categories"] as const;
 const DISHES_QUERY_KEY = ["menu", "dishes"] as const;
 
@@ -160,6 +172,55 @@ export function useUpdateDishAvailability(
     mutationFn: (payload: UpdateDishAvailabilityPayload) =>
       apiRequest<Dish>(`/api/menu/dishes/${dishId}`, {
         method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: DISHES_QUERY_KEY }),
+  });
+}
+
+/**
+ * Creates a new Menu Category (AC2).
+ *
+ * Appends the created Category to the cached list before invalidating, rather
+ * than invalidating alone. Invalidation only *schedules* a refetch, so a caller
+ * that selects the new Category immediately (the inline "+ New category" reveal
+ * does exactly this) would otherwise hold an id with no matching option until
+ * the refetch lands, rendering a blank picker and logging MUI's out-of-range
+ * warning. The invalidation still follows, so the server stays the arbiter of
+ * the list's real contents.
+ *
+ * @returns The TanStack Query mutation for submitting a new Category.
+ */
+export function useCreateCategory(): UseMutationResult<Category, Error, CreateCategoryPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: CreateCategoryPayload) =>
+      apiRequest<Category>("/api/menu/categories", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (category) => {
+      queryClient.setQueryData<Category[]>(CATEGORIES_QUERY_KEY, (existing) =>
+        existing ? [...existing, category] : [category],
+      );
+      return queryClient.invalidateQueries({ queryKey: CATEGORIES_QUERY_KEY });
+    },
+  });
+}
+
+/**
+ * Creates a new Dish, starting unavailable per AD-8 (AC1).
+ *
+ * @returns The TanStack Query mutation for submitting a new Dish.
+ */
+export function useCreateDish(): UseMutationResult<Dish, Error, CreateDishPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: CreateDishPayload) =>
+      apiRequest<Dish>("/api/menu/dishes", {
+        method: "POST",
         body: JSON.stringify(payload),
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: DISHES_QUERY_KEY }),

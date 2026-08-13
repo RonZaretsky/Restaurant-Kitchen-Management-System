@@ -266,6 +266,14 @@
 
 ## Deferred from: dev-story of story-2.5 (2026-08-13)
 
+- **RESOLVED by Story 2.6 (2026-08-13), for the creation-form gap this entry describes.**
+  `MenuManagementPage.tsx` now has an always-visible "+ New dish" form with an inline "+ New
+  category" reveal on its Category picker, and `IngredientsPage.tsx` (previously a bare placeholder)
+  now has its own "Add ingredient" form. No backend change was needed, exactly as this entry
+  predicted. **Not resolved by this story: Admin cannot navigate to the Ingredients screen at all**
+  (see the code-review decision-needed item logged below, "code review of story-2.6"), a separate,
+  pre-existing routing/nav gap this story's review surfaced but did not fix. Original entry kept
+  below for context.
 - **No story anywhere in the plan builds the Category/Dish creation forms the UX mockup shows.**
   `key-menu-management.html` (the UX designer's mockup for `MenuManagementPage`) explicitly shows a
   "+ New dish" button, and an equivalent affordance for creating a Menu Category. Neither exists in
@@ -284,3 +292,30 @@
   forms to `MenuManagementPage.tsx`, matching `key-menu-management.html`'s "+ New dish" affordance
   and its Category-creation equivalent. Until that story exists, an Admin can only create a Category
   or Dish via a direct API call.
+
+## Deferred from: code review of story-2.6 (2026-08-13)
+
+- **Client-side numeric parsers only enforce sign, not the backend's exact digit/decimal-place/int4
+  bounds.** `parsePositivePrice`/`parseNonNegativeInteger` (`MenuManagementPage.tsx`) and
+  `parseNonNegativeAmount` (`IngredientsPage.tsx`) reject non-numeric and negative input but do not
+  cap decimal places or digit count against `CreateDishRequest.price` (`max_digits=8,
+  decimal_places=2`), `prep_time_minutes` (`le=2_147_483_647`), or
+  `CreateIngredientRequest.min_stock_threshold`/`current_stock` (`max_digits=10, decimal_places=3`).
+  An out-of-bounds value still round-trips to a 422, surfaced inline via `ApiError.message` per
+  UX-DR17, so this is a wasted round trip, not a silent failure. **Action:** if a future story
+  touches these forms again, consider tightening the regexes to the exact bounds.
+- **createDishMutation/createMutation (Ingredients) errors are never reset while the user edits
+  fields after a failed submit, only on the next `mutate()` call.** The stale error `Alert` can
+  outlive a field edit that would have fixed it, for the few seconds before the user resubmits.
+  Self-heals on the very next submit attempt (TanStack Query resets `isError` as soon as a new
+  `mutate()` starts), so no submission is ever blocked or corrupted by this. **Action:** if this
+  becomes a recurring complaint, wire `.reset()` into each form's field `onChange` handlers,
+  matching Story 1.6's fix for the same class of issue on longer-lived row state.
+- **`errorMessage()`/`GENERIC_ERROR_MESSAGE` is now duplicated across four page files
+  (`TablesSetupPage.tsx`, `DishesPage.tsx`, `MenuManagementPage.tsx`, `IngredientsPage.tsx`), and
+  `IngredientsPage.tsx`'s `UNIT_OPTIONS` duplicates `DishRecipeEditor.tsx`'s `UNITS` constant.**
+  Matches this codebase's existing per-screen duplication precedent (no shared `components`/`utils`
+  module exists yet for either), so not a new deviation, but the fifth screen will copy it again.
+  **Action:** if a sixth screen needs either, extract `errorMessage`/`GENERIC_ERROR_MESSAGE` next to
+  `ApiError` in `httpClient.ts`, and the `Unit` enum's UI options next to its `types/menu.ts`
+  definition.

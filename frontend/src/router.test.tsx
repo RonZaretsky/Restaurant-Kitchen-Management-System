@@ -166,6 +166,33 @@ describe("route guard and per-role navigation", () => {
     expect(screen.queryByRole("heading", { name: "Users" })).not.toBeInTheDocument();
   });
 
+  it("lets an Admin reach the Ingredients surface, which lives outside the /admin prefix (Story 2.6 AC4)", async () => {
+    // Arrange: POST /api/inventory/ingredients permits admin and
+    // warehouse_manager alike, so gating the screen on the /admin prefix alone
+    // made the backend's grant unreachable for one of the two Roles it names.
+    mockAuthenticated("admin");
+
+    // Act
+    renderAt("/warehouse/ingredients");
+
+    // Assert: the Ingredients screen itself, not a bounce to /admin/menu.
+    expect(await screen.findByRole("heading", { name: "Ingredients" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Menu Management" })).not.toBeInTheDocument();
+  });
+
+  it("still bounces a Role with no Ingredients nav entry away from that surface", async () => {
+    // Arrange: the cross-prefix grant is per-Role and derived from the nav
+    // config, not a blanket removal of the guard.
+    mockAuthenticated("waiter");
+
+    // Act
+    renderAt("/warehouse/ingredients");
+
+    // Assert
+    expect(await screen.findByRole("heading", { name: "Tables" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Ingredients" })).not.toBeInTheDocument();
+  });
+
   it("keeps tab order aligned with the app bar's left-to-right visual order (AC8)", async () => {
     // Arrange
     mockAuthenticated("admin");
