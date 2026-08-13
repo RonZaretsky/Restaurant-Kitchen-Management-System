@@ -69,15 +69,16 @@
   `select(User).order_by(User.id)` with no limit, offset, or `is_active` filter. Fine for a
   restaurant's staff list. Flagged because this endpoint is on the critical path for every admin
   screen (per Story 1.3's scope note it is the only way the UI discovers user ids), and adding a
-  cursor later is a breaking response-shape change. Best decided when Story 1.4 builds the Users
-  screen and the actual pagination need is known.
-- **An Admin can deactivate their own account** — `backend/services/user_service.py:162-171` never
-  compares `user_id` to `actor.id`. Verified: with a second admin present, self-deactivation
-  returns 200 and the very next request on that session returns 401. AD-15 still holds (it only
-  permits this when another active Admin remains) and no AC forbids it, so this is arguably correct
-  behavior rather than a defect. But a misclick on the wrong row is unrecoverable for that Admin,
-  and it is only truly safe if someone actually holds the other Admin account's password. Better
-  addressed as a confirmation step in Story 1.4's Users screen than as a service-layer block.
+  cursor later is a breaking response-shape change. **Still open**: Story 1.6 (not 1.4, which only
+  built the shell/placeholder) is the one that actually built the Users screen against this
+  endpoint, and deliberately added no pagination — same call this item already made ("fine for a
+  restaurant's staff list"). Revisit if the roster ever grows past what one page can show.
+- ~~**An Admin can deactivate their own account**~~ — **RESOLVED by Story 1.6 (2026-08-13),
+  which built the Users screen this item was waiting on.** Rather than the suggested confirmation
+  step, the screen goes one step further and matches `key-users.html` exactly: the signed-in
+  Admin's own row shows "This is you" in place of a Deactivate control, so self-deactivation is not
+  just confirmed but unreachable from the UI entirely. The backend is untouched (AD-15's
+  last-Admin guard was always the real backstop); this closes the UX gap on top of it.
 - **The test suite has no isolation against concurrent runs, and this review proved it empirically**
   — during this review three Opus subagents ran `uv run pytest` simultaneously; one observed a
   251-second run with 3 spurious failures (`InvalidRequestError: Could not refresh instance`) in

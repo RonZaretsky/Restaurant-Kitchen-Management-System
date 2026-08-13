@@ -6,7 +6,7 @@ story: 6
 
 # Story 1.6: Manage User Accounts from the Admin UI
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -101,8 +101,8 @@ row styling, and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, U
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Request-payload types** (AC: 1, 3, 8)
-  - [ ] In `frontend/src/types/user.ts`, add (do not touch `CurrentUser`, reuse it as the list-row
+- [x] **Task 1: Request-payload types** (AC: 1, 3, 8)
+  - [x] In `frontend/src/types/user.ts`, add (do not touch `CurrentUser`, reuse it as the list-row
     type):
     ```ts
     /** Body of an Admin's request to create a User. Mirrors backend CreateUserRequest. */
@@ -125,8 +125,8 @@ row styling, and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, U
     }
     ```
 
-- [ ] **Task 2: `userService.ts`** (AC: 1, 3, 4, 5, 7, 8)
-  - [ ] New file `frontend/src/services/userService.ts`, modeled on `tableService.ts`'s shape
+- [x] **Task 2: `userService.ts`** (AC: 1, 3, 4, 5, 7, 8)
+  - [x] New file `frontend/src/services/userService.ts`, modeled on `tableService.ts`'s shape
     exactly: a module-level `USERS_QUERY_KEY = ["admin", "users"] as const`, all requests through
     `apiRequest<T>` from `httpClient.ts` (never raw `fetch`), every mutation hook invalidating
     `USERS_QUERY_KEY` — use `onSuccess` for create (nothing stale to reconcile) and `onSettled` for
@@ -140,56 +140,56 @@ row styling, and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, U
     export function useReactivateUser(): UseMutationResult<CurrentUser, Error, number> { ... }  // POST .../reactivate
     export function useResetPassword(): UseMutationResult<CurrentUser, Error, { userId: number; payload: ResetPasswordPayload }> { ... }
     ```
-  - [ ] `useCurrentUser` already exists in `authService.ts` (`CURRENT_USER_QUERY_KEY = ["auth", "me"]`)
+  - [x] `useCurrentUser` already exists in `authService.ts` (`CURRENT_USER_QUERY_KEY = ["auth", "me"]`)
     — import and reuse it for AC6's "This is you" check, do not add a second current-user fetch.
 
-- [ ] **Task 3: `UsersPage.tsx` shell, list, and create form** (AC: 1, 2, 6, 9)
-  - [ ] Replace the placeholder body of `frontend/src/pages/admin/UsersPage.tsx` entirely.
-  - [ ] Header matches the mock: `<h1>Users</h1>` plus a subtitle `"{n} staff accounts · {m} active"`
+- [x] **Task 3: `UsersPage.tsx` shell, list, and create form** (AC: 1, 2, 6, 9)
+  - [x] Replace the placeholder body of `frontend/src/pages/admin/UsersPage.tsx` entirely.
+  - [x] Header matches the mock: `<h1>Users</h1>` plus a subtitle `"{n} staff accounts · {m} active"`
     computed from the loaded list (`users.length`, `users.filter(u => u.is_active).length`) — not a
     separate API call.
-  - [ ] "+ New user" inline form (always visible, above the list, like `TablesSetupPage`'s Add-table
+  - [x] "+ New user" inline form (always visible, above the list, like `TablesSetupPage`'s Add-table
     form): plain `useState` per field (username, full_name, role, password — role defaults to a
     valid `UserRole`, e.g. `"waiter"`, rendered as an MUI `Select` over the four Role values).
     Submit disabled while any required field is empty or `createMutation.isPending`. On success,
     clear the form; on failure, render `createMutation.error`'s `ApiError.message` inline (AC2's
     exact backend string flows through unchanged, do not re-word it).
-  - [ ] Dense-row `Table`/`TableHead`/`TableBody` (MUI, `size="small"` from the theme default, same
+  - [x] Dense-row `Table`/`TableHead`/`TableBody` (MUI, `size="small"` from the theme default, same
     as `TablesSetupPage`/`MenuManagementPage`): columns Username, Full name, Role (chip), Status
     (chip), Actions — matching `key-users.html`'s column set.
-  - [ ] Loading/error/empty triad, identical wording pattern to `TablesSetupPage`: `isLoading` →
+  - [x] Loading/error/empty triad, identical wording pattern to `TablesSetupPage`: `isLoading` →
     `<RowsSkeleton count={5} />`; `isError` → `Alert severity="error"` with a Retry action button
     calling `refetch()`, message `` `Could not load the users. ${...}` ``; `users.length === 0` →
     `Typography color="text.secondary"` reading `"No users yet."`
 
-- [ ] **Task 4: Per-row actions** (AC: 3, 4, 5, 6, 7, 8)
-  - [ ] Own row component (e.g. `UserListRow`), owning its own local `isEditing` /
+- [x] **Task 4: Per-row actions** (AC: 3, 4, 5, 6, 7, 8)
+  - [x] Own row component (e.g. `UserListRow`), owning its own local `isEditing` /
     `isResettingPassword` state, same reasoning as `TablesSetupPage`'s `TableListRow`: editing one
     row must not re-render or reset the whole list.
-  - [ ] **Edit**: click swaps Full name/Role cells to inline editable controls (`TextField` /
+  - [x] **Edit**: click swaps Full name/Role cells to inline editable controls (`TextField` /
     `Select`), Save calls `useUpdateUser` with only the changed field(s) — sending both is also
     correct (server accepts either), but do not send an entirely empty payload (422). Resync local
     edit state from the server value only while *not* editing, same `useEffect`-guarded-on-editing
     pattern `TablesSetupPage` uses, so an in-flight edit isn't clobbered by a background refetch.
-  - [ ] **Deactivate / Reactivate**: single button per row, `useDeactivateUser`/`useReactivateUser`
+  - [x] **Deactivate / Reactivate**: single button per row, `useDeactivateUser`/`useReactivateUser`
     called with the row's `id`. AC5's 409 renders as an `Alert severity="error"` in a full-width
     extra `TableRow` under that row (`colSpan` = column count), same placement `TablesSetupPage`
     uses for row-level mutation errors — do not use a page-level toast, this codebase has none.
-  - [ ] **AC6**: on the row where `row.id === currentUser?.id`, render `<Typography>This is you</Typography>`
+  - [x] **AC6**: on the row where `row.id === currentUser?.id`, render `<Typography>This is you</Typography>`
     in the Actions cell in place of the Deactivate button (Edit and Reset password stay available —
     only Deactivate is removed, matching `key-users.html`'s row exactly).
-  - [ ] **Reset password**: a "Reset password" action reveals an inline password `TextField` +
+  - [x] **Reset password**: a "Reset password" action reveals an inline password `TextField` +
     Save/Cancel within that row's own local state (same in-place-reveal shape as Edit, not a modal —
     this codebase has not established a modal-dialog pattern anywhere and this story should not be
     the first to invent one). On save, call `useResetPassword`; on success, collapse back to the
     normal row (never display or log the new value anywhere after submission, per AC8).
-  - [ ] Do not add client-side password-length validation beyond "non-empty" — the 72-byte bcrypt
+  - [x] Do not add client-side password-length validation beyond "non-empty" — the 72-byte bcrypt
     limit is server-enforced (422) and already surfaces inline via the same `ApiError.message`
     path; duplicating that check client-side is out of scope and risks disagreeing with the
     server's UTF-8-byte-based count.
 
-- [ ] **Task 5: Tests, `UsersPage.test.tsx`** (AC: all)
-  - [ ] Mirror `TablesSetupPage.test.tsx`'s conventions exactly: mock only `global.fetch`
+- [x] **Task 5: Tests, `UsersPage.test.tsx`** (AC: all)
+  - [x] Mirror `TablesSetupPage.test.tsx`'s conventions exactly: mock only `global.fetch`
     (`vi.stubGlobal`/`vi.unstubAllGlobals`), never the service module; reuse or lift the same
     `jsonResponse(status, body)` helper (four near-identical copies already exist across
     `TablesSetupPage.test.tsx`, `MenuManagementPage.test.tsx`, `appIntegration.test.tsx`, and
@@ -197,7 +197,7 @@ row styling, and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, U
     a fourth landed with Story 2.5; if a shared helper is introduced here, note it in the Change
     Log, but do not block this story on refactoring the other three); render through a real
     `QueryClient` (`retry: false`) + `QueryClientProvider`, no query-hook mocking.
-  - [ ] Required coverage, one test per: list renders with counts (AC1/AC9); create succeeds and
+  - [x] Required coverage, one test per: list renders with counts (AC1/AC9); create succeeds and
     clears the form (AC1); duplicate-username 409 renders the exact backend string and does not
     clear the form (AC2); edit saves full_name/role (AC3); deactivate succeeds and flips the Status
     chip (AC4); deactivate on the last Admin renders the exact 409 string and the chip stays Active
@@ -205,15 +205,15 @@ row styling, and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, U
     other rows do (AC6); reactivate succeeds (AC7); reset-password succeeds and the field is cleared
     without ever rendering the submitted value afterward (AC8); empty-state and error+Retry render
     correctly (AC9's loading/error/empty triad, same bar as `TablesSetupPage`).
-  - [ ] `useCurrentUser`'s query needs a mocked `GET /api/auth/me` response in every test's fetch
+  - [x] `useCurrentUser`'s query needs a mocked `GET /api/auth/me` response in every test's fetch
     stub (the AC6 tests depend on it matching one row's `id`); factor this into whatever shared
     render-helper the test file uses.
 
-- [ ] **Task 6: Docs** (AC: n/a — required for story completion, not dev-story)
-  - [ ] Update `_bmad-output/project-context.md`: new frontend domain screen, updated
+- [x] **Task 6: Docs** (AC: n/a — required for story completion, not dev-story)
+  - [x] Update `_bmad-output/project-context.md`: new frontend domain screen, updated
     backend/frontend suite counts, and remove/resolve the Story 1.3 "Users screen still
     unassigned" note this story closes.
-  - [ ] `sprint-status.yaml` and `epics.md` need no further edits — already registered as Story 1.6.
+  - [x] `sprint-status.yaml` and `epics.md` need no further edits — already registered as Story 1.6.
 
 ## Dev Notes
 
@@ -302,8 +302,91 @@ that side already shipped in Story 1.3.
 
 ### Agent Model Used
 
+claude-sonnet-5 (Claude Code, bmad-dev-story workflow)
+
 ### Debug Log References
+
+- `.\node_modules\.bin\vitest.cmd run src/pages/admin/UsersPage.test.tsx` — 11 passed on first run.
+- `.\node_modules\.bin\vitest.cmd run` (full frontend suite) — 87 passed (up from 76), zero
+  regressions.
+- `.\node_modules\.bin\tsc.cmd -b` — clean, no type errors.
+- `.\node_modules\.bin\vite.cmd build` — clean production build (pre-existing single-chunk
+  bundle-size warning, unrelated to this story, no code-splitting configured anywhere in the
+  project).
+- Backend untouched by this story; `uv run pytest` not re-run, no backend file in the File List
+  below.
+- No live Docker Compose / browser check performed: Docker Desktop was not running in this
+  environment, and the project has no seeded admin account or bootstrap script to log in with
+  (a pre-existing gap, not introduced here). Verification relied on the 11 component tests
+  (real `QueryClient`, mocked `fetch`, realistic user interactions covering every AC), the clean
+  type-check, and the clean production build.
 
 ### Completion Notes List
 
+- All 9 acceptance criteria satisfied, zero backend changes (Story 1.3's 6 routes, unchanged).
+  AC1/AC2 (create, duplicate rejected): `useCreateUser` + the "+ New user" form, backend's exact
+  `"That username already exists"` string rendered inline, form not cleared on failure. AC3 (edit):
+  `UserListRow`'s inline editor sends only the changed field(s), never an empty payload. AC4/AC5
+  (deactivate, last-Admin lockout): `useDeactivateUser`, backend's exact `"Rejected, at least one
+  admin must stay active"` string rendered inline on 409. AC6 ("This is you"): the signed-in
+  Admin's own row (compared via the already-existing `useCurrentUser()`) shows a text marker in
+  place of Deactivate, so self-deactivation has no control to click — verified via a dedicated
+  test asserting exactly one Deactivate button renders across two Admin rows. AC7 (reactivate):
+  `useReactivateUser`. AC8 (reset password): inline reveal (no modal, matching this codebase's
+  established no-modal convention), field cleared and hidden again after a successful submit,
+  never re-rendered anywhere. AC9 (matches the mock): dense-row MUI `Table` (`size="small"` theme
+  default), header subtitle with live counts, matching `key-users.html`'s column set.
+- Reused `types/user.ts`'s existing `CurrentUser` as the list-row type instead of adding a
+  duplicate `User` interface — its shape already matched `UserResponse` byte for byte (it was
+  built for `GET /api/auth/me` in Story 1.1). Also reused the existing `useCurrentUser()` hook for
+  AC6 rather than adding a second current-user fetch.
+- `userService.ts` is a fifth instance of the per-domain service pattern (`authService` →
+  `tableService`/`menuService`/`inventoryService` → `userService`), copying `tableService.ts`'s
+  shape exactly: module-level query-key constant, `onSuccess` invalidation for create,
+  `onSettled` for every mutation that can be rejected because the caller's copy is stale
+  (update/deactivate/reactivate/reset-password all 409 on a last-Admin conflict or a stale row).
+- `UserListRow` mirrors `TablesSetupPage`'s `TableListRow`: controlled fields resynced from the
+  server via `useEffect`, but only while not mid-edit; row-level mutation errors render as a
+  full-width `Alert` in an extra `TableRow` under the row, never a page-level toast (this codebase
+  has none). Per Dev Notes guidance, edit sends only changed fields (unlike Tables' "always send
+  both" — Users' two fields are independent with no stale-cache race rationale requiring both),
+  guarded so a true no-op can never fire an empty-payload 422.
+- Frontend suite: 87 passed (up from 76, +11 in `UsersPage.test.tsx`). `tsc -b` and `vite build`
+  both clean. No backend file touched, no Alembic migration, no `container.py`/`main.py` wiring
+  change.
+
 ### File List
+
+**Added**
+
+- `frontend/src/services/userService.ts`
+- `frontend/src/pages/admin/UsersPage.test.tsx`
+
+**Modified**
+
+- `frontend/src/types/user.ts` (added `CreateUserPayload`/`UpdateUserPayload`/`ResetPasswordPayload`;
+  `CurrentUser`/`UserRole` untouched)
+- `frontend/src/pages/admin/UsersPage.tsx` (placeholder replaced with the real create form, list,
+  and per-row inline editor/deactivate/reactivate/reset-password)
+- `_bmad-output/project-context.md` (current-state tree, services list, suite counts, new dated
+  patch entry)
+- `_bmad-output/implementation-artifacts/deferred-work.md` (marked the Story 1.3 self-deactivation
+  item resolved; corrected the unbounded-`GET /api/admin/users` item's story reference from 1.4 to
+  1.6)
+
+**Confirmed unchanged**: every backend file (`api/admin.py`, `services/user_service.py`,
+`data_models/user.py`, `exceptions/__init__.py`), no Alembic migration, no new package in either
+manifest, `frontend/src/router.tsx` (the `/admin/users` route already pointed at `UsersPage`, only
+its contents changed).
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-08-13 | Added `CreateUserPayload`/`UpdateUserPayload`/`ResetPasswordPayload` to `frontend/src/types/user.ts`, reusing the existing `CurrentUser` as the list-row type rather than adding a duplicate. |
+| 2026-08-13 | Added `frontend/src/services/userService.ts`: `useUsers`/`useCreateUser`/`useUpdateUser`/`useDeactivateUser`/`useReactivateUser`/`useResetPassword`, copying `tableService.ts`'s shape (module-level query key, `retry: false`, `onSettled` invalidation on every mutation that can 409 against a stale row). Reused the existing `useCurrentUser()` from `authService.ts` for AC6 rather than adding a second current-user fetch. |
+| 2026-08-13 | Replaced `UsersPage`'s placeholder with a real "+ New user" form and dense-row list (`size="small"`, UX-DR8), matching `key-users.html`'s column set and header subtitle. |
+| 2026-08-13 | Added `UserListRow`: inline edit (full name/Role, sending only changed fields), Deactivate/Reactivate, and an inline password-reset reveal (no modal — this codebase has none), each owning its own local state and resyncing from the server only while not mid-edit, mirroring `TablesSetupPage`'s `TableListRow`. |
+| 2026-08-13 | Implemented AC6: the signed-in Admin's own row renders "This is you" in place of Deactivate, removing self-deactivation from the UI entirely (not just adding a confirmation step) — resolves the corresponding `deferred-work.md` item from Story 1.3's review. |
+| 2026-08-13 | Added `frontend/src/pages/admin/UsersPage.test.tsx`: 11 tests, mocking only `fetch`, covering all 9 ACs including the exact backend rejection strings (AC2/AC5) and the "This is you" / single-Deactivate-button assertion (AC6). Full frontend regression: 87 passed (up from 76). `tsc -b` and `vite build` both clean. |
+| 2026-08-13 | Updated `project-context.md` (current-state tree, services list, suite counts, dated patch entry) and `deferred-work.md` (resolved the self-deactivation item; corrected the unbounded-list item's story reference). |
