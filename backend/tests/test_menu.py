@@ -1007,24 +1007,52 @@ async def test_ingredient_id_path_param_exceeding_int4_range_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_cook_cannot_list_categories_or_read_a_recipe(
+async def test_cook_can_list_categories_and_read_a_recipe_but_not_edit_it(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     # Arrange
     await _login_as_admin(client, db_session, "admin_setup")
     category = await _create_category(client, "Pizza")
     dish = await _create_dish(client, category["id"])
+    ingredient = await _create_ingredient(db_session, "Flour")
+    created_line = await _add_recipe_ingredient(client, dish["id"], ingredient.id, quantity="0.300")
+    await _create_user(db_session, "cook1", UserRole.cook)
+    await _login(client, "cook1")
+
+    # Act: Story 2.5 (FR-25) permits a Cook to read the catalog and a Dish's recipe,
+    # but never to write to either.
+    categories_response = await client.get("/api/menu/categories")
+    recipe_response = await client.get(f"/api/menu/dishes/{dish['id']}/recipe-ingredients")
+    patch_response = await client.patch(
+        f"/api/menu/dishes/{dish['id']}/recipe-ingredients/{ingredient.id}", json={"quantity": "1.000"}
+    )
+
+    # Assert
+    assert categories_response.status_code == 200
+    assert recipe_response.status_code == 200
+    # The Cook sees exactly the line the Admin created, not a stripped-down copy.
+    assert recipe_response.json() == [created_line]
+    assert patch_response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cook_can_list_dishes_but_not_create_one(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as_admin(client, db_session, "admin_setup")
+    category = await _create_category(client, "Pizza")
+    await _create_dish(client, category["id"])
     await _create_user(db_session, "cook1", UserRole.cook)
     await _login(client, "cook1")
 
     # Act
-    categories_response = await client.get("/api/menu/categories")
-    recipe_response = await client.get(f"/api/menu/dishes/{dish['id']}/recipe-ingredients")
-    patch_response = await client.patch(
-        f"/api/menu/dishes/{dish['id']}/recipe-ingredients/1", json={"quantity": "1.000"}
+    list_response = await client.get("/api/menu/dishes")
+    create_response = await client.post(
+        "/api/menu/dishes", json={"name": "Uninvited", "price": "5.00", "category_id": category["id"]}
     )
 
     # Assert
-    assert categories_response.status_code == 403
-    assert recipe_response.status_code == 403
-    assert patch_response.status_code == 403
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1
+    assert create_response.status_code == 403

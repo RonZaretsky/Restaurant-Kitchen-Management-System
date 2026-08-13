@@ -19,17 +19,22 @@ InventoryWriteDep = Annotated[
     User, Depends(require_role(UserRole.admin, UserRole.warehouse_manager))
 ]
 
-# Reads permit the same two Roles as writes here. Named separately from
-# InventoryWriteDep for what each route is actually doing, both resolve to the
-# same require_role call. Story 4.3 (View Ingredient Stock Levels) builds on
-# top of this same list endpoint rather than duplicating it.
+# Reads permit a third Role writes do not: Story 2.5 (FR-25) added Cook here so
+# a Cook can resolve an Ingredient's name when browsing a Dish's recipe
+# read-only. This is Role-level permission, not per-field: the response still
+# includes current_stock/min_stock_threshold, this project's model has no
+# per-resource or per-field filtering anywhere (project-context.md). Story 4.3
+# (View Ingredient Stock Levels) is what gives a Warehouse Manager a screen
+# built around those fields, on top of this same list endpoint, not what
+# first exposes them to a wider audience. InventoryWriteDep stays
+# admin/warehouse_manager only.
 InventoryReadDep = Annotated[
-    User, Depends(require_role(UserRole.admin, UserRole.warehouse_manager))
+    User, Depends(require_role(UserRole.admin, UserRole.warehouse_manager, UserRole.cook))
 ]
 
 _ERROR_DESCRIPTIONS = {
     401: "No valid session cookie was supplied",
-    403: "Authenticated, but the caller's Role is neither admin nor warehouse_manager",
+    403: "Authenticated, but the caller's Role is not permitted for this action",
     409: "An ingredient with this name already exists",
 }
 
@@ -48,7 +53,7 @@ async def list_ingredients(
     """List every Ingredient.
 
     Args:
-        actor: The authenticated Warehouse Manager or Admin making the request.
+        actor: The authenticated Warehouse Manager, Admin, or Cook making the request.
         db: The active database session.
         inventory_service: Injected service handling the read.
 
