@@ -394,9 +394,9 @@ This story closes that gap. No new backend endpoint or schema is needed.
 **When** an Admin submits the "+ New user" form
 **Then** a new User account is created via the existing `POST /api/admin/users` endpoint and appears in the Users list immediately (FR-3)
 
-**Given** a username that already exists
+**Given** a username that already exists (active or deactivated, matched case-insensitively)
 **When** creation is attempted
-**Then** it is rejected inline, "Rejected, username already exists" (FR-3, UX-DR17)
+**Then** it is rejected inline with the backend's exact message, "That username already exists" (FR-3, UX-DR17)
 
 **Given** an existing User
 **When** an Admin clicks Edit
@@ -407,7 +407,7 @@ This story closes that gap. No new backend endpoint or schema is needed.
 **Then** the User is deactivated via the existing endpoint and its Status chip updates to Inactive (FR-3)
 
 **Given** the last remaining active Admin account
-**When** deactivation of it is attempted
+**When** deactivation of it, or a Role change away from Admin, is attempted
 **Then** it is rejected inline, "Rejected, at least one admin must stay active" (FR-3, AD-15, UX-DR17)
 
 **Given** the signed-in Admin's own row
