@@ -113,7 +113,7 @@ export function MenuManagementPage() {
 
   const isLoading = dishesQuery.isLoading || categoriesQuery.isLoading;
   const isError = dishesQuery.isError || categoriesQuery.isError;
-  const firstError = dishesQuery.error ?? categoriesQuery.error ?? new Error(GENERIC_ERROR_MESSAGE);
+  const firstError = dishesQuery.error ?? categoriesQuery.error;
   const refetchAll = () => {
     void dishesQuery.refetch();
     void categoriesQuery.refetch();
@@ -182,7 +182,12 @@ export function MenuManagementPage() {
 
   const confirmCreateCategory = () => {
     const trimmedName = newCategoryName.trim();
-    if (trimmedName === "") {
+    // Mirrors the Confirm button's own disabled predicate exactly, isPending
+    // included. Enter reaches this without touching the button, so holding it
+    // would otherwise fire a second POST while the first is in flight, and
+    // whichever resolved first would close the reveal and unmount the other's
+    // outcome, hiding a 409 the Admin never gets to see.
+    if (trimmedName === "" || createCategoryMutation.isPending) {
       return;
     }
     createCategoryMutation.mutate(
@@ -204,12 +209,15 @@ export function MenuManagementPage() {
         Menu Management
       </Typography>
 
-      {/* Withheld until both queries settle: the Category picker is populated
-          from useCategories(), so rendering the form over a failed or in-flight
-          categories fetch offers an empty picker and a permanently disabled
-          submit with no visible reason. The error Alert below owns that
-          explanation instead. */}
-      {!isLoading && !isError && (
+      {/* Gated on the Category list being present, which is precisely what the
+          form depends on, rather than on the page's combined isLoading/isError.
+          Gating on the combined state would take the form away for reasons it
+          has nothing to do with: a dishes-only failure (creating a Dish does
+          not need the dish list), and any failed background refetch after a
+          successful load, which would unmount a half-typed form under the
+          Admin. Keyed on the data itself, cached Categories keep the form
+          usable through a transient refetch failure. */}
+      {categories !== undefined && (
       <Box
         component="form"
         onSubmit={handleCreateDish}
@@ -246,9 +254,12 @@ export function MenuManagementPage() {
               value={newCategoryName}
               onChange={(event) => setNewCategoryName(event.target.value)}
               // Enter here confirms the category rather than falling through to
-              // the enclosing dish form's implicit submit.
+              // the enclosing dish form's implicit submit. isComposing guards
+              // the IME case, where Enter commits a candidate rather than
+              // meaning "submit", and would otherwise POST partially composed
+              // text as the Category name.
               onKeyDown={(event) => {
-                if (event.key === "Enter") {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
                   event.preventDefault();
                   confirmCreateCategory();
                 }
@@ -304,6 +315,15 @@ export function MenuManagementPage() {
         <Button type="submit" variant="contained" disabled={!canSubmitDish}>
           + New dish
         </Button>
+
+        {/* The reason the submit is dead, as visible text rather than a
+            Tooltip, per the standing rule. Without it the open reveal disables
+            "+ New dish" with nothing on screen explaining why. */}
+        {isCreatingCategory && (
+          <Typography variant="caption" color="text.secondary" sx={{ width: "100%" }}>
+            Confirm or cancel the new category before adding the dish.
+          </Typography>
+        )}
       </Box>
       )}
 
@@ -324,7 +344,10 @@ export function MenuManagementPage() {
             </Button>
           }
         >
-          {`Could not load the menu. ${errorMessage(firstError)}`}
+          {/* "Try again." rather than errorMessage()'s fallback: this sentence
+              already says the load failed, so the generic fallback would render
+              "Could not load the menu. Something went wrong. Try again." */}
+          {`Could not load the menu. ${firstError instanceof ApiError ? firstError.message : "Try again."}`}
         </Alert>
       )}
 

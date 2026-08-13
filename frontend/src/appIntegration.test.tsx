@@ -97,7 +97,13 @@ describe("login through to the Role home surface, against the real auth service"
     // read a stale rejected session after a successful login shows up here as a
     // second "/login" entry before Kitchen Display.
     expect(visited).not.toContain("/login");
-  });
+    // Explicit generous timeout, not the default 5s. This test types two fields
+    // through userEvent, waits on a deliberately delayed session refetch, and
+    // drives the whole router, so its budget is far tighter than a unit test's.
+    // It flaked twice in three full-suite runs once Story 2.6 grew the suite
+    // enough to contend for CPU, while passing every time in isolation. The
+    // assertions are unchanged; only the patience is.
+  }, 20000);
 
   it("keeps the User signed in when the session check fails for a transport reason", async () => {
     // Arrange

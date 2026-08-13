@@ -200,7 +200,12 @@ export function useCreateCategory(): UseMutationResult<Category, Error, CreateCa
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    onSuccess: (category) => {
+    onSuccess: async (category) => {
+      // Cancel first: a refetch already in flight when the POST resolves would
+      // land after the seed and overwrite it with a list that predates this
+      // Category, putting the picker right back into the out-of-range state
+      // the seed exists to prevent.
+      await queryClient.cancelQueries({ queryKey: CATEGORIES_QUERY_KEY });
       queryClient.setQueryData<Category[]>(CATEGORIES_QUERY_KEY, (existing) =>
         existing ? [...existing, category] : [category],
       );

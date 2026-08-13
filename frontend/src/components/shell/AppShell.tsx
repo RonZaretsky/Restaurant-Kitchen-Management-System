@@ -52,8 +52,10 @@ const NavItem = styled(NavLink)(({ theme }) => ({
  *
  * Only ever rendered once the current User is known, RequireAuth is the caller
  * that guarantees this. Nav links come only from ROLE_NAV_ITEMS[user.role],
- * which is the literal mechanism behind AC2's "no cross-role navigation
- * anywhere."
+ * which is the literal mechanism behind AC2's "only surfaces that Role is
+ * authorized for." Note that an entry may cross a URL prefix when the backend
+ * authorizes that Role for it (Admin's Ingredients entry, Story 2.6); the
+ * invariant is authorization, not the prefix.
  *
  * @param user - The authenticated User whose Role drives the nav.
  * @returns The app shell chrome wrapping the active route's page.

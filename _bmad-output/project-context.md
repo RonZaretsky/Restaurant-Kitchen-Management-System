@@ -224,6 +224,18 @@ backend's `services/` is; later stories add one file per domain.
   Story 2.1, but the route guard redirected Admin away until Story 2.6's review caught it. Route
   reachability is derived from `ROLE_NAV_ITEMS` via `canRoleVisit`, so granting a Role a
   cross-prefix surface means adding the nav entry, never maintaining a second list.
+- **Path authorization matches on segment boundaries, and a nav-derived grant is exact.**
+  `startsWith(prefix)` alone lets `/admin` match a future `/administration`, and
+  `startsWith(navPath)` hands out the whole subtree — that is how Story 2.6's first fix silently
+  gave Admin `/warehouse/ingredients/:ingredientId`. Compare `=== p || startsWith(p + "/")` for a
+  subtree, and `=== p` for a single surface. Both bugs were invisible: no route matched the widened
+  patterns *yet*, so nothing failed, and the next route named as a textual extension of an existing
+  one would have been granted with no code change and no test failure (Story 2.6 second review).
+- **When a fix contradicts a shipped AC, amend the AC in the same story rather than leaving the
+  contradiction.** Story 2.6's Admin nav entry violated Story 1.4's AC2 as literally worded; the AC
+  was reworded by correct-course in `epics.md` and `EXPERIENCE.md`, with the reasoning recorded
+  inline. Leaving it would have left a later reader reconciling the epics against the code with no
+  audit trail on the epics side.
 
 ---
 
@@ -922,11 +934,20 @@ AC4 names both Warehouse Manager and Admin as able to create Ingredients, and
 single `ROLE_PATH_PREFIX[role]` string, and `/warehouse/ingredients` is outside `/admin`, so an Admin
 was redirected away from a screen the backend explicitly authorized them for. Fixed by adding an
 `Ingredients` entry to `ROLE_NAV_ITEMS.admin` and replacing the prefix comparison with a new
-`canRoleVisit(role, pathname)` in `navigationConfig.ts` (own prefix **or** any surface that Role's
-own nav links to). **The generalizable rule: derive route reachability from the nav config rather
-than keeping a second hand-maintained list** — that makes a nav entry a Role cannot open, and a
-reachable surface with no nav link, both unrepresentable. The prefix check remains a navigation
-affordance, never a security boundary (trap 14). Other review patches: a submit handler must
+`canRoleVisit(role, pathname)` in `navigationConfig.ts` (anything under the Role's own prefix, **or**
+an exact match on a surface that Role's own nav links to). **The generalizable rule: derive
+cross-prefix route reachability from the nav config rather than keeping a second hand-maintained
+list** — that makes a nav entry a Role cannot open unrepresentable. Note the converse does *not*
+hold and deliberately so: the prefix clause grants a Role's own subtree whether or not the nav links
+to it, which is what lets detail routes like `/waiter/tables/:tableId` work without their own entry.
+A second review round caught two bugs in the first version of this fix: prefix matching that ignored
+segment boundaries (so `/admin` would also match a future `/administration`), and a `startsWith` on
+nav paths that silently handed Admin `/warehouse/ingredients/:ingredientId`, Story 4.3's surface. The
+nav clause is now an exact match and the prefix clause is segment-aware. The check remains a
+navigation affordance, never a security boundary (trap 14). **Story 1.4's AC2 was amended by
+correct-course in the same story** (`epics.md`, `EXPERIENCE.md`): it had read "no cross-role
+navigation anywhere", keying the rule to URL shape, when the intent was always authorization —
+a Waiter must never see Admin tools. Other review patches: a submit handler must
 re-check its *full* predicate rather than trusting the disabled button (Enter submits a form
 regardless, and the checks both handlers had omitted were exactly the ones guarding a blank name and
 a duplicate in-flight request); an inline reveal nested inside another form needs its own Enter

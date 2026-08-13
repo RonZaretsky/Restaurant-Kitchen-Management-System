@@ -193,6 +193,47 @@ describe("route guard and per-role navigation", () => {
     expect(screen.queryByRole("heading", { name: "Ingredients" })).not.toBeInTheDocument();
   });
 
+  it("bounces an Admin from a warehouse surface their nav does NOT list", async () => {
+    // Arrange: the negative case of the cross-prefix clause, for the only Role
+    // that has one. Without this, `canRoleVisit` could be rewritten as a
+    // hardcoded `role === "admin"` exception and every other test still passes,
+    // which is exactly the anti-pattern deriving from ROLE_NAV_ITEMS prevents.
+    mockAuthenticated("admin");
+
+    // Act
+    renderAt("/warehouse/alerts");
+
+    // Assert
+    expect(await screen.findByRole("heading", { name: "Menu Management" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Alerts" })).not.toBeInTheDocument();
+  });
+
+  it("grants a nav entry's exact surface, never its subtree", async () => {
+    // Arrange: /warehouse/ingredients/:ingredientId is Story 4.3's surface. A
+    // startsWith match on the nav path would hand it to Admin as a side effect
+    // of the Ingredients grant, which nobody decided to do.
+    mockAuthenticated("admin");
+
+    // Act
+    renderAt("/warehouse/ingredients/1");
+
+    // Assert
+    expect(await screen.findByRole("heading", { name: "Menu Management" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Ingredient detail" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a Role's own prefix granting its detail routes", async () => {
+    // Arrange: the prefix clause must stay a subtree grant even though the nav
+    // clause is exact, or every detail route would need its own nav entry.
+    mockAuthenticated("warehouse_manager");
+
+    // Act
+    renderAt("/warehouse/ingredients/1");
+
+    // Assert: reached the surface rather than being bounced home.
+    expect(await screen.findByRole("heading", { name: "Ingredient detail" })).toBeInTheDocument();
+  });
+
   it("keeps tab order aligned with the app bar's left-to-right visual order (AC8)", async () => {
     // Arrange
     mockAuthenticated("admin");

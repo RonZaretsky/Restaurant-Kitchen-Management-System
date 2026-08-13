@@ -270,10 +270,11 @@
   `MenuManagementPage.tsx` now has an always-visible "+ New dish" form with an inline "+ New
   category" reveal on its Category picker, and `IngredientsPage.tsx` (previously a bare placeholder)
   now has its own "Add ingredient" form. No backend change was needed, exactly as this entry
-  predicted. **Not resolved by this story: Admin cannot navigate to the Ingredients screen at all**
-  (see the code-review decision-needed item logged below, "code review of story-2.6"), a separate,
-  pre-existing routing/nav gap this story's review surfaced but did not fix. Original entry kept
-  below for context.
+  predicted. This story's code review also surfaced a separate, pre-existing gap the original entry
+  never mentioned — an Admin could not navigate to the Ingredients screen at all, despite
+  `InventoryWriteDep` having permitted Admin since Story 2.1 — and that **was** fixed here too, by
+  deriving route reachability from `ROLE_NAV_ITEMS` via `canRoleVisit()`. Original entry kept below
+  for context.
 - **No story anywhere in the plan builds the Category/Dish creation forms the UX mockup shows.**
   `key-menu-management.html` (the UX designer's mockup for `MenuManagementPage`) explicitly shows a
   "+ New dish" button, and an equivalent affordance for creating a Menu Category. Neither exists in
@@ -294,6 +295,18 @@
   or Dish via a direct API call.
 
 ## Deferred from: code review of story-2.6 (2026-08-13)
+
+- **FIXED, not deferred: `appIntegration.test.tsx`'s "lands on Kitchen Display" test was
+  load-sensitive.** It failed with `Test timed out in 5000ms` in two of three full-suite runs while
+  passing every time in isolation, with no code change in between. The test types two fields through
+  `userEvent`, waits on a deliberately `delayed()` `/api/auth/me`, and drives the whole router, all
+  inside Vitest's default 5s budget. Story 2.6's route-guard change is not the cause (this test's
+  Cook path is granted by the prefix clause, which kept its subtree semantics), but the story grew
+  the suite by 18 tests, and the extra parallel contention is what brought it over the line — which
+  makes it this story's to fix rather than log. Given an explicit 20s timeout; assertions unchanged.
+  Recorded here because the underlying fragility is general: any integration test that drives real
+  user interaction plus a delayed network stub needs a budget set from that, not the unit-test
+  default, and a suite that is red for timing reasons is worse than one that is slow.
 
 - **Client-side numeric parsers only enforce sign, not the backend's exact digit/decimal-place/int4
   bounds.** `parsePositivePrice`/`parseNonNegativeInteger` (`MenuManagementPage.tsx`) and

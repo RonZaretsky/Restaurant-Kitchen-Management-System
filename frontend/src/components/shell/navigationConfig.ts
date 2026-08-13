@@ -20,12 +20,15 @@ export const ROLE_HOME_PATH: Record<UserRole, string> = {
  * guard's role-scoped redirect read from: a Role may visit its own URL prefix
  * plus anything listed here, and nothing else (see canRoleVisit).
  *
- * A Role's nav lists only its own prefix's surfaces, with one deliberate
- * exception: Admin also gets Ingredients. `POST /api/inventory/ingredients`
- * permits `admin` and `warehouse_manager` alike (`InventoryWriteDep`, Story
- * 2.1), and Story 2.6's AC4 states the Ingredients creation flow is reachable
- * by "a Warehouse Manager or Admin". Without this entry the backend's grant
- * would be unreachable from the UI for one of the two Roles it names.
+ * A Role's nav lists only surfaces that Role is authorized for, which is
+ * Story 1.4 AC2's intent (a Waiter must never see Admin tools) and is how that
+ * AC is now worded in epics.md. Admin's Ingredients entry is the first entry
+ * that crosses a URL prefix: `POST /api/inventory/ingredients` permits `admin`
+ * and `warehouse_manager` alike (`InventoryWriteDep`, Story 2.1), and Story
+ * 2.6's AC4 states the creation flow is reachable by "a Warehouse Manager or
+ * Admin". Without this entry the backend's grant would be unreachable from the
+ * UI for one of the two Roles it names. AC2's wording was amended in the same
+ * story rather than left contradicting the code (Story 2.6 review).
  */
 export const ROLE_NAV_ITEMS: Record<UserRole, { label: string; path: string }[]> = {
   admin: [
@@ -48,10 +51,10 @@ export const ROLE_NAV_ITEMS: Record<UserRole, { label: string; path: string }[]>
 };
 
 /**
- * Each Role's own URL prefix, used by the route guard to detect a
- * cross-role URL visit.
+ * Each Role's own URL prefix. Not exported: canRoleVisit below is the only
+ * consumer, and the one seam callers should go through.
  */
-export const ROLE_PATH_PREFIX: Record<UserRole, string> = {
+const ROLE_PATH_PREFIX: Record<UserRole, string> = {
   admin: "/admin",
   waiter: "/waiter",
   cook: "/cook",
@@ -59,13 +62,23 @@ export const ROLE_PATH_PREFIX: Record<UserRole, string> = {
 };
 
 /**
- * Whether a Role may visit a path: its own prefix, or any surface its own nav
- * links to.
+ * Whether a Role may visit a path: anything under its own URL prefix, or a
+ * surface its own nav links to.
  *
- * Deriving the second half from ROLE_NAV_ITEMS rather than a second hand-kept
- * list is what keeps a cross-prefix grant from drifting: a nav entry a Role
- * cannot actually open, or a reachable surface with no way to navigate to it,
- * are both unrepresentable here.
+ * Deriving the cross-prefix half from ROLE_NAV_ITEMS rather than a second
+ * hand-kept list is what keeps such a grant from drifting: a nav entry a Role
+ * cannot actually open is unrepresentable. (The converse does not hold, and
+ * deliberately so: the prefix clause makes every path under a Role's own
+ * prefix reachable whether or not the nav links to it, which is what lets
+ * detail routes like /waiter/tables/:tableId work without their own entry.)
+ *
+ * Two matching rules, and the difference matters:
+ *   - The prefix clause is segment-aware, so "/admin" does not also match
+ *     "/administration" should such a route ever exist.
+ *   - The nav clause is an *exact* match, so an entry grants exactly the one
+ *     surface it names and never its subtree. Admin's Ingredients entry must
+ *     not silently also open /warehouse/ingredients/:ingredientId, which is
+ *     Story 4.3's surface and nobody's to grant here (Story 2.6 review).
  *
  * Still a navigation affordance, not a security boundary. The backend's
  * require_role remains the only real enforcement.
@@ -75,8 +88,11 @@ export const ROLE_PATH_PREFIX: Record<UserRole, string> = {
  * @returns Whether the Role is allowed to land on that path.
  */
 export function canRoleVisit(role: UserRole, pathname: string): boolean {
-  return (
-    pathname.startsWith(ROLE_PATH_PREFIX[role]) ||
-    ROLE_NAV_ITEMS[role].some((item) => pathname.startsWith(item.path))
-  );
+  const ownPrefix = ROLE_PATH_PREFIX[role];
+  const isUnderOwnPrefix = pathname === ownPrefix || pathname.startsWith(`${ownPrefix}/`);
+  // `?? []` rather than a bare index: UserRole is a compile-time union, but the
+  // Role arrives as a string off the wire, so a Role added backend-first would
+  // otherwise throw inside the route guard and blank the whole app.
+  const navItems = ROLE_NAV_ITEMS[role] ?? [];
+  return isUnderOwnPrefix || navItems.some((item) => pathname === item.path);
 }

@@ -120,10 +120,13 @@ export function IngredientsPage() {
       <Typography variant="h5" component="h1" gutterBottom>
         Ingredients
       </Typography>
-      {/* Only once the list is actually known. Rendering "0 ingredients" while
-          loading or after a failure states a fact about inventory at exactly
-          the moments the page does not have one. */}
-      {ingredients && (
+      {/* Only once the list is actually known, and gated on the same condition
+          as the table below it. Truthiness alone was not enough: after a
+          successful load followed by a failed refetch, isError is true while
+          data still holds the stale list, so the subtitle asserted a count
+          beside "Could not load the ingredients" with the table itself
+          hidden. */}
+      {!isLoading && !isError && ingredients && (
         <Typography color="text.secondary" gutterBottom>
           {`${ingredients.length} ${ingredients.length === 1 ? "ingredient" : "ingredients"}`}
         </Typography>

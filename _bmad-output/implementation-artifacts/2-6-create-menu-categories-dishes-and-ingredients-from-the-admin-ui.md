@@ -377,15 +377,19 @@ Claude Sonnet 5
   `useCreateIngredient`; promoted `INGREDIENTS_QUERY_KEY` to a module constant)
 - `frontend/src/pages/admin/MenuManagementPage.tsx` — UPDATE (dish/category creation forms, the
   combined loading/error fix, updated top-of-component doc comment)
-- `frontend/src/pages/admin/MenuManagementPage.test.tsx` — UPDATE (4 new tests, existing tests
-  untouched)
+- `frontend/src/pages/admin/MenuManagementPage.test.tsx` — UPDATE (6 new tests, 14 total; the 8
+  pre-existing recipe-editor tests untouched)
 - `frontend/src/pages/warehouse/IngredientsPage.tsx` — UPDATE (placeholder replaced with real content)
-- `frontend/src/pages/warehouse/IngredientsPage.test.tsx` — NEW (7 tests after review patches)
+- `frontend/src/pages/warehouse/IngredientsPage.test.tsx` — NEW (7 tests after both review rounds)
 - `frontend/src/components/shell/navigationConfig.ts` — UPDATE (review patch: Admin gains an
   Ingredients nav entry; new `canRoleVisit` helper derives reachability from the nav config)
 - `frontend/src/components/shell/RequireAuth.tsx` — UPDATE (review patch: calls `canRoleVisit`
   instead of comparing `ROLE_PATH_PREFIX` directly)
-- `frontend/src/router.test.tsx` — UPDATE (review patch: 2 tests pinning the Admin cross-prefix grant)
+- `frontend/src/router.test.tsx` — UPDATE (review patches: 4 tests pinning the Admin cross-prefix
+  grant, its negative case, exact-surface matching, and own-prefix subtree access)
+- `frontend/src/components/shell/AppShell.tsx` — UPDATE (round-2: doc comment the nav change invalidated)
+- `_bmad-output/planning-artifacts/epics.md` — UPDATE (correct-course: Story 1.4 AC2 reworded)
+- `_bmad-output/planning-artifacts/ux-designs/.../EXPERIENCE.md` — UPDATE (correct-course: same rule)
 - `_bmad-output/project-context.md` — UPDATE (docs)
 - `_bmad-output/implementation-artifacts/deferred-work.md` — UPDATE (docs)
 
@@ -411,3 +415,12 @@ Claude Sonnet 5
 | 2026-08-13 | Review patch: `IngredientsPage`'s subtitle renders only once the list is known (no more "0 ingredients" beside a load error) and pluralizes correctly. |
 | 2026-08-13 | Review patch: both "clears the form" tests now assert every field resets, not just the first; added an AC3 dish-rejection test and an Enter-confirms-category test; `IngredientsPage`'s Retry test now clicks Retry and asserts a refetch rather than only asserting the button exists. |
 | 2026-08-13 | Post-review regression: frontend 90 passed (up from 85), `tsc --noEmit` clean, `vite build` clean. Backend untouched at 213. |
+| 2026-08-13 | **Second code review round**, run because round 1 had reviewed the pre-patch state, leaving ~10 patches (including the route-guard rewrite) unreviewed by anything. Two Opus layers, genuinely in parallel this time. Both independently confirmed the same four top defects. |
+| 2026-08-13 | Round-2 fix: `canRoleVisit`'s nav clause was `startsWith`, so Admin's Ingredients grant also opened `/warehouse/ingredients/:ingredientId` (Story 4.3's surface, `IngredientDetailPage`). Now an exact match. The prefix clause is segment-aware (`=== p \|\| startsWith(p + "/")`) so `/admin` cannot match a future `/administration`. Both were invisible: no route matched the widened patterns yet. Mutation-tested; two new router tests pin the boundary, including the negative case for Admin (`/warehouse/alerts`) that round 1's tests omitted. |
+| 2026-08-13 | Round-2 fix: `confirmCreateCategory` guarded only the empty name, not `isPending` — violating, in the same commit, the "re-check the full predicate" rule this story's own Change Log had just written. Holding Enter fired concurrent category POSTs whose outcomes raced to unmount each other. |
+| 2026-08-13 | Round-2 fix: the dish form is now gated on `categories !== undefined` rather than the page's combined `isError`. The combined gate took the form away for unrelated reasons: a dishes-only failure, and any failed background refetch after a successful load, which unmounted a half-typed form. |
+| 2026-08-13 | Round-2 fix: Ingredients count subtitle gated on `!isLoading && !isError && ingredients`, not truthiness alone — after a successful load and a failed refetch it asserted a stale count beside the error. Round 1's regression test only covered the never-loaded case, so it passed over the state its own title described; a second test now covers it, mutation-tested. |
+| 2026-08-13 | Round-2 fixes: IME `isComposing` guard on the category Enter handler; `cancelQueries` before seeding in `useCreateCategory` so an in-flight refetch cannot overwrite the seed; `ROLE_NAV_ITEMS[role] ?? []` so a backend-first Role addition cannot throw inside the route guard; visible text explaining the disabled "+ New dish" while the reveal is open; removed the doubled "Could not load the menu. Something went wrong. Try again."; un-exported `ROLE_PATH_PREFIX` (zero external consumers after the guard change — the same finding round 1 raised against the payload types and I missed here). |
+| 2026-08-13 | Round-2 doc corrections: `deferred-work.md` had stated in bold that Admin navigation was *not* fixed and cross-referenced a nonexistent item, when it had been fixed in the same diff; `AppShell.tsx`'s comment still claimed to be the mechanism behind "no cross-role navigation anywhere"; the File List's two test counts were wrong in opposite directions; and `project-context.md` had recorded a false invariant ("a reachable surface with no nav link is unrepresentable") that the prefix clause contradicts. |
+| 2026-08-13 | **Correct-course:** Story 1.4's AC2 in `epics.md` and its restatement in `EXPERIENCE.md` were amended (Ofek's call). Both had keyed the rule to URL prefix ("no cross-role navigation anywhere"), which contradicted this story's AC4 given the backend has authorized Admin for ingredient creation since Story 2.1. Reworded to the actual intent: a Role's nav lists only surfaces that Role is authorized for. Reasoning recorded inline in both documents. |
+| 2026-08-13 | Final regression: frontend 94 passed (up from 90), `tsc --noEmit` clean. One pre-existing test (`appIntegration.test.tsx`) flaked once under full-suite load and passed on isolation and re-run; logged in `deferred-work.md` as a timing fragility rather than dismissed. |

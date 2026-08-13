@@ -31,11 +31,16 @@ function jsonResponse(status: number, body: unknown): Response {
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <IngredientsPage />
-    </QueryClientProvider>,
-  );
+  // queryClient is returned so a test can drive a refetch directly, which is
+  // the only way to reach the "stale data present AND isError" state.
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <IngredientsPage />
+      </QueryClientProvider>,
+    ),
+    queryClient,
+  };
 }
 
 describe("IngredientsPage", () => {
@@ -192,6 +197,32 @@ describe("IngredientsPage", () => {
 
     // Assert
     await screen.findByText(/Could not load the ingredients/);
+    expect(screen.queryByText(/\d+ ingredients?$/)).not.toBeInTheDocument();
+  });
+
+  it("does not claim a count when a refetch fails but stale data is still cached", async () => {
+    // Arrange: the harder half of the case above, and the one a truthiness-only
+    // guard passes over. The first load succeeds, so `data` stays populated;
+    // the refetch then fails, so isError is true *and* the stale list is still
+    // in hand. The table hides itself but the subtitle must not keep asserting
+    // a count next to the error.
+    let shouldFail = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        shouldFail
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : Promise.resolve(jsonResponse(200, [FLOUR])),
+      ),
+    );
+    // Act
+    const { queryClient } = renderPage();
+    expect(await screen.findByText("1 ingredient")).toBeInTheDocument();
+    shouldFail = true;
+    await queryClient.invalidateQueries({ queryKey: ["inventory", "ingredients"] });
+
+    // Assert
+    expect(await screen.findByText(/Could not load the ingredients/)).toBeInTheDocument();
     expect(screen.queryByText(/\d+ ingredients?$/)).not.toBeInTheDocument();
   });
 });
