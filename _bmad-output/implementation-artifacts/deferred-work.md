@@ -263,3 +263,24 @@
   optional field via this endpoint, adopt an explicit "unset" sentinel (e.g. a distinct sentinel
   object as the field default, checked with `is` rather than `==`, so an explicit `null` can be
   told apart from an omitted field) rather than plain `Optional[str] = None`.
+
+## Deferred from: dev-story of story-2.5 (2026-08-13)
+
+- **No story anywhere in the plan builds the Category/Dish creation forms the UX mockup shows.**
+  `key-menu-management.html` (the UX designer's mockup for `MenuManagementPage`) explicitly shows a
+  "+ New dish" button, and an equivalent affordance for creating a Menu Category. Neither exists in
+  the shipped UI. Traced through both stories that touch this screen: Story 2.2 (which built the
+  backend `POST /api/menu/categories`/`POST /api/menu/dishes`) was scoped backend-only by its own
+  ACs, no UI was ever required of it. Story 2.3 (which built `MenuManagementPage.tsx`, the list +
+  per-dish recipe editor) explicitly deferred the creation forms in its own code comment ("Category/
+  Dish creation forms are deliberately out of scope... this screen's remaining CRUD ships in a later
+  story"). Checked every story title across all 6 epics: no later story ever picks this up. This is
+  a genuine planning gap, not a bug, each story correctly assumed the form wasn't its job on the
+  assumption a later story would build it, and none did. Found while manually testing Story 2.5
+  against the running stack (Ron asked "is there an API for creating dishes" after not finding a
+  create button anywhere in the UI).
+  **Action:** the backend endpoints already exist and need no changes
+  (`POST /api/menu/categories`, `POST /api/menu/dishes`); a new story is needed to add the create
+  forms to `MenuManagementPage.tsx`, matching `key-menu-management.html`'s "+ New dish" affordance
+  and its Category-creation equivalent. Until that story exists, an Admin can only create a Category
+  or Dish via a direct API call.
