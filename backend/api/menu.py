@@ -31,6 +31,12 @@ router = APIRouter(prefix="/api/menu", tags=["menu"])
 # permitted two Roles. Do not widen this to warehouse_manager.
 MenuDep = Annotated[User, Depends(require_role(UserRole.admin))]
 
+# Reads permit Cook too (Story 2.5, FR-25): a Cook can browse the catalog and a
+# Dish's recipe read-only, with zero write access to any of it. Kept separate
+# from MenuDep so the three list/read routes below can widen independently of
+# every write route, which all stay Admin-only.
+MenuReadDep = Annotated[User, Depends(require_role(UserRole.admin, UserRole.cook))]
+
 # Path ids need the same int4 upper bound their request-body counterparts carry
 # (trap 16). Without it a larger value reaches db.get and raises an unhandled
 # asyncpg.DataError ("value out of int32 range"), a 500 rather than a clean 422.
@@ -39,7 +45,7 @@ IngredientIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
 
 _ERROR_DESCRIPTIONS = {
     401: "No valid session cookie was supplied",
-    403: "Authenticated, but the caller's Role is not admin",
+    403: "Authenticated, but the caller's Role is not permitted for this action",
     404: "No matching Category, Dish, Ingredient, or Recipe Ingredient line was found",
     409: "The request conflicts with existing state (a duplicate name, an empty-recipe "
     "availability gate, a duplicate recipe ingredient, a unit that does not match the "
@@ -54,14 +60,14 @@ _ERROR_DESCRIPTIONS = {
 )
 @inject
 async def list_categories(
-    actor: MenuDep,
+    actor: MenuReadDep,
     db: SessionDep,
     menu_service: MenuService = Depends(Provide[Container.menu_service]),
 ) -> list[Category]:
     """List every Menu Category.
 
     Args:
-        actor: The authenticated Admin making the request.
+        actor: The authenticated Admin or Cook making the request.
         db: The active database session.
         menu_service: Injected service handling the read.
 
@@ -78,14 +84,14 @@ async def list_categories(
 )
 @inject
 async def list_dishes(
-    actor: MenuDep,
+    actor: MenuReadDep,
     db: SessionDep,
     menu_service: MenuService = Depends(Provide[Container.menu_service]),
 ) -> list[Dish]:
     """List every Dish.
 
     Args:
-        actor: The authenticated Admin making the request.
+        actor: The authenticated Admin or Cook making the request.
         db: The active database session.
         menu_service: Injected service handling the read.
 
@@ -204,7 +210,7 @@ async def update_dish(
 @inject
 async def list_recipe_ingredients(
     dish_id: DishIdPath,
-    actor: MenuDep,
+    actor: MenuReadDep,
     db: SessionDep,
     menu_service: MenuService = Depends(Provide[Container.menu_service]),
 ) -> list[RecipeIngredient]:
@@ -212,7 +218,7 @@ async def list_recipe_ingredients(
 
     Args:
         dish_id: The id of the Dish whose recipe is being read.
-        actor: The authenticated Admin making the request.
+        actor: The authenticated Admin or Cook making the request.
         db: The active database session.
         menu_service: Injected service handling the read.
 

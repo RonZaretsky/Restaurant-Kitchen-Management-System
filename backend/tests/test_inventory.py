@@ -260,15 +260,15 @@ async def test_warehouse_manager_can_list_ingredients(client: AsyncClient, db_se
 
 
 @pytest.mark.asyncio
-async def test_cook_cannot_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_cook_can_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.cook, "cook1")
 
-    # Act
+    # Act: Story 2.5 (FR-25) needs Ingredient names to render a Dish's recipe.
     response = await client.get("/api/inventory/ingredients")
 
     # Assert
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

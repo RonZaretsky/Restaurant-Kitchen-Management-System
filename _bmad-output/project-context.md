@@ -62,10 +62,14 @@ backend/
                      role-gated routes with declared error responses (see trap 8)
   api/inventory.py    Story 2.1: POST /api/inventory/ingredients, the first route to permit more
                      than one Role (admin, warehouse_manager). Story 2.3 added GET on the same two
-                     Roles (InventoryReadDep); Story 4.3 should extend it, not duplicate it
+                     Roles (InventoryReadDep); Story 2.5 widened InventoryReadDep to admin,
+                     warehouse_manager, cook (a Cook needs Ingredient names to render a Dish's
+                     recipe); Story 4.3 should extend it further, not duplicate it
   api/menu.py         Story 2.2: POST /categories, POST /dishes, PATCH /dishes/{id}, admin-only.
                      Story 2.3 added GET /categories, GET /dishes, and Recipe Ingredient CRUD at
-                     /dishes/{dish_id}/recipe-ingredients (GET/POST/PATCH/DELETE)
+                     /dishes/{dish_id}/recipe-ingredients (GET/POST/PATCH/DELETE). Story 2.5 split
+                     a new MenuReadDep (admin, cook) off the three GET routes; every write route
+                     stays on the original MenuDep (admin-only), unchanged
   api/tables.py       Story 2.4: GET /api/tables, POST /api/tables, PATCH /api/tables/{id},
                      admin-only. Note the collection paths have NO trailing slash, matching the
                      sibling routers; a trailing slash shipped first and was corrected in review
@@ -116,7 +120,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and the first two real domain screens (Menu Management, Tables setup). The other 11 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and the first three real domain screens (Menu Management, Tables setup, and Cook's read-only Dishes catalog). The other 10 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -152,10 +156,12 @@ frontend/src/
                         subscribe(event, handler) for later stories to consume push events),
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
                         ROLE_PATH_PREFIX, the single source of truth the nav and the guard both read)
-  pages/{role}/           placeholder components for the 11 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Two are now real:
-                        admin/MenuManagementPage.tsx (Story 2.3) and admin/TablesSetupPage.tsx
-                        (Story 2.4), each with its own *.test.tsx alongside
+  pages/{role}/           placeholder components for the 10 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Three are now real:
+                        admin/MenuManagementPage.tsx (Story 2.3), admin/TablesSetupPage.tsx
+                        (Story 2.4), and cook/DishesPage.tsx (Story 2.5, strictly read-only, groups
+                        every Dish by Category, resolves Recipe Ingredient lines to names via
+                        useIngredients()), each with its own *.test.tsx alongside
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
@@ -186,6 +192,12 @@ backend's `services/` is; later stories add one file per domain.
   (see trap 19).
 - A disabled control's reason must be **visible text**, not only a `Tooltip`: tooltips never appear
   on touch or keyboard-primary interaction.
+- **A page driven by more than one independent query must combine loading/error across all of
+  them, not just the "main" one.** Story 2.5's `DishesPage` originally wired up only `useDishes()`'s
+  `isLoading`/`isError`, leaving `useCategories()`/`useIngredients()` silent. Reproduced directly:
+  with dishes succeeding and categories failing, the page rendered only its heading, no error, no
+  empty state, nothing. `isLoading`/`isError` must be OR'd across every query the page depends on
+  to render anything meaningful, and Retry must refetch all of them, not just one.
 
 ---
 
@@ -562,6 +574,18 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   (`CreateDishRequest` has no `is_available` field at all). Menu Categories are **create-only** in
   v1 so far (no update/delete endpoint exists, Story 2.2's explicit scope), and their name
   uniqueness is plain case-sensitive, unlike User/Ingredient names (trap 11).
+- **A Cook can read the menu catalog (Categories, Dishes, Recipe Ingredient lines) and the
+  Ingredient list, but has zero write access to any of it** (Story 2.5, FR-25). This is the first
+  Role granted read access to a resource it cannot write to at all; `MenuReadDep`/`InventoryReadDep`
+  are the pattern (a dedicated read-only dependency alongside the write-only one), the same shape
+  `InventoryReadDep`/`InventoryWriteDep` already established in Story 2.1.
+- **No story anywhere in the plan builds the Category/Dish creation forms the UX mockup
+  (`key-menu-management.html`) shows** ("+ New dish" and its Category equivalent). Story 2.2 built
+  the backend only; Story 2.3 built `MenuManagementPage.tsx` but explicitly deferred the creation
+  forms in its own code comment to "a later story" that was never written. Checked every story
+  title across all 6 epics during Story 2.5, confirmed the gap is real, not merely unbuilt-yet. The
+  backend endpoints already exist (`POST /api/menu/categories`, `POST /api/menu/dishes`); only the
+  UI is missing. See `deferred-work.md`, "Deferred from: dev-story of story-2.5".
 - The single WebSocket connection (`/api/ws`, Story 1.5) is **one per authenticated session**: a
   second connection from the same User closes the first. A connection's session is re-verified
   periodically while it stays open, so a socket cannot outlive its JWT or survive a Role change/
@@ -667,7 +691,7 @@ from `frontend/`.
   mechanism directly (a focused probe) rather than assuming coverage.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **212 tests**, frontend **66 tests** (as of Story 2.4).
+Backend suite is now **213 tests**, frontend **76 tests** (as of Story 2.5).
 
 ---
 
@@ -825,4 +849,24 @@ and none of them is reachable from the test suite. Domain rules gained the note 
 lesson, the mid-request race-testing pattern, and the warning that rollback branches are unreachable
 from the suite. Suites are now **212 backend and 66 frontend tests**.
 
-Last Updated: 2026-08-12
+**2026-08-13 patch (Story 2.5, Cook Browses the Dish Catalog, plus its code review):** Zero new
+backend endpoints or schemas, deliberately: `MenuReadDep` (new, `api/menu.py`) and `InventoryReadDep`
+(widened, `api/inventory.py`) now also permit `UserRole.cook` on the existing list/read routes only,
+every write route unchanged. First Role granted read access with zero write access to the same
+resource. Real frontend screen `cook/DishesPage.tsx` replaces its placeholder, the third real domain
+screen after `MenuManagementPage`/`TablesSetupPage`. The review reproduced and fixed a real "silent
+blank page" bug: only `useDishes()`'s loading/error state drove the page, so a `useCategories()`/
+`useIngredients()` failure was completely invisible, no error, no empty state, nothing rendered but
+the heading. Added to "the shape every new domain screen should copy": a page driven by more than
+one independent query must OR every query's `isLoading`/`isError` together, not just the "main"
+one's. Also fixed, in the same review: a Dish whose Category couldn't be resolved was silently
+dropped instead of falling back to `#{id}` (this story's own spec had said to do this and the first
+implementation pass hadn't actually done it), and a failed Ingredient-list fetch silently degraded
+Recipe Ingredient lines to raw ids with no warning. **Separately, found while manually testing the
+running stack (not a code defect): no story anywhere in the plan builds the Category/Dish creation
+forms the UX mockup shows.** Traced through Stories 2.2 and 2.3, confirmed via every story title
+across all 6 epics, logged as a genuine planning gap in `deferred-work.md` and in Domain rules
+above, not fixed here (out of this story's scope). Suites are now **213 backend and 76 frontend
+tests**.
+
+Last Updated: 2026-08-13
