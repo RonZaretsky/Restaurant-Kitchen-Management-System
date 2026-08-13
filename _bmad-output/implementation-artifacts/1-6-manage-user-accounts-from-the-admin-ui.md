@@ -6,7 +6,7 @@ story: 6
 
 # Story 1.6: Manage User Accounts from the Admin UI
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
