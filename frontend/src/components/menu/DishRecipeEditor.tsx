@@ -90,14 +90,21 @@ function RecipeLineRow({
   onRemove: () => void;
 }) {
   const [draftQuantity, setDraftQuantity] = useState(line.quantity);
+  const [isDirty, setIsDirty] = useState(false);
 
-  // Resync when the server's value changes under us, which a plain
-  // defaultValue would never pick up.
+  // Resync when the server's value changes under us, which a plain defaultValue
+  // would never pick up, but never while the field holds uncommitted text: the
+  // list refetches on window focus and after any sibling row's save, so
+  // resyncing unconditionally would silently replace what the Admin is typing.
   useEffect(() => {
+    if (isDirty) {
+      return;
+    }
     setDraftQuantity(line.quantity);
-  }, [line.quantity]);
+  }, [line.quantity, isDirty]);
 
   const commit = () => {
+    setIsDirty(false);
     // An empty field is a cleared draft, not a request to store nothing, so
     // put the stored value back rather than leaving the row visibly blank.
     if (draftQuantity === "") {
@@ -117,7 +124,10 @@ function RecipeLineRow({
           size="small"
           label={`Quantity of ${ingredientLabel}`}
           value={draftQuantity}
-          onChange={(event) => setDraftQuantity(event.target.value)}
+          onChange={(event) => {
+            setIsDirty(true);
+            setDraftQuantity(event.target.value);
+          }}
           onBlur={commit}
           slotProps={{ htmlInput: { inputMode: "decimal" } }}
         />

@@ -11,6 +11,7 @@ from services.auth_service import AuthService
 from services.inventory_service import InventoryService
 from services.menu_service import MenuService
 from services.realtime_service import RealtimeService
+from services.table_service import TableService
 from services.user_service import UserService
 
 
@@ -79,6 +80,11 @@ class Container(containers.DeclarativeContainer):
 
     menu_service = providers.Factory(
         MenuService,
+        logger=logging,
+    )
+
+    table_service = providers.Factory(
+        TableService,
         logger=logging,
     )
 

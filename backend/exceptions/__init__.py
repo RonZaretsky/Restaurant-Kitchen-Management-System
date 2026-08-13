@@ -164,6 +164,30 @@ class CannotRemoveLastRecipeIngredientError(ConflictError):
     detail = "Cannot remove the last recipe ingredient while the dish is available"
 
 
+class DuplicateTableNumberError(ConflictError):
+    """Raised when creating or renaming a Table to a table_number that already exists."""
+
+    detail = "Rejected, table number already exists"
+
+
+class TableInUseError(ConflictError):
+    """Raised when editing a Table whose status is not available (AD-6 pattern).
+
+    Covers both an edit attempted while already occupied/reserved, and the race
+    where the Table stopped being available between the Admin loading the form
+    and saving it. The guarded UPDATE cannot tell those two cases apart, and
+    both use the same detail wording.
+    """
+
+    detail = "Rejected, table in use"
+
+
+class TableNotFoundError(NotFoundError):
+    """Raised when an admin action targets a table_id that does not exist."""
+
+    detail = "Table not found"
+
+
 class UnitMismatchError(ConflictError):
     """Raised when a Recipe Ingredient line's unit differs from its Ingredient's own unit.
 

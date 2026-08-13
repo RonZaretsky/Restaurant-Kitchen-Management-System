@@ -80,12 +80,15 @@ class MenuService:
         try:
             await db.commit()
         except IntegrityError as exc:
-            await db.rollback()
+            # Logging before rollback, not after: rollback() expires every object
+            # bound to this session, actor included, so reading actor.id afterward
+            # raises an unhandled MissingGreenlet.
             self._logger.warning(
                 "Category creation rejected by user_id={}: name={} already exists (lost the race)",
                 actor.id,
                 payload.name,
             )
+            await db.rollback()
             raise DuplicateCategoryNameError() from exc
         await db.refresh(category)
         self._logger.info(
@@ -338,7 +341,9 @@ class MenuService:
             # The check above loses to a concurrent add of the same line.
             # The composite primary key is the real arbiter, so translate its
             # violation into the same 409 rather than letting it surface as a 500.
-            await db.rollback()
+            # Logging before rollback, not after: rollback() expires every object
+            # bound to this session, actor included, so reading actor.id afterward
+            # raises an unhandled MissingGreenlet.
             self._logger.warning(
                 "Recipe ingredient addition rejected by user_id={}: dish_id={} already has "
                 "ingredient_id={} (lost the race)",
@@ -346,6 +351,7 @@ class MenuService:
                 dish_id,
                 payload.ingredient_id,
             )
+            await db.rollback()
             raise DuplicateRecipeIngredientError() from exc
         await db.refresh(line)
         self._logger.info(

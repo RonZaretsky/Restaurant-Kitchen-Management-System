@@ -83,12 +83,15 @@ class InventoryService:
             # The check above loses to a concurrent create of the same name.
             # The unique index is the real arbiter, so translate its violation
             # into the same 409 rather than letting it surface as a 500.
-            await db.rollback()
+            # Logging before rollback, not after: rollback() expires every object
+            # bound to this session, actor included, so reading actor.id afterward
+            # raises an unhandled MissingGreenlet.
             self._logger.warning(
                 "Ingredient creation rejected by user_id={}: name={} already exists (lost the race)",
                 actor.id,
                 payload.name,
             )
+            await db.rollback()
             raise DuplicateIngredientNameError() from exc
         await db.refresh(ingredient)
         self._logger.info(

@@ -2,10 +2,16 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
+# Reused from menu.py rather than redefined: table_number and capacity are plain
+# Integer columns needing the same int4 upper bound as menu.py's category_id
+# (trap 16). recipe.py imports it the same way.
+from .menu import _INT4_MAX
 
 
 class TableStatus(enum.Enum):
@@ -35,6 +41,73 @@ class RestaurantTable(Base):
     table_number: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[TableStatus] = mapped_column(Enum(TableStatus), nullable=False, default=TableStatus.available)
+
+
+class CreateTableRequest(BaseModel):
+    """Body of an Admin's request to create a Restaurant Table."""
+
+    table_number: int = Field(gt=0, le=_INT4_MAX)
+    capacity: int = Field(gt=0, le=_INT4_MAX)
+
+
+class UpdateTableRequest(BaseModel):
+    """Body of an Admin's request to edit a Table's number and/or capacity.
+
+    At least one field must be provided, mirroring UpdateDishRequest's shape.
+    """
+
+    table_number: int | None = Field(default=None, gt=0, le=_INT4_MAX)
+    capacity: int | None = Field(default=None, gt=0, le=_INT4_MAX)
+
+    @field_validator("table_number", "capacity", mode="before")
+    @classmethod
+    def _reject_explicit_null(cls, value: object, info: ValidationInfo) -> object:
+        """Reject a field explicitly submitted as null.
+
+        An omitted field means "leave this alone", but an explicit null is a
+        caller mistake, not a request to skip the field. Treating the two the
+        same lets a browser silently send null for a field that failed to parse
+        (JSON.stringify turns NaN into null) and get a 200 that applied only the
+        other field, so the caller believes both were saved.
+
+        Args:
+            value: The submitted value, before coercion.
+            info: Pydantic's field context, used for the field name.
+
+        Returns:
+            The value unchanged, if it is not an explicit null.
+
+        Raises:
+            ValueError: If the field was provided as null.
+        """
+        if value is None:
+            raise ValueError(f"{info.field_name} must be a number, not null")
+        return value
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "UpdateTableRequest":
+        """Reject an update that changes nothing.
+
+        Returns:
+            This instance, unchanged, if at least one field is set.
+
+        Raises:
+            ValueError: If every field is None.
+        """
+        if self.table_number is None and self.capacity is None:
+            raise ValueError("at least one field must be provided")
+        return self
+
+
+class TableResponse(BaseModel):
+    """Body of any tables endpoint response describing a Restaurant Table."""
+
+    model_config = {"from_attributes": True}
+
+    id: int
+    table_number: int
+    capacity: int
+    status: TableStatus
 
 
 class Order(Base):

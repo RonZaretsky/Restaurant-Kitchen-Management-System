@@ -19,7 +19,15 @@ container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 # Every later story that adds @inject to a new module appends its name here,
 # never replaces the list (AD-1).
 container.wire(
-    modules=["api.auth", "api.dependencies", "api.admin", "api.websocket", "api.inventory", "api.menu"]
+    modules=[
+        "api.auth",
+        "api.dependencies",
+        "api.admin",
+        "api.websocket",
+        "api.inventory",
+        "api.menu",
+        "api.tables",
+    ]
 )
 
 
