@@ -120,7 +120,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and the first three real domain screens (Menu Management, Tables setup, and Cook's read-only Dishes catalog). The other 10 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and the first four real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, and Ingredients). The other 9 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -142,8 +142,11 @@ frontend/src/
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12)
   services/authService.ts  useCurrentUser / useLogin
-  services/menuService.ts  Story 2.3: categories/dishes/recipe-ingredient hooks
-  services/inventoryService.ts  Story 2.3: useIngredients
+  services/menuService.ts  Story 2.3: categories/dishes/recipe-ingredient hooks; Story 2.6:
+                        useCreateCategory / useCreateDish (payload types private to this file,
+                        matching tableService.ts's precedent)
+  services/inventoryService.ts  Story 2.3: useIngredients; Story 2.6: useCreateIngredient
+                        (INGREDIENTS_QUERY_KEY promoted to a module constant)
   services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
@@ -155,15 +158,20 @@ frontend/src/
                         real state, capped exponential backoff reconnect, exposes useRealtime()'s
                         subscribe(event, handler) for later stories to consume push events),
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
-                        ROLE_PATH_PREFIX, the single source of truth the nav and the guard both read)
+                        ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
+                        the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
+                        so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
   pages/{role}/           placeholder components for the 9 IA surfaces that have not shipped yet
                         (just the surface's own title as the page's h1). Four are now real:
-                        admin/MenuManagementPage.tsx (Story 2.3), admin/TablesSetupPage.tsx
-                        (Story 2.4), cook/DishesPage.tsx (Story 2.5, strictly read-only, groups
-                        every Dish by Category, resolves Recipe Ingredient lines to names via
-                        useIngredients()), and admin/UsersPage.tsx (Story 1.6, create/edit/
-                        deactivate/reactivate/reset-password against Story 1.3's existing
-                        endpoints, zero backend changes), each with its own *.test.tsx alongside
+                        admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
+                        "+ New dish" form and an inline "+ New category" reveal on its Category
+                        picker, no dialog), admin/TablesSetupPage.tsx (Story 2.4), cook/DishesPage.tsx
+                        (Story 2.5, strictly read-only, groups every Dish by Category, resolves
+                        Recipe Ingredient lines to names via useIngredients()), and
+                        warehouse/IngredientsPage.tsx (Story 2.6, replacing Story 1.4's placeholder:
+                        an "Add ingredient" form plus a dense-row list, deliberately no shortage
+                        sorting/highlighting/detail-drill-down, that scope belongs to Epic 4's Story
+                        4.3), each with its own *.test.tsx alongside
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
@@ -200,6 +208,34 @@ same way the backend's `services/` is; later stories add one file per domain.
   with dishes succeeding and categories failing, the page rendered only its heading, no error, no
   empty state, nothing. `isLoading`/`isError` must be OR'd across every query the page depends on
   to render anything meaningful, and Retry must refetch all of them, not just one.
+- **A form whose picker is populated by a query must not render until that query settles.** Rendering
+  it anyway gives an empty picker and a permanently disabled submit with no visible reason — the
+  same silent-failure class as the bullet above, one layer in (Story 2.6 review).
+- **A submit handler re-checks its full submit predicate, never a subset of it.** The disabled button
+  is not authoritative: Enter submits a form regardless. Every check the handler omits is a request
+  that can ship with a blank required field or duplicate one already in flight (Story 2.6 review).
+- **An inline reveal nested inside another form needs its own Enter handling**, or the outer form's
+  implicit submit steals the keypress and discards what the user typed in the reveal (Story 2.6).
+- **A mutation whose caller immediately selects the created row seeds the cache in `onSuccess`
+  before invalidating.** Invalidation only *schedules* a refetch, so selecting the new id first
+  leaves a picker holding a value with no matching option until the refetch lands (Story 2.6).
+- **If a story's AC names a Role, verify that Role can actually reach the screen.** Backend
+  permission and UI reachability are separate systems: `InventoryWriteDep` permitted Admin from
+  Story 2.1, but the route guard redirected Admin away until Story 2.6's review caught it. Route
+  reachability is derived from `ROLE_NAV_ITEMS` via `canRoleVisit`, so granting a Role a
+  cross-prefix surface means adding the nav entry, never maintaining a second list.
+- **Path authorization matches on segment boundaries, and a nav-derived grant is exact.**
+  `startsWith(prefix)` alone lets `/admin` match a future `/administration`, and
+  `startsWith(navPath)` hands out the whole subtree — that is how Story 2.6's first fix silently
+  gave Admin `/warehouse/ingredients/:ingredientId`. Compare `=== p || startsWith(p + "/")` for a
+  subtree, and `=== p` for a single surface. Both bugs were invisible: no route matched the widened
+  patterns *yet*, so nothing failed, and the next route named as a textual extension of an existing
+  one would have been granted with no code change and no test failure (Story 2.6 second review).
+- **When a fix contradicts a shipped AC, amend the AC in the same story rather than leaving the
+  contradiction.** Story 2.6's Admin nav entry violated Story 1.4's AC2 as literally worded; the AC
+  was reworded by correct-course in `epics.md` and `EXPERIENCE.md`, with the reasoning recorded
+  inline. Leaving it would have left a later reader reconciling the epics against the code with no
+  audit trail on the epics side.
 
 ---
 
@@ -581,13 +617,14 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   Role granted read access to a resource it cannot write to at all; `MenuReadDep`/`InventoryReadDep`
   are the pattern (a dedicated read-only dependency alongside the write-only one), the same shape
   `InventoryReadDep`/`InventoryWriteDep` already established in Story 2.1.
-- **No story anywhere in the plan builds the Category/Dish creation forms the UX mockup
-  (`key-menu-management.html`) shows** ("+ New dish" and its Category equivalent). Story 2.2 built
-  the backend only; Story 2.3 built `MenuManagementPage.tsx` but explicitly deferred the creation
-  forms in its own code comment to "a later story" that was never written. Checked every story
-  title across all 6 epics during Story 2.5, confirmed the gap is real, not merely unbuilt-yet. The
-  backend endpoints already exist (`POST /api/menu/categories`, `POST /api/menu/dishes`); only the
-  UI is missing. See `deferred-work.md`, "Deferred from: dev-story of story-2.5".
+- **RESOLVED by Story 2.6.** The Category/Dish creation forms the UX mockup (`key-menu-management.html`)
+  shows, and the Ingredients screen's own create form, now exist on `MenuManagementPage.tsx` and
+  `IngredientsPage.tsx` respectively. Zero backend changes, both endpoints (`POST /api/menu/categories`,
+  `POST /api/menu/dishes`, `POST /api/inventory/ingredients`) had existed unused since Stories 2.1/2.2.
+  No dialog anywhere: both forms are always-visible inline forms, and the dish form's Category picker
+  gets a small "+ New category" in-place reveal (a text field + Confirm/Cancel swapping in where the
+  picker is), the same component-local-boolean-reveal shape `TablesSetupPage`'s `TableListRow`
+  established for row editing.
 - The single WebSocket connection (`/api/ws`, Story 1.5) is **one per authenticated session**: a
   second connection from the same User closes the first. A connection's session is re-verified
   periodically while it stays open, so a socket cannot outlive its JWT or survive a Role change/
@@ -883,5 +920,52 @@ now shows "This is you" in place of Deactivate, matching `key-users.html` exactl
 further than the confirmation-step fix that item suggested. AD-15's last-Admin lockout was already
 enforced server-side; this story only renders its existing 409 inline. Suites are now **213
 backend and 93 frontend tests**.
+
+**2026-08-13 patch (Story 2.6, Create Menu Categories, Dishes, and Ingredients from the Admin UI):**
+Frontend-only, zero backend changes: the two gaps Story 2.5's review logged (no Category/Dish
+creation UI, `IngredientsPage.tsx` still a bare placeholder) are both closed. `menuService.ts` gained
+`useCreateCategory`/`useCreateDish` (payload types private to the file, per `tableService.ts`'s
+precedent); `inventoryService.ts` gained `useCreateIngredient` and promoted its query key to a named
+`INGREDIENTS_QUERY_KEY` constant, matching every other service file. `MenuManagementPage.tsx` gained
+an always-visible "+ New dish" form with an inline "+ New category" reveal on its Category picker (a
+component-local boolean swap, the same shape `TablesSetupPage`'s `TableListRow` uses for row editing;
+no dialog, this codebase has never introduced one). `IngredientsPage.tsx` went from a one-line
+placeholder to a real screen: an "Add ingredient" form plus a dense-row list, deliberately without
+shortage sorting/highlighting/a Status column/click-to-detail, that scope stays with Epic 4's Story
+4.3. Alongside this story's own work (not optional polish, required for the new dish-creation form
+to fail loudly rather than silently): `MenuManagementPage.tsx` had the same "silent blank page" bug
+Story 2.5's review found and fixed in `DishesPage` — only `useDishes()`'s `isLoading`/`isError` drove
+the page, `useCategories()`'s own state was read for data only, never checked. It was never
+backported to this file; fixed here the same way, `isLoading`/`isError` now OR'd across both queries
+and Retry refetches both. The Task 1 regression test for this fix, and the two duplicate-name/empty-
+state assertions in the new `IngredientsPage.test.tsx`, were each mutation-tested (behavior
+temporarily reverted, confirmed the test actually fails, then restored) before being trusted.
+
+**The review's most consequential finding was an AC that the routing architecture made unreachable.**
+AC4 names both Warehouse Manager and Admin as able to create Ingredients, and
+`InventoryWriteDep` has permitted both since Story 2.1 — but `RequireAuth` gated every route on a
+single `ROLE_PATH_PREFIX[role]` string, and `/warehouse/ingredients` is outside `/admin`, so an Admin
+was redirected away from a screen the backend explicitly authorized them for. Fixed by adding an
+`Ingredients` entry to `ROLE_NAV_ITEMS.admin` and replacing the prefix comparison with a new
+`canRoleVisit(role, pathname)` in `navigationConfig.ts` (anything under the Role's own prefix, **or**
+an exact match on a surface that Role's own nav links to). **The generalizable rule: derive
+cross-prefix route reachability from the nav config rather than keeping a second hand-maintained
+list** — that makes a nav entry a Role cannot open unrepresentable. Note the converse does *not*
+hold and deliberately so: the prefix clause grants a Role's own subtree whether or not the nav links
+to it, which is what lets detail routes like `/waiter/tables/:tableId` work without their own entry.
+A second review round caught two bugs in the first version of this fix: prefix matching that ignored
+segment boundaries (so `/admin` would also match a future `/administration`), and a `startsWith` on
+nav paths that silently handed Admin `/warehouse/ingredients/:ingredientId`, Story 4.3's surface. The
+nav clause is now an exact match and the prefix clause is segment-aware. The check remains a
+navigation affordance, never a security boundary (trap 14). **Story 1.4's AC2 was amended by
+correct-course in the same story** (`epics.md`, `EXPERIENCE.md`): it had read "no cross-role
+navigation anywhere", keying the rule to URL shape, when the intent was always authorization —
+a Waiter must never see Admin tools. Other review patches: a submit handler must
+re-check its *full* predicate rather than trusting the disabled button (Enter submits a form
+regardless, and the checks both handlers had omitted were exactly the ones guarding a blank name and
+a duplicate in-flight request); an inline reveal nested inside another form needs its own Enter
+handling or the outer form's implicit submit steals it; and a mutation whose caller immediately
+selects the created row should seed the cache in `onSuccess` before invalidating, since invalidation
+only *schedules* a refetch. Suites are now **213 backend and 90 frontend tests**.
 
 Last Updated: 2026-08-13

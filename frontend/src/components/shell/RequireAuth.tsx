@@ -7,7 +7,7 @@ import { useCurrentUser } from "../../services/authService";
 import { ApiError } from "../../services/httpClient";
 import { AppShell } from "./AppShell";
 import { AppShellSkeleton } from "./AppShellSkeleton";
-import { ROLE_HOME_PATH, ROLE_PATH_PREFIX } from "./navigationConfig";
+import { canRoleVisit, ROLE_HOME_PATH } from "./navigationConfig";
 import { RealtimeProvider } from "./RealtimeProvider";
 
 /**
@@ -21,8 +21,10 @@ import { RealtimeProvider } from "./RealtimeProvider";
  * cold-load skeleton (AC6); if it failed for any reason other than a rejected
  * session, offer a retry rather than signing the User out; if the session
  * itself is invalid, redirect to Login (AC1); otherwise redirect "/" and any
- * URL outside the User's own Role prefix to that Role's home surface, and
- * render the app shell for everything else (AC2).
+ * URL the Role cannot visit to that Role's home surface, and render the app
+ * shell for everything else (AC2). What a Role can visit is canRoleVisit's
+ * call, derived from navigationConfig so a nav entry and its reachability
+ * cannot drift apart.
  *
  * The Role prefix check is a navigation affordance, not a security boundary,
  * the backend's require_role is the only real enforcement.
@@ -65,9 +67,8 @@ export function RequireAuth() {
   }
 
   const homePath = ROLE_HOME_PATH[user.role];
-  const isWithinOwnRole = location.pathname.startsWith(ROLE_PATH_PREFIX[user.role]);
 
-  if (location.pathname === "/" || !isWithinOwnRole) {
+  if (location.pathname === "/" || !canRoleVisit(user.role, location.pathname)) {
     return <Navigate to={homePath} replace />;
   }
 

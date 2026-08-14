@@ -44,7 +44,7 @@ Content density is dense throughout: tables and lists over cards-with-whitespace
 | **Admin:** Users | Nav | Create (incl. initial password) / edit role / reset password / deactivate / reactivate staff | [key-users.html](mockups/key-users.html) |
 | **Admin:** Tables setup | Nav | Add physical tables; edit number/capacity while a table is available (no delete in v1) | [key-tables-setup.html](mockups/key-tables-setup.html) |
 
-Every Waiter sees every Table and every Order (no per-waiter filtering, per FR-6/AD-9); every Cook sees every Chat Session and Recipe Suggestion, with the current Cook's own items sorted first as a display default, not an access boundary (AD-10). There is no cross-role navigation: each role's nav only lists that role's own surfaces, plus the shared Login entry point.
+Every Waiter sees every Table and every Order (no per-waiter filtering, per FR-6/AD-9); every Cook sees every Chat Session and Recipe Suggestion, with the current Cook's own items sorted first as a display default, not an access boundary (AD-10). Each role's nav only lists surfaces that role is authorized for, plus the shared Login entry point, so a role never sees another role's tools. (Amended 2026-08-13, correct-course from Story 2.6's code review: this read "there is no cross-role navigation: each role's nav only lists that role's own surfaces." Keying the rule to the URL prefix contradicted Story 2.6's AC4, since the backend has authorized Admin for Ingredient creation since Story 2.1. The boundary is authorization, not URL shape. Admin's Ingredients entry is the only prefix-crossing entry today.)
 
 ## Voice and Tone
 

@@ -314,7 +314,9 @@ So that every screen built in later epics has somewhere to live and I never see 
 
 **Given** a logged-in User of any Role
 **When** the shell renders
-**Then** the nav lists only that Role's own surfaces, with no cross-role navigation anywhere, and login lands them on their Role's home surface — Waiter→Tables, Cook→Kitchen Display, Warehouse Manager→Ingredients, Admin→Menu Management (FR-2, UX-DR19)
+**Then** the nav lists only surfaces that Role is authorized for, never another Role's tools, and login lands them on their Role's home surface — Waiter→Tables, Cook→Kitchen Display, Warehouse Manager→Ingredients, Admin→Menu Management (FR-2, UX-DR19)
+
+> **Amended 2026-08-13 (correct-course, from Story 2.6's code review).** This AC originally read "the nav lists only that Role's own surfaces, with no cross-role navigation anywhere." That wording keyed the rule to the URL prefix, which turned out to contradict Story 2.6's AC4: `POST /api/inventory/ingredients` has permitted `admin` alongside `warehouse_manager` since Story 2.1 (`InventoryWriteDep`), so gating the nav on the prefix left the backend's grant unreachable from the UI for one of the two Roles it names. The rule's *intent* was always that a Waiter must never see Admin tools, which is an authorization boundary, not a URL-shape one. Reworded to say that. The only entry crossing a prefix today is Admin's Ingredients; route reachability is derived from `ROLE_NAV_ITEMS` via `canRoleVisit()` so a nav entry a Role cannot open stays unrepresentable.
 
 **Given** the Login screen
 **When** it renders

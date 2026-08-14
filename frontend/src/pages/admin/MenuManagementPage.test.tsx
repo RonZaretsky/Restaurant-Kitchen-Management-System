@@ -280,4 +280,232 @@ describe("MenuManagementPage", () => {
     expect(await screen.findByText(/Could not load the menu/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
+
+  it("creates a dish and clears the form", async () => {
+    // Arrange: the mock's own state tracks created dishes, so the GET issued
+    // after the POST's cache invalidation reflects the addition.
+    let dishes: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
+      const path = String(url);
+      if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
+      if (path.includes("/api/menu/dishes") && init.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        const created = {
+          id: 99,
+          name: body.name,
+          description: body.description ?? null,
+          price: body.price,
+          category_id: body.category_id,
+          is_available: false,
+          prep_time_minutes: body.prep_time_minutes ?? null,
+          created_at: "2026-01-01T00:00:00Z",
+        };
+        dishes = [...dishes, created];
+        return Promise.resolve(jsonResponse(201, created));
+      }
+      if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, dishes));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("No dishes yet.");
+    await user.type(screen.getByLabelText("Dish name"), "Calzone");
+    await user.type(screen.getByLabelText("Price"), "9.50");
+    await user.click(screen.getByRole("combobox", { name: "Category" }));
+    await user.click(await screen.findByRole("option", { name: "Pizza" }));
+    await user.click(screen.getByRole("button", { name: "+ New dish" }));
+
+    // Assert: the dish appears, the form clears, and the exact payload sent
+    // omits the fields left blank rather than sending null/NaN for them.
+    expect(await screen.findByText("Calzone")).toBeInTheDocument();
+    // Every field the success handler clears, not just the first one: any of
+    // them silently ceasing to reset would otherwise go unnoticed.
+    expect(screen.getByLabelText("Dish name")).toHaveValue("");
+    expect(screen.getByLabelText("Description")).toHaveValue("");
+    expect(screen.getByLabelText("Price")).toHaveValue("");
+    expect(screen.getByLabelText("Prep time (minutes)")).toHaveValue("");
+    // MUI renders a zero-width-space placeholder in an empty select, so assert
+    // the previously chosen label is gone rather than that the node is empty.
+    expect(screen.getByRole("combobox", { name: "Category" })).not.toHaveTextContent("Pizza");
+    const post = fetchMock.mock.calls.find(
+      ([reqUrl, reqInit]) =>
+        String(reqUrl).includes("/api/menu/dishes") && (reqInit as RequestInit)?.method === "POST",
+    );
+    expect(post).toBeDefined();
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({
+      name: "Calzone",
+      price: "9.50",
+      category_id: 1,
+    });
+  });
+
+  it("surfaces a rejected dish submission inline with the backend's exact message (AC3)", async () => {
+    // Arrange: the category-rejection half was covered but the dish half was
+    // not, leaving createDishMutation's own Alert branch unverified.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
+        if (path.includes("/api/menu/dishes") && init.method === "POST") {
+          return Promise.resolve(jsonResponse(404, { detail: "Category not found" }));
+        }
+        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.reject(new Error(`unexpected request: ${path}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("No dishes yet.");
+    await user.type(screen.getByLabelText("Dish name"), "Orphan");
+    await user.type(screen.getByLabelText("Price"), "5.00");
+    await user.click(screen.getByRole("combobox", { name: "Category" }));
+    await user.click(await screen.findByRole("option", { name: "Pizza" }));
+    await user.click(screen.getByRole("button", { name: "+ New dish" }));
+
+    // Assert: the backend's literal string, unrewritten (UX-DR17), and the
+    // typed values are preserved so the Admin can correct and resubmit.
+    expect(await screen.findByText("Category not found")).toBeInTheDocument();
+    expect(screen.getByLabelText("Dish name")).toHaveValue("Orphan");
+  });
+
+  it("confirms the category on Enter instead of submitting the dish form", async () => {
+    // Arrange: the reveal renders inside the dish form, so an unguarded Enter
+    // would fire the form's implicit submit and discard the typed category.
+    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
+      const path = String(url);
+      if (path.includes("/api/menu/categories") && init.method === "POST") {
+        return Promise.resolve(jsonResponse(201, { id: 2, name: "Desserts" }));
+      }
+      if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
+      if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act: fill the dish form fully first, so the dish form would be submittable
+    // were it not for the open reveal.
+    renderPage();
+    await screen.findByText("No dishes yet.");
+    await user.type(screen.getByLabelText("Dish name"), "Tiramisu");
+    await user.type(screen.getByLabelText("Price"), "7.00");
+    await user.click(screen.getByRole("combobox", { name: "Category" }));
+    await user.click(await screen.findByRole("option", { name: "Pizza" }));
+    await user.click(screen.getByRole("button", { name: "+ New category" }));
+    await user.type(screen.getByLabelText("New category name"), "Desserts{Enter}");
+
+    // Assert: the Category POST goes out and no Dish POST ever does.
+    await waitFor(() => {
+      const categoryPost = fetchMock.mock.calls.find(
+        ([reqUrl, reqInit]) =>
+          String(reqUrl).includes("/api/menu/categories") && (reqInit as RequestInit)?.method === "POST",
+      );
+      expect(categoryPost).toBeDefined();
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([reqUrl, reqInit]) =>
+          String(reqUrl).includes("/api/menu/dishes") && (reqInit as RequestInit)?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("surfaces the exact 409 message on a duplicate category name, without closing the reveal", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/api/menu/categories") && init.method === "POST") {
+          return Promise.resolve(jsonResponse(409, { detail: "That category name already exists" }));
+        }
+        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
+        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.reject(new Error(`unexpected request: ${path}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("No dishes yet.");
+    await user.click(screen.getByRole("button", { name: "+ New category" }));
+    await user.type(screen.getByLabelText("New category name"), "Pizza");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    // Assert: the backend's literal string, unrewritten, and the reveal stays open.
+    expect(await screen.findByText("That category name already exists")).toBeInTheDocument();
+    expect(screen.getByLabelText("New category name")).toBeInTheDocument();
+  });
+
+  it("creates a category inline and selects it in the dish form", async () => {
+    // Arrange
+    let categories: Array<{ id: number; name: string }> = [CATEGORY];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/api/menu/categories") && init.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          const created = { id: 2, name: body.name };
+          categories = [...categories, created];
+          return Promise.resolve(jsonResponse(201, created));
+        }
+        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, categories));
+        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.reject(new Error(`unexpected request: ${path}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("No dishes yet.");
+    await user.click(screen.getByRole("button", { name: "+ New category" }));
+    await user.type(screen.getByLabelText("New category name"), "Desserts");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    // Assert: the reveal closes and the Category picker shows the new
+    // Category selected, using the mutation's own response, not a refetch.
+    await waitFor(() => {
+      expect(screen.queryByLabelText("New category name")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("combobox", { name: "Category" })).toHaveTextContent("Desserts");
+  });
+
+  it("combines loading/error across dishes and categories, and Retry refetches both", async () => {
+    // Arrange: categories fails while dishes succeeds. Written, then verified by
+    // temporarily reverting Task 1's OR-fix and confirming this fails, before
+    // trusting it (the exact regression this test exists to catch).
+    const fetchMock = vi.fn((url: string) => {
+      const path = String(url);
+      if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(500, { detail: "Server error" }));
+      if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, [DISH]));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+
+    // Assert: a categories-only failure still surfaces an error, and the dish
+    // list (which did succeed) is not silently rendered anyway.
+    expect(await screen.findByText(/Could not load the menu/)).toBeInTheDocument();
+    expect(screen.queryByText("Margherita")).not.toBeInTheDocument();
+
+    const callsBeforeRetry = fetchMock.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBeforeRetry));
+    const pathsAfterRetry = fetchMock.mock.calls.slice(callsBeforeRetry).map(([reqUrl]) => String(reqUrl));
+    expect(pathsAfterRetry.some((path) => path.includes("/api/menu/categories"))).toBe(true);
+    expect(pathsAfterRetry.some((path) => path.includes("/api/menu/dishes"))).toBe(true);
+  });
 });
