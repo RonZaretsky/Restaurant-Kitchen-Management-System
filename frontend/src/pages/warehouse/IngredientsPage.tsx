@@ -94,7 +94,7 @@ export function IngredientsPage() {
     // Re-checks the full predicate rather than a subset. A disabled button is
     // not authoritative: Enter submits a form regardless, so anything missing
     // here is a request that ships with a blank name or duplicates in flight.
-    if (!canSubmit || unit === "" || parsedThreshold === null) {
+    if (!canSubmit || !unit || parsedThreshold === null) {
       return;
     }
     createMutation.mutate(

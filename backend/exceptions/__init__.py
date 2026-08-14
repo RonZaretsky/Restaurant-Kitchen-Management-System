@@ -188,6 +188,20 @@ class TableNotFoundError(NotFoundError):
     detail = "Table not found"
 
 
+class TableNotAvailableError(ConflictError):
+    """Raised when opening a Table that is not currently available (AC2).
+
+    Distinct from TableInUseError (Story 2.4), which is specifically about an
+    Admin's edit attempt; this is about a Waiter's open attempt. Covers both
+    an already-occupied/reserved Table and the race where a second Waiter
+    opens the same Table between this request's read and write, the guarded
+    UPDATE cannot tell those apart, and both use the same detail, mirroring
+    TableInUseError's own precedent.
+    """
+
+    detail = "Rejected, table not available"
+
+
 class UnitMismatchError(ConflictError):
     """Raised when a Recipe Ingredient line's unit differs from its Ingredient's own unit.
 
