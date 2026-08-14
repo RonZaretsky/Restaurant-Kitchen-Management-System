@@ -312,6 +312,73 @@ async def test_me_rejects_an_expired_session_cookie(
 
 
 @pytest.mark.asyncio
+async def test_logout_clears_the_session_cookie(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _create_user(db_session, username="waiter_logout")
+    await client.post("/api/auth/login", json={"username": "waiter_logout", "password": _PASSWORD})
+
+    # Act
+    response = await client.post("/api/auth/logout")
+
+    # Assert
+    assert response.status_code == 204
+    set_cookie = response.headers["set-cookie"]
+    assert f"{COOKIE_NAME}=" in set_cookie
+    assert "Max-Age=0" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "Secure" in set_cookie
+    assert "SameSite=lax" in set_cookie
+
+
+@pytest.mark.asyncio
+async def test_logout_actually_ends_the_session(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _create_user(db_session, username="waiter_logout_ends")
+    await client.post(
+        "/api/auth/login", json={"username": "waiter_logout_ends", "password": _PASSWORD}
+    )
+    await client.post("/api/auth/logout")
+
+    # Act
+    response = await client.get("/api/auth/me")
+
+    # Assert
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_logout_with_no_session_still_succeeds(client: AsyncClient) -> None:
+    # Act
+    response = await client.post("/api/auth/logout")
+
+    # Assert
+    assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_logout_with_an_expired_session_cookie_still_succeeds(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    # A naive implementation gated on CurrentUserDep would 401 here, the exact
+    # case a User clicking Sign Out on a lapsed tab needs to still work (AC5).
+    user = await _create_user(db_session, username="waiter_logout_expired")
+    secret_key = load_config(SETTINGS.CONFIG_PATH)["auth"]["secret_key"]
+    expired_token = jwt.encode(
+        {"sub": str(user.id), "exp": datetime.now(timezone.utc) - timedelta(hours=1)},
+        secret_key,
+        algorithm="HS256",
+    )
+    client.cookies.set(COOKIE_NAME, expired_token)
+
+    # Act
+    response = await client.post("/api/auth/logout")
+
+    # Assert
+    assert response.status_code == 204
+
+
+@pytest.mark.asyncio
 async def test_service_rejects_a_nonsense_expiry_setting() -> None:
     # Act / Assert
     # Config values arrive as raw strings, so a typo must fail loudly at construction

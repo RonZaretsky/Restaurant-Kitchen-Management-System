@@ -410,3 +410,22 @@
   Story 3.1's own scope note. **Action:** the table detail page (Story 3.2/3.3+) will need to
   resolve these ids into something displayable — decide there whether that's a join in the
   response or a separate lookup.
+
+## Deferred from: code review of story-1-7 (2026-08-14)
+
+- **The logout route logs nothing** (`backend/api/auth.py`, `logout`) — no INFO entry, no identifying
+  context. Every other route in this file delegates logging to its service; `logout` has none and
+  never decodes the cookie, so there is no user identity available to log without adding a
+  service/logger dependency solely for this one line. **Action:** if an audit-trail requirement for
+  sign-outs emerges, add a minimal `AuthService` method just for the log line, or inject the logger
+  directly into the route.
+- **Logout is unauthenticated by design (AC5), so a cross-site top-level form navigation could
+  theoretically force a signed-in User's session to clear.** `SameSite=lax` already blocks the
+  practical cross-site `fetch`/XHR case; the worst realistic consequence is a forced sign-out
+  nuisance, not data exposure or privilege escalation. **Action:** if this ever needs closing, add an
+  Origin/Referer check to the logout route specifically.
+- **No cross-tab session sync** — logging out in one browser tab doesn't signal other open tabs of
+  the same session, which keep rendering the authenticated shell until their own next request 401s.
+  No AC requires this; NFR-5's "concurrent terminals" describes separate devices, not same-browser
+  tabs. **Action:** if this becomes a real complaint, a `BroadcastChannel` or `storage` event listener
+  in `authService.ts` would close it.

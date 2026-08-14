@@ -88,3 +88,23 @@ export function useLogin(): UseMutationResult<LoginResponse, Error, LoginPayload
     onSuccess: () => queryClient.invalidateQueries({ queryKey: CURRENT_USER_QUERY_KEY }),
   });
 }
+
+/**
+ * Logs the current User out.
+ *
+ * Invalidates the current-user query on success, the mirror image of
+ * useLogin's invalidation. RequireAuth already redirects to /login the
+ * moment useCurrentUser() re-reads as a rejected (401) session, so no
+ * separate navigate() call is needed here, this reuses the exact redirect
+ * path an expired session already takes, rather than a second, parallel one.
+ *
+ * @returns The TanStack Query mutation for logging out.
+ */
+export function useLogout(): UseMutationResult<void, Error, void> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => apiRequest<void>("/api/auth/logout", { method: "POST" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CURRENT_USER_QUERY_KEY }),
+  });
+}

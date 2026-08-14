@@ -66,6 +66,30 @@ async def login(
     return LoginResponse(role=user.role)
 
 
+@router.post("/logout", status_code=204)
+async def logout(response: Response) -> None:
+    """End the caller's session by clearing the session cookie (FR-26).
+
+    Always succeeds, regardless of whether the presented cookie (if any) is
+    still valid, logout is idempotent by design. v1 has no server-side token
+    revocation store (AD-3), so this clears the client's cookie only; a
+    token copied out beforehand stays valid until its natural expiry if
+    replayed elsewhere.
+
+    Args:
+        response: Used to clear the session cookie.
+
+    Returns:
+        Nothing (204 No Content).
+    """
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+    )
+
+
 @router.get(
     "/me",
     response_model=UserResponse,
