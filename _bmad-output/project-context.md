@@ -156,20 +156,22 @@ frontend/src/
                         subscribe(event, handler) for later stories to consume push events),
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
                         ROLE_PATH_PREFIX, the single source of truth the nav and the guard both read)
-  pages/{role}/           placeholder components for the 10 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Three are now real:
+  pages/{role}/           placeholder components for the 9 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Four are now real:
                         admin/MenuManagementPage.tsx (Story 2.3), admin/TablesSetupPage.tsx
-                        (Story 2.4), and cook/DishesPage.tsx (Story 2.5, strictly read-only, groups
+                        (Story 2.4), cook/DishesPage.tsx (Story 2.5, strictly read-only, groups
                         every Dish by Category, resolves Recipe Ingredient lines to names via
-                        useIngredients()), each with its own *.test.tsx alongside
+                        useIngredients()), and admin/UsersPage.tsx (Story 1.6, create/edit/
+                        deactivate/reactivate/reset-password against Story 1.3's existing
+                        endpoints, zero backend changes), each with its own *.test.tsx alongside
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
 
 No state management library beyond TanStack Query for server state and React Context/`useState` for
 local UI state (theme mode, connection status), matching AD-13. `services/` is now organized
-per-domain (`authService`, `menuService`, `inventoryService`, `tableService`), the same way the
-backend's `services/` is; later stories add one file per domain.
+per-domain (`authService`, `menuService`, `inventoryService`, `tableService`, `userService`), the
+same way the backend's `services/` is; later stories add one file per domain.
 
 **The shape every new domain screen should copy** (established by 2.3, corrected by 2.4's review):
 
@@ -691,7 +693,7 @@ from `frontend/`.
   mechanism directly (a focused probe) rather than assuming coverage.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **213 tests**, frontend **76 tests** (as of Story 2.5).
+Backend suite is now **213 tests**, frontend **93 tests** (as of Story 1.6).
 
 ---
 
@@ -868,5 +870,18 @@ forms the UX mockup shows.** Traced through Stories 2.2 and 2.3, confirmed via e
 across all 6 epics, logged as a genuine planning gap in `deferred-work.md` and in Domain rules
 above, not fixed here (out of this story's scope). Suites are now **213 backend and 76 frontend
 tests**.
+
+**2026-08-13 patch (Story 1.6, Manage User Accounts from the Admin UI):** Zero backend changes —
+Story 1.3 already built and tested every endpoint this story needed; only `admin/UsersPage.tsx`
+(the fourth real domain screen, replacing its placeholder) and the new `services/userService.ts`
+landed. `types/user.ts`'s existing `CurrentUser` (built for `GET /api/auth/me` in Story 1.1) was
+reused as the list-row type rather than duplicated, since its shape already matched
+`UserResponse` byte for byte — worth checking `types/` for an existing match before adding a new
+type on any future story that wires a screen to an already-shipped endpoint. Resolves the
+`deferred-work.md` item on self-deactivation (Story 1.3's review): the signed-in Admin's own row
+now shows "This is you" in place of Deactivate, matching `key-users.html` exactly, going one step
+further than the confirmation-step fix that item suggested. AD-15's last-Admin lockout was already
+enforced server-side; this story only renders its existing 409 inline. Suites are now **213
+backend and 93 frontend tests**.
 
 Last Updated: 2026-08-13
