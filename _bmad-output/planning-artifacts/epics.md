@@ -314,7 +314,9 @@ So that every screen built in later epics has somewhere to live and I never see 
 
 **Given** a logged-in User of any Role
 **When** the shell renders
-**Then** the nav lists only that Role's own surfaces, with no cross-role navigation anywhere, and login lands them on their Role's home surface — Waiter→Tables, Cook→Kitchen Display, Warehouse Manager→Ingredients, Admin→Menu Management (FR-2, UX-DR19)
+**Then** the nav lists only surfaces that Role is authorized for, never another Role's tools, and login lands them on their Role's home surface — Waiter→Tables, Cook→Kitchen Display, Warehouse Manager→Ingredients, Admin→Menu Management (FR-2, UX-DR19)
+
+> **Amended 2026-08-13 (correct-course, from Story 2.6's code review).** This AC originally read "the nav lists only that Role's own surfaces, with no cross-role navigation anywhere." That wording keyed the rule to the URL prefix, which turned out to contradict Story 2.6's AC4: `POST /api/inventory/ingredients` has permitted `admin` alongside `warehouse_manager` since Story 2.1 (`InventoryWriteDep`), so gating the nav on the prefix left the backend's grant unreachable from the UI for one of the two Roles it names. The rule's *intent* was always that a Waiter must never see Admin tools, which is an authorization boundary, not a URL-shape one. Reworded to say that. The only entry crossing a prefix today is Admin's Ingredients; route reachability is derived from `ROLE_NAV_ITEMS` via `canRoleVisit()` so a nav entry a Role cannot open stays unrepresentable.
 
 **Given** the Login screen
 **When** it renders
@@ -375,6 +377,56 @@ the naming convention it fixes has to exist before any of them are written again
 **Given** the connection drops
 **When** the client detects it
 **Then** it drives Story 1.4's shared "Reconnecting..." state and retries automatically, with no local-first write queue (UX-DR16)
+
+### Story 1.6: Manage User Accounts from the Admin UI
+
+As an Admin,
+I want to create, edit, deactivate, and reactivate User accounts, and reset a User's password, from the Users screen,
+So that I can manage staff access without calling the API directly.
+
+**Scope note.** Story 1.3 built every endpoint this story needs (`POST/PATCH /api/admin/users`,
+`/deactivate`, `/reactivate`, `/reset-password`) and explicitly deferred the Users screen itself
+("Deferred by design, see Scope note above. No frontend code ships in this story."); Story 1.4
+built the shell around it but left it as a placeholder, noting the screen was "still unassigned."
+This story closes that gap. No new backend endpoint or schema is needed.
+
+**Acceptance Criteria:**
+
+**Given** a full name, username, Role, and initial password
+**When** an Admin submits the "+ New user" form
+**Then** a new User account is created via the existing `POST /api/admin/users` endpoint and appears in the Users list immediately (FR-3)
+
+**Given** a username that already exists (active or deactivated, matched case-insensitively)
+**When** creation is attempted
+**Then** it is rejected inline with the backend's exact message, "That username already exists" (FR-3, UX-DR17)
+
+**Given** an existing User
+**When** an Admin clicks Edit
+**Then** they can update full name and Role, saved via the existing `PATCH` endpoint (FR-3)
+
+**Given** an active User who is not the last active Admin
+**When** an Admin clicks Deactivate
+**Then** the User is deactivated via the existing endpoint and its Status chip updates to Inactive (FR-3)
+
+**Given** the last remaining active Admin account
+**When** deactivation of it, or a Role change away from Admin, is attempted
+**Then** it is rejected inline, "Rejected, at least one admin must stay active" (FR-3, AD-15, UX-DR17)
+
+**Given** the signed-in Admin's own row
+**When** the Users list renders
+**Then** it shows "This is you" in place of a Deactivate control, so self-deactivation is never reachable from this screen (FR-3, AD-15, matches `key-users.html`)
+
+**Given** a deactivated User
+**When** an Admin clicks Reactivate
+**Then** the User becomes Active again via the existing endpoint (FR-3)
+
+**Given** any User row
+**When** an Admin resets that User's password
+**Then** a new password is set via the existing reset-password endpoint, never displaying or requiring the previous one (FR-3)
+
+**Given** the Users screen
+**When** it renders
+**Then** it matches the UX mock (`key-users.html`) with dense-row list styling and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, UX-DR19, UX-DR21)
 
 ## Epic 2: Menu, Recipes, Ingredients & Table Setup
 
@@ -515,6 +567,49 @@ So that I can see how to prepare something without asking an Admin or leaving th
 **Given** an Admin changes a Dish's recipe or availability (Stories 2.2/2.3)
 **When** a Cook next loads the Dishes surface
 **Then** they see the current definition, never a stale copy (FR-25, FR-23)
+
+### Story 2.6: Create Menu Categories, Dishes, and Ingredients from the Admin UI
+
+As an Admin (and Warehouse Manager for Ingredients),
+I want to create Menu Categories, Dishes, and Ingredients from their own screens,
+So that menu and inventory setup doesn't require calling the API directly.
+
+**Scope note.** Stories 2.1 and 2.2 both deliberately shipped backend-only, each explicitly
+deferring its create form to a later story that was never scheduled (`MenuManagementPage.tsx`'s
+own comment: "Category/Dish creation forms are deliberately out of scope... this screen's
+remaining CRUD ships in a later story"; `IngredientsPage.tsx` is still a bare placeholder). This
+story closes both gaps. No new backend endpoint or schema is needed for the dish/category half
+(`POST /api/menu/categories`, `POST /api/menu/dishes`) or the ingredient half
+(`POST /api/inventory/ingredients`). The Ingredients screen needs a minimal list alongside the
+create form so a created row is visible at all — full stock-level display (threshold sort,
+below-threshold highlighting, detail drill-down) stays Story 4.3's scope; this story's list is
+limited to what proves creation worked.
+
+**Acceptance Criteria:**
+
+**Given** the Menu Management screen
+**When** an Admin clicks "+ New dish"
+**Then** a form collects name, description, price, category, and prep time, and creates the Dish via the existing `POST /api/menu/dishes` endpoint, starting unavailable per AD-8 (FR-22)
+
+**Given** an Admin creating or editing a Dish needs a Menu Category that doesn't exist yet
+**When** they use the form's category control
+**Then** they can create a new Menu Category via the existing `POST /api/menu/categories` endpoint without leaving the flow (FR-22)
+
+**Given** a duplicate category name, or a dish submitted with invalid data
+**When** the form is submitted
+**Then** it is rejected inline, matching the existing 409/422 contract (FR-22, UX-DR17)
+
+**Given** the Ingredients screen
+**When** a Warehouse Manager or Admin clicks "Add ingredient"
+**Then** a form collects name, unit of measure, minimum stock threshold, and optional initial stock, and creates the Ingredient via the existing `POST /api/inventory/ingredients` endpoint (FR-16)
+
+**Given** a duplicate ingredient name
+**When** creation is attempted
+**Then** it is rejected inline (FR-16, UX-DR17)
+
+**Given** no ingredients exist yet
+**When** the Ingredients screen loads
+**Then** it shows "No ingredients recorded yet" instead of the current blank placeholder (UX-DR15)
 
 ## Epic 3: Table Service & Order Taking
 

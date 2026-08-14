@@ -69,15 +69,23 @@
   `select(User).order_by(User.id)` with no limit, offset, or `is_active` filter. Fine for a
   restaurant's staff list. Flagged because this endpoint is on the critical path for every admin
   screen (per Story 1.3's scope note it is the only way the UI discovers user ids), and adding a
-  cursor later is a breaking response-shape change. Best decided when Story 1.4 builds the Users
-  screen and the actual pagination need is known.
-- **An Admin can deactivate their own account** — `backend/services/user_service.py:162-171` never
-  compares `user_id` to `actor.id`. Verified: with a second admin present, self-deactivation
-  returns 200 and the very next request on that session returns 401. AD-15 still holds (it only
-  permits this when another active Admin remains) and no AC forbids it, so this is arguably correct
-  behavior rather than a defect. But a misclick on the wrong row is unrecoverable for that Admin,
-  and it is only truly safe if someone actually holds the other Admin account's password. Better
-  addressed as a confirmation step in Story 1.4's Users screen than as a service-layer block.
+  cursor later is a breaking response-shape change. **Still open**: Story 1.6 (not 1.4, which only
+  built the shell/placeholder) is the one that actually built the Users screen against this
+  endpoint, and deliberately added no pagination — same call this item already made ("fine for a
+  restaurant's staff list"). Revisit if the roster ever grows past what one page can show.
+- ~~**An Admin can deactivate their own account**~~ — **RESOLVED by Story 1.6 (2026-08-13),
+  which built the Users screen this item was waiting on.** The signed-in Admin's own row shows
+  "This is you" in place of a Deactivate control (matching `key-users.html`), and the control is
+  withheld from *every* row while the signed-in identity is unknown, so the guard fails closed.
+  Deactivating *another* User is additionally gated behind an in-row "Deactivate {name}?"
+  confirmation, which is the confirmation step this item originally asked for. The backend is
+  untouched (AD-15's last-Admin guard was always the real backstop); this closes the UX gap on top
+  of it. **Scope note, corrected during Story 1.6's code review:** this covers self-*deactivation*
+  only. Self-*demotion* (an Admin changing their own Role away from `admin` via Edit) is still
+  reachable and is not blocked, by design — AD-15 permits it whenever another active Admin remains,
+  and the backend rejects it otherwise. Story 1.6 does make it non-silent: every mutation now
+  invalidates `CURRENT_USER_QUERY_KEY`, so the app shell re-reads the demoted Role immediately
+  instead of continuing to render Admin nav against a stale profile.
 - **The test suite has no isolation against concurrent runs, and this review proved it empirically**
   — during this review three Opus subagents ran `uv run pytest` simultaneously; one observed a
   251-second run with 3 spurious failures (`InvalidRequestError: Could not refresh instance`) in
@@ -266,6 +274,15 @@
 
 ## Deferred from: dev-story of story-2.5 (2026-08-13)
 
+- **RESOLVED by Story 2.6 (2026-08-13), for the creation-form gap this entry describes.**
+  `MenuManagementPage.tsx` now has an always-visible "+ New dish" form with an inline "+ New
+  category" reveal on its Category picker, and `IngredientsPage.tsx` (previously a bare placeholder)
+  now has its own "Add ingredient" form. No backend change was needed, exactly as this entry
+  predicted. This story's code review also surfaced a separate, pre-existing gap the original entry
+  never mentioned — an Admin could not navigate to the Ingredients screen at all, despite
+  `InventoryWriteDep` having permitted Admin since Story 2.1 — and that **was** fixed here too, by
+  deriving route reachability from `ROLE_NAV_ITEMS` via `canRoleVisit()`. Original entry kept below
+  for context.
 - **No story anywhere in the plan builds the Category/Dish creation forms the UX mockup shows.**
   `key-menu-management.html` (the UX designer's mockup for `MenuManagementPage`) explicitly shows a
   "+ New dish" button, and an equivalent affordance for creating a Menu Category. Neither exists in
@@ -284,3 +301,86 @@
   forms to `MenuManagementPage.tsx`, matching `key-menu-management.html`'s "+ New dish" affordance
   and its Category-creation equivalent. Until that story exists, an Admin can only create a Category
   or Dish via a direct API call.
+
+## Deferred from: code review of story-1.6 (2026-08-13)
+
+- **`errorMessage` is now copy-pasted verbatim into a fifth file, and its fallback branch is dead
+  code.** `frontend/src/pages/admin/UsersPage.tsx:48-53` is byte-identical to
+  `TablesSetupPage.tsx:29-34`, with near-identical twins in `DishesPage.tsx`, `DishRecipeEditor.tsx`
+  and the same literal in `LoginPage.tsx`. Separately, its `error instanceof ApiError` fallback
+  ("Something went wrong. Try again.") is **unreachable**: `httpClient.apiRequest` throws `ApiError`
+  on every failure path including network failure and timeout, so the non-ApiError branch can never
+  execute. **Action:** lift one shared `errorMessage` next to `ApiError` in `httpClient.ts` and
+  delete the five copies. Worth doing on whichever story next touches two or more of those files;
+  doing it here would have put five unrelated screens in this story's diff.
+- **A sixth hand-rolled `jsonResponse` test helper copy.** `UsersPage.test.tsx:54-62` joins the
+  copies in `TablesSetupPage.test.tsx`, `MenuManagementPage.test.tsx`, `appIntegration.test.tsx`,
+  and `cook/DishesPage.test.tsx`. Same item Story 2.4's review already recorded (then at three);
+  Story 1.6's own spec explicitly marked lifting it non-blocking for this story. All copies still
+  supply only `ok`/`status`/`text`/`json`, so a future 204 path, header read, or `response.clone()`
+  fails with an obscure "not a function" rather than a meaningful assertion. **Action:** lift one
+  shared test helper; the count now justifies it more than it did at three.
+- **Inline row editors do not submit on Enter.** `UsersPage.tsx`'s edit and password panels are
+  plain `Box`es, not `<form>`s, so Enter does nothing after typing, while the create form on the
+  same screen does submit on Enter. Pre-existing shape inherited from `TablesSetupPage`'s
+  `TableListRow`, but Story 1.6 is the first screen where both behaviors are visible side by side,
+  which is what makes the inconsistency noticeable. **Action:** wrap both inline panels in
+  `<Box component="form" onSubmit=...>` when either file is next touched; fix both screens together
+  so they do not diverge further.
+- **No client-side guard on the password's 72-byte bcrypt limit.** `backend/data_models/user.py`
+  enforces the limit in **UTF-8 bytes**, not characters, so a Hebrew or otherwise multibyte password
+  is rejected at roughly 36 characters with a raw Pydantic message. Story 1.6's spec explicitly
+  scoped this out ("do not add client-side password-length validation beyond non-empty... risks
+  disagreeing with the server's UTF-8-byte-based count"), and that reasoning still holds for a naive
+  character-count check. **Action:** if this ever bites a real user, the correct fix is
+  `new TextEncoder().encode(password).length <= 72`, which agrees with the server exactly rather
+  than approximating it. Relevant to this project specifically, since the team and likely users are
+  Hebrew-speaking.
+- **No seed script or bootstrap command for a first Admin account.** A fresh `docker compose up`
+  produces an empty `users` table, and every route on the Users screen requires an authenticated
+  Admin, so there is no way to reach the running app at all without hand-inserting a row. Verifying
+  Story 1.6 manually meant hashing a password with `uv run python -c "...AuthService.hash_password"`
+  inside the backend container, then `INSERT`ing via `psql`. This is why Story 1.6's first pass
+  shipped with no live browser check. **Action:** add a small idempotent bootstrap (an Alembic data
+  migration, a `python -m scripts.seed_admin` command, or a first-run "create the first Admin" path)
+  so a fresh clone is reachable. Worth doing before the project is demonstrated or handed in, since
+  a grader cloning the repo currently cannot log in.
+
+## Deferred from: code review of story-2.6 (2026-08-13)
+
+- **FIXED, not deferred: `appIntegration.test.tsx`'s "lands on Kitchen Display" test was
+  load-sensitive.** It failed with `Test timed out in 5000ms` in two of three full-suite runs while
+  passing every time in isolation, with no code change in between. The test types two fields through
+  `userEvent`, waits on a deliberately `delayed()` `/api/auth/me`, and drives the whole router, all
+  inside Vitest's default 5s budget. Story 2.6's route-guard change is not the cause (this test's
+  Cook path is granted by the prefix clause, which kept its subtree semantics), but the story grew
+  the suite by 18 tests, and the extra parallel contention is what brought it over the line — which
+  makes it this story's to fix rather than log. Given an explicit 20s timeout; assertions unchanged.
+  Recorded here because the underlying fragility is general: any integration test that drives real
+  user interaction plus a delayed network stub needs a budget set from that, not the unit-test
+  default, and a suite that is red for timing reasons is worse than one that is slow.
+
+- **Client-side numeric parsers only enforce sign, not the backend's exact digit/decimal-place/int4
+  bounds.** `parsePositivePrice`/`parseNonNegativeInteger` (`MenuManagementPage.tsx`) and
+  `parseNonNegativeAmount` (`IngredientsPage.tsx`) reject non-numeric and negative input but do not
+  cap decimal places or digit count against `CreateDishRequest.price` (`max_digits=8,
+  decimal_places=2`), `prep_time_minutes` (`le=2_147_483_647`), or
+  `CreateIngredientRequest.min_stock_threshold`/`current_stock` (`max_digits=10, decimal_places=3`).
+  An out-of-bounds value still round-trips to a 422, surfaced inline via `ApiError.message` per
+  UX-DR17, so this is a wasted round trip, not a silent failure. **Action:** if a future story
+  touches these forms again, consider tightening the regexes to the exact bounds.
+- **createDishMutation/createMutation (Ingredients) errors are never reset while the user edits
+  fields after a failed submit, only on the next `mutate()` call.** The stale error `Alert` can
+  outlive a field edit that would have fixed it, for the few seconds before the user resubmits.
+  Self-heals on the very next submit attempt (TanStack Query resets `isError` as soon as a new
+  `mutate()` starts), so no submission is ever blocked or corrupted by this. **Action:** if this
+  becomes a recurring complaint, wire `.reset()` into each form's field `onChange` handlers,
+  matching Story 1.6's fix for the same class of issue on longer-lived row state.
+- **`errorMessage()`/`GENERIC_ERROR_MESSAGE` is now duplicated across four page files
+  (`TablesSetupPage.tsx`, `DishesPage.tsx`, `MenuManagementPage.tsx`, `IngredientsPage.tsx`), and
+  `IngredientsPage.tsx`'s `UNIT_OPTIONS` duplicates `DishRecipeEditor.tsx`'s `UNITS` constant.**
+  Matches this codebase's existing per-screen duplication precedent (no shared `components`/`utils`
+  module exists yet for either), so not a new deviation, but the fifth screen will copy it again.
+  **Action:** if a sixth screen needs either, extract `errorMessage`/`GENERIC_ERROR_MESSAGE` next to
+  `ApiError` in `httpClient.ts`, and the `Unit` enum's UI options next to its `types/menu.ts`
+  definition.
