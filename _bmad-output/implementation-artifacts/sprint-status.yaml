@@ -68,6 +68,7 @@ development_status:
   1-4-application-shell-routing-and-per-role-navigation: done
   1-5-real-time-push-transport: done
   1-6-manage-user-accounts-from-the-admin-ui: done
+  1-7-user-logout: backlog
   epic-1-retrospective: optional
 
   # Epic 2: Menu, Recipes, Ingredients & Table Setup

@@ -43,6 +43,7 @@ FR-22: An Admin can create, update, and mark a Dish available/unavailable, and m
 FR-23: An Admin can define/edit the set of Recipe Ingredient lines (Ingredient + quantity + unit) that compose a Dish.
 FR-24: An Admin can add Restaurant Tables (table number, capacity) and edit an existing table's number or capacity while it is `available`; table numbers are unique. Tables are never deleted in v1.
 FR-25: A Cook can browse the Dish catalog read-only, seeing each Dish's details and Recipe Ingredient lines for preparation context, with no authoring controls.
+FR-26: A User can end their own session (logout), returning to the Login screen with no further access until they authenticate again.
 
 ### NonFunctional Requirements
 
@@ -96,7 +97,7 @@ UX-DR21: Meet the WCAG 2.2 AA contrast baseline in both light and dark mode, vis
 
 ### Epic 1: Staff Accounts & Access Control
 Every role can log in securely and see only what their role permits; Admin can manage the staff roster. Also establishes the test harness, migration baseline, application shell, and real-time transport everything later builds on.
-**FRs covered:** FR-1, FR-2, FR-3
+**FRs covered:** FR-1, FR-2, FR-3, FR-26
 
 ### Epic 2: Menu, Recipes, Ingredients & Table Setup
 Admin can build a sellable menu (dishes, categories, recipes) with the ingredients they reference, and configure the restaurant's physical tables, the master data every later epic builds on.
@@ -145,6 +146,7 @@ FR-22: Epic 2 - Manage menu dishes and categories
 FR-23: Epic 2 - Define a dish's recipe
 FR-24: Epic 2 - Manage restaurant tables (add + edit while available; no delete)
 FR-25: Epic 2 - Cook browses the dish catalog (read-only)
+FR-26: Epic 1 - User logout
 
 ## Epic 1: Staff Accounts & Access Control
 
@@ -427,6 +429,34 @@ This story closes that gap. No new backend endpoint or schema is needed.
 **Given** the Users screen
 **When** it renders
 **Then** it matches the UX mock (`key-users.html`) with dense-row list styling and holds the WCAG 2.2 AA floor established in Story 1.4 (UX-DR8, UX-DR19, UX-DR21)
+
+### Story 1.7: User Logout
+
+As a staff member,
+I want to end my session,
+So that I can sign out from a shared terminal when I'm done, or when handing it to the next person.
+
+**Acceptance Criteria:**
+
+**Given** an authenticated User
+**When** they trigger logout
+**Then** the httpOnly session cookie is cleared so the browser can no longer present it (FR-26)
+
+**Given** a User has just logged out
+**When** any subsequent non-login, non-health request is made from that browser
+**Then** it is rejected as unauthorized, the same behavior Story 1.2/AD-3 already define for "no valid session cookie" (FR-26, NFR-2)
+
+**Given** the application shell (`AppShell`, Story 1.4)
+**When** it renders for any authenticated Role
+**Then** a "Sign Out" control is visible in the shared nav area, available uniformly to all four Roles (FR-26, FR-2's Role-level model)
+
+**Given** a User clicks Sign Out
+**When** the logout request completes
+**Then** the frontend clears its cached auth state (`useCurrentUser`) and redirects to `/login`
+
+**Given** v1's stateless-JWT design has no server-side revocation store (AD-3, no refresh-token flow)
+**When** a User logs out
+**Then** only the client-side cookie is cleared; a token copied out before logout remains valid until its natural 8-hour expiry if replayed, an accepted v1 limitation this story does not need to close (FR-26)
 
 ## Epic 2: Menu, Recipes, Ingredients & Table Setup
 

@@ -144,6 +144,15 @@ An Admin can create a User account (username, full name, Role, **initial passwor
 
 **Notes:** No self-service signup exists — Admin is the only path to a new account, matching the closed-staff nature of the system.
 
+#### FR-26: User logout
+
+A User can end their own session, returning to the Login screen with no further access until they authenticate again.
+
+**Consequences (testable):**
+- The session cookie is cleared so the browser can no longer present it; any subsequent non-login, non-health request behaves exactly as an unauthenticated one (FR-1, NFR-2).
+- Logout is available uniformly to every authenticated Role — the same action regardless of Role (FR-2's Role-level model).
+- v1 has no server-side token revocation store (no refresh-token flow, §8 Open Question 1): logout clears the browser's cookie only. A token copied out before logout remains cryptographically valid until its natural 8-hour expiry if replayed from that copy. `[ASSUMPTION: an accepted v1 limitation given the closed-staff, physical-terminal threat model — not directly confirmed with Ofek/Ron — see §9.]`
+
 ### 4.2 Table & Order Management (Waiter)
 
 **Description:** The waiter-facing flow of opening a table, building an order against it, watching it progress, correcting or closing it out. Realizes UJ-1.
@@ -388,7 +397,7 @@ A Cook can browse the Dish catalog read-only — each Dish's details plus the Re
 
 ### 6.1 In Scope
 
-- FR-1 through FR-25, in full — this is deliberately the entire v1, matching the proposal's "vertical slice" framing rather than a further-trimmed subset. Auth/RBAC (4.1), Table & Order (4.2), Kitchen Display (4.3), Inventory Automation (4.4), Smart Chef (4.5), and Menu & Administration (4.6) are all required for the core order-to-close flow and the AI differentiator to both work end-to-end for the defense demo.
+- FR-1 through FR-26, in full — this is deliberately the entire v1, matching the proposal's "vertical slice" framing rather than a further-trimmed subset. Auth/RBAC (4.1), Table & Order (4.2), Kitchen Display (4.3), Inventory Automation (4.4), Smart Chef (4.5), and Menu & Administration (4.6) are all required for the core order-to-close flow and the AI differentiator to both work end-to-end for the defense demo.
 
 ### 6.2 Out of Scope for MVP
 
@@ -437,6 +446,7 @@ _Both questions originally raised here have since been resolved. Kept with their
 - §4.6 FR-19 — A confirmed Recipe Suggestion keeps a nullable provenance link on the resulting Recipe back to the originating Recipe Suggestion — a confirmed decision (was Open Question 6).
 - §4.6 FR-22 — "Remove" a dish (proposal wording) is implemented as soft-delete (mark unavailable), not a hard delete — narrower than the proposal's literal "add/remove," chosen to preserve historical Order/Order Item references to that Dish.
 - §4.6 FR-24 — Restaurant Table management has no explicit counterpart in the proposal's Administration bullets; included as an analyst-inferred requirement (tables must be configurable somehow, and `RestaurantTable` already exists in the schema) rather than a client-stated one — exactly the kind of implicit-requirement addition the course's OOA guidelines ask analysts to surface.
+- §4.1 FR-26 — Logout clears the client-side session cookie only; v1's stateless-JWT/no-revocation-store design (AD-3) means a copied token stays valid until natural expiry. Accepted given the closed-staff threat model. Not directly confirmed. Added by `correct-course` on 2026-08-14 after the requirement was found missing from the original PRD entirely.
 - NFR-6 — Simultaneous edits to the same Table/Order resolve last-write-wins in v1 — a confirmed decision (was Open Question 4), chosen for a single small kitchen's low real-world contention rather than left silently unhandled.
 
 ---
