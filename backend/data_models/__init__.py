@@ -30,9 +30,11 @@ from .recipe import (
     UpdateRecipeIngredientRequest,
 )
 from .order import (
+    CreateOrderItemRequest,
     CreateTableRequest,
     Order,
     OrderItem,
+    OrderItemResponse,
     OrderItemStatus,
     OrderResponse,
     OrderStatus,
@@ -55,6 +57,7 @@ __all__ = [
     "CreateRecipeIngredientRequest", "UpdateRecipeIngredientRequest", "RecipeIngredientResponse",
     "RestaurantTable", "Order", "OrderItem", "TableStatus", "OrderStatus", "OrderItemStatus",
     "CreateTableRequest", "UpdateTableRequest", "TableResponse", "OrderResponse",
+    "CreateOrderItemRequest", "OrderItemResponse",
     "StockMovement", "MovementType",
     "AIRecipeSuggestion", "AIChatSession", "AIChatMessage", "ChatRole",
 ]

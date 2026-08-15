@@ -132,6 +132,7 @@ class OrderItem(Base):
     status: Mapped[OrderItemStatus] = mapped_column(Enum(OrderItemStatus), nullable=False, default=OrderItemStatus.pending)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     cook_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    price_at_add: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
 
 
 class OrderResponse(BaseModel):
@@ -146,3 +147,26 @@ class OrderResponse(BaseModel):
     created_at: datetime
     closed_at: datetime | None
     total_amount: Decimal | None
+
+
+class CreateOrderItemRequest(BaseModel):
+    """Body of a Waiter's request to add an Order Item to an open Order."""
+
+    dish_id: int = Field(gt=0, le=_INT4_MAX)
+    quantity: int = Field(gt=0, le=_INT4_MAX)
+    notes: str | None = None
+
+
+class OrderItemResponse(BaseModel):
+    """Body of any orders endpoint response describing an Order Item."""
+
+    model_config = {"from_attributes": True}
+
+    id: int
+    order_id: int
+    dish_id: int
+    quantity: int
+    status: OrderItemStatus
+    notes: str | None
+    cook_id: int | None
+    price_at_add: Decimal

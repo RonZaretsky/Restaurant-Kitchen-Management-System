@@ -6,7 +6,7 @@ story: 2
 
 # Story 3.2: Add Items to an Order
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -69,15 +69,15 @@ established in Story 1.0 (AD-4).
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: `OrderItem.price_at_add` column + migration** (AC: 4)
-  - [ ] `backend/data_models/order.py`: add to `OrderItem`
+- [x] **Task 1: `OrderItem.price_at_add` column + migration** (AC: 4)
+  - [x] `backend/data_models/order.py`: add to `OrderItem`
     ```python
     price_at_add: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
     ```
     Same `Numeric(8, 2)` precision as `Dish.price` (`data_models/menu.py`), since this column is a
     direct copy of that value at insert time (AD-7). `Decimal`/`Numeric` are already imported in
     this file (used by `Order.total_amount`).
-  - [ ] Generate the Alembic revision: from `backend/`, `uv run alembic revision --autogenerate -m
+  - [x] Generate the Alembic revision: from `backend/`, `uv run alembic revision --autogenerate -m
     "add price_at_add to order_items"`. Confirm exactly one new head results (`uv run alembic
     heads` shows one line) before continuing, per AD-4's multi-head warning. No `server_default`
     needed: no story before this one ever inserts an `OrderItem` row (3.1 explicitly ships zero
@@ -87,11 +87,11 @@ established in Story 1.0 (AD-4).
     `daca523f69f5_add_case_insensitive_unique_index_on_.py` for style, though that one is an index,
     not a column add, so the generated `op.add_column(...)` will look different, just confirm it
     targets `order_items`/`price_at_add` only).
-  - [ ] Run the migration against the dev DB (`uv run alembic upgrade head`) before running any
+  - [x] Run the migration against the dev DB (`uv run alembic upgrade head`) before running any
     test that inserts an `OrderItem`.
 
-- [ ] **Task 2: Request/response schemas** (AC: 1, 3)
-  - [ ] Add to `backend/data_models/order.py`, colocated with `OrderResponse` (same shape/order the
+- [x] **Task 2: Request/response schemas** (AC: 1, 3)
+  - [x] Add to `backend/data_models/order.py`, colocated with `OrderResponse` (same shape/order the
     file already establishes for the `orders` domain):
     ```python
     class CreateOrderItemRequest(BaseModel):
@@ -120,11 +120,11 @@ established in Story 1.0 (AD-4).
     `CreateTableRequest`). `notes` is unbounded/unstripped, matching `CreateDishRequest.description`'s
     identical shape, not the stricter `name`-field stripping (`_strip_and_require_content`) that
     only applies to required identity fields elsewhere in this codebase.
-  - [ ] Export both from `backend/data_models/__init__.py`, alongside the existing `Order`/
+  - [x] Export both from `backend/data_models/__init__.py`, alongside the existing `Order`/
     `OrderResponse` exports.
 
-- [ ] **Task 3: Exceptions** (AC: 2, and the table-to-order lookup Task 4 needs)
-  - [ ] Add to `backend/exceptions/__init__.py`:
+- [x] **Task 3: Exceptions** (AC: 2, and the table-to-order lookup Task 4 needs)
+  - [x] Add to `backend/exceptions/__init__.py`:
     ```python
     class OrderNotFoundError(NotFoundError):
         """Raised when a request targets an order_id with no matching row, or a table_id with no
@@ -150,8 +150,8 @@ established in Story 1.0 (AD-4).
     Reuse `DishNotFoundError` and `TableNotFoundError` (both already exist) for unknown
     `dish_id`/`table_id`, do not add second ones.
 
-- [ ] **Task 4: `OrderService` additions** (AC: 1, 2, 3)
-  - [ ] `backend/services/order_service.py`, three new methods alongside the existing
+- [x] **Task 4: `OrderService` additions** (AC: 1, 2, 3)
+  - [x] `backend/services/order_service.py`, three new methods alongside the existing
     `open_table`/`_get_table`:
     ```python
     async def get_open_order_for_table(self, db: AsyncSession, actor: User, table_id: int) -> Order:
@@ -214,15 +214,15 @@ established in Story 1.0 (AD-4).
             DishNotAvailableError: If the Dish is currently unavailable.
         """
     ```
-  - [ ] `get_open_order_for_table`: `await db.get(RestaurantTable, table_id)`, raise
+  - [x] `get_open_order_for_table`: `await db.get(RestaurantTable, table_id)`, raise
     `TableNotFoundError` if `None` (mirrors `_get_table`). Then `select(Order).where(Order.table_id
     == table_id, Order.status != OrderStatus.closed)`, `.scalar_one_or_none()`; raise
     `OrderNotFoundError` if `None`. `OrderStatus` is already imported by this file (used by
     `open_table`'s return type context); import it explicitly if not already in scope.
-  - [ ] `list_items`: reuse `add_item`'s own order-lookup helper (factor a private `_get_order`
+  - [x] `list_items`: reuse `add_item`'s own order-lookup helper (factor a private `_get_order`
     the same way `_get_table` already exists) to raise `OrderNotFoundError` for a bad `order_id`,
     then `select(OrderItem).where(OrderItem.order_id == order_id).order_by(OrderItem.id)`.
-  - [ ] `add_item`: `_get_order(db, actor, order_id)` first (`OrderNotFoundError` if missing), then
+  - [x] `add_item`: `_get_order(db, actor, order_id)` first (`OrderNotFoundError` if missing), then
     `await db.get(Dish, payload.dish_id)` (`DishNotFoundError` if `None`, reusing `Dish` from
     `data_models`), then check `dish.is_available`, raising `DishNotAvailableError` if `False`.
     Only then construct and insert:
@@ -240,19 +240,19 @@ established in Story 1.0 (AD-4).
     `INFO` with `actor.id`/`order_id`/the new item's id/`dish_id`, matching every existing service's
     logging convention; log the `DishNotAvailableError` rejection at `WARNING` before raising,
     matching `open_table`'s rejection-logging shape.
-  - [ ] No guarded/atomic UPDATE needed here (AD-6 governs *transitioning* an existing OrderItem's
+  - [x] No guarded/atomic UPDATE needed here (AD-6 governs *transitioning* an existing OrderItem's
     status, not this story's plain insert of a new one at `pending`); no row lock needed either,
     this mirrors `MenuService.add_recipe_ingredient`'s plain check-then-insert shape, not
     `_lock_dish`'s multi-row invariant shape. Do not add either speculatively.
-  - [ ] No guard against adding an item to a non-open Order (e.g. one already `served`/`closed`):
+  - [x] No guard against adding an item to a non-open Order (e.g. one already `served`/`closed`):
     no story before or including this one can ever produce an Order in any status other than
     `pending` (FR-8/close and `Order.status` derivation are FR-8/Story 3.3 territory, neither has
     shipped), so that guard would be dead code no test could exercise honestly today. Note this
     explicitly rather than silently omitting it, matching Story 3.1's own precedent for deferred,
     currently-unreachable defenses.
 
-- [ ] **Task 5: `api/orders.py` router additions** (AC: 1, 2, 3)
-  - [ ] Add to `backend/api/orders.py`, reusing the existing `OrdersDep`/`TableIdPath` and adding
+- [x] **Task 5: `api/orders.py` router additions** (AC: 1, 2, 3)
+  - [x] Add to `backend/api/orders.py`, reusing the existing `OrdersDep`/`TableIdPath` and adding
     an `OrderIdPath` alongside it (`Annotated[int, Path(gt=0, le=_INT4_MAX)]`, same trap-16 bound,
     same local-redeclaration precedent `TableIdPath` already set):
     ```python
@@ -318,19 +318,19 @@ established in Story 1.0 (AD-4).
     give this route its own, smaller description dict. Prefer broadening the shared one only if
     every route using it still reads sensibly, otherwise keep them separate; use judgment, both are
     fine, just do not leave a 404 description that only covers one of two real causes.
-  - [ ] Add matching docstrings to all three (Args/Returns/Raises), same shape `open_table`'s
+  - [x] Add matching docstrings to all three (Args/Returns/Raises), same shape `open_table`'s
     docstring already uses.
-  - [ ] No changes needed to `main.py`'s `container.wire(...)` or `router.py`: `"api.orders"` is
+  - [x] No changes needed to `main.py`'s `container.wire(...)` or `router.py`: `"api.orders"` is
     already wired (Story 3.1), and `orders_router` is already included.
 
-- [ ] **Task 6: `TableOrderDetailPage.tsx`, the real Waiter screen** (AC: 1, 2, 3)
-  - [ ] Replace the placeholder body of `frontend/src/pages/waiter/TableOrderDetailPage.tsx`
+- [x] **Task 6: `TableOrderDetailPage.tsx`, the real Waiter screen** (AC: 1, 2, 3)
+  - [x] Replace the placeholder body of `frontend/src/pages/waiter/TableOrderDetailPage.tsx`
     entirely. Read the `tableId` route param via `useParams()` (see `router.tsx`'s
     `"waiter/tables/:tableId"` route), matching whatever param-reading convention this codebase
     already uses elsewhere for route params (check for a precedent; if none exists yet, use
     `react-router`'s `useParams<{ tableId: string }>()` directly, this is the first page needing
     a route param).
-  - [ ] `frontend/src/types/order.ts`: add
+  - [x] `frontend/src/types/order.ts`: add
     ```typescript
     export type OrderItemStatus = "pending" | "in_preparation" | "ready";
 
@@ -349,7 +349,7 @@ established in Story 1.0 (AD-4).
     docstring already states. `OrderItemStatus` is deliberately only 3 members today: `cancelled`
     (AD-11) does not exist on the backend enum until Story 3.4 ships its own migration, do not add
     it speculatively.
-  - [ ] `frontend/src/services/orderService.ts`, three additions alongside the existing
+  - [x] `frontend/src/services/orderService.ts`, three additions alongside the existing
     `useOpenTable()`:
     - `useOrderForTable(tableId: number)`: `useQuery` against `GET /api/orders/tables/${tableId}`,
       query key `["orders", "table", tableId]`.
@@ -362,20 +362,20 @@ established in Story 1.0 (AD-4).
       `POST /api/orders/${orderId}/items`, `onSuccess` invalidates `orderItemsQueryKey(orderId)`
       only (not the Table list or the order-for-table query, neither's data changes when an item is
       added).
-  - [ ] Reuse `useDishes()` (already exists, `menuService.ts`) to populate the dish picker; filter
+  - [x] Reuse `useDishes()` (already exists, `menuService.ts`) to populate the dish picker; filter
     or mark unavailable dishes per `key-table-order-detail.html`'s intent, but the **real** AC2
     rejection is the 409 from the backend, a client-side filter is a UX nicety on top of that, not
     a substitute for it (do not skip the dish picker rendering unavailable dishes if that's simpler,
     either approach is fine as long as the 409 path is exercised and its message shown, since a
     dish can go unavailable between page load and submit either way).
-  - [ ] Add-dish form: a dish select, a quantity input (default 1, matching `key-table-order-detail.html`'s
+  - [x] Add-dish form: a dish select, a quantity input (default 1, matching `key-table-order-detail.html`'s
     "Qty: 1" stub), an optional note text field, and a submit button, per that mockup's `add-dish-row`
     layout. On a 409 (`DishNotAvailableError`), show "Rejected, dish unavailable" inline under the
     form (`reject-note` in the mockup), not a toast (UX-DR17). Use MUI form components
     (`Select`/`TextField`/`Button`), matching every other form in this codebase (e.g.
     `MenuManagementPage.tsx`'s create-dish form), not the mockup's plain `.select-stub`/`.qty-stub`
     styling, which is illustrative only.
-  - [ ] Order Item list: a table (or MUI `List`, match this codebase's existing table-rendering
+  - [x] Order Item list: a table (or MUI `List`, match this codebase's existing table-rendering
     convention, there is no prior Order-Item-shaped table to copy verbatim from, `oi-table` in the
     mockup is illustrative) with one row per Order Item: status badge, dish name (join against the
     already-fetched `useDishes()` list by `dish_id`, no denormalized name on the response, same
@@ -383,7 +383,7 @@ established in Story 1.0 (AD-4).
     when absent, matching the mockup), quantity, and price (`price_at_add`, formatted). **No actions
     column** (out of scope, see Scope note). "No items added yet" when the list is empty (AC3,
     UX-DR15's exact required copy for this surface).
-  - [ ] New shared component `frontend/src/components/orders/OrderItemStatusBadge.tsx`
+  - [x] New shared component `frontend/src/components/orders/OrderItemStatusBadge.tsx`
     implementing UX-DR1 for `OrderItemStatus` (MUI `Chip` + icon + spelled-out label): `pending`
     (a plain/default color, e.g. an outline icon), `in_preparation` (warning/orange, a "cooking"
     icon), `ready` (success/green, a check icon). Build it as a small standalone component (not
@@ -393,15 +393,15 @@ established in Story 1.0 (AD-4).
     type, same deferred-until-real reasoning Story 3.1's `TableTile.badgeColor` review finding
     already established for `TableStatus`, do not pre-build cases for `served`/`closed`/`cancelled`
     (those belong to `OrderStatus`, a different type, or don't exist on the enum yet).
-  - [ ] Loading/error/empty states: combine every query this page depends on
+  - [x] Loading/error/empty states: combine every query this page depends on
     (`useOrderForTable`, `useOrderItems`, `useDishes`) into one combined loading/error treatment,
     per the "combine every query" rule Story 2.5's review established and Story 3.1 explicitly
     flagged as still applying to a future multi-query version of this page, this is that version.
     `RowsSkeleton` while loading, an `Alert` with Retry on failure (retry must re-trigger every
     failed query, not just one).
 
-- [ ] **Task 7: Tests**
-  - [ ] New tests in `backend/tests/test_orders.py` (extending the existing file, not a new one),
+- [x] **Task 7: Tests**
+  - [x] New tests in `backend/tests/test_orders.py` (extending the existing file, not a new one),
     mirroring its established style (`# Arrange`/`# Act`/`# Assert`, no docstrings, `_create_table`/
     `_login_as_waiter` etc. helpers reused, add a `_create_dish`/`_open_table` helper as needed
     following `_create_table`'s own shape). Cover:
@@ -426,13 +426,13 @@ established in Story 1.0 (AD-4).
       `price_at_add` (AD-7's core guarantee): add an item, then `PATCH` the Dish's price (reusing
       the existing Admin menu endpoint), re-fetch the Order Item, assert `price_at_add` is
       unchanged.
-  - [ ] New file `frontend/src/pages/waiter/TableOrderDetailPage.test.tsx`, mocking only `fetch`,
+  - [x] New file `frontend/src/pages/waiter/TableOrderDetailPage.test.tsx`, mocking only `fetch`,
     matching `TablesPage.test.tsx`'s established pattern. Cover: the add-dish form submits and the
     new item appears in the list; submitting an unavailable dish shows the inline rejection message
     (mock a 409 response); the status badge renders correctly for a `pending` item; the empty-state
     copy when the order has zero items; a failed order-for-table or items fetch renders a
     retry-capable error, not a silent blank page.
-  - [ ] Full regression: `uv run pytest` from `backend/`, `pnpm test` from `frontend/`,
+  - [x] Full regression: `uv run pytest` from `backend/`, `pnpm test` from `frontend/`,
     `npx tsc -b` from `frontend/` (Story 3.1 left one pre-existing unrelated error in
     `IngredientsPage.tsx(97,23)`, confirm no *new* errors, that one is not this story's to fix).
 
@@ -531,8 +531,87 @@ per domain that has a shared, non-page component.
 
 ### Agent Model Used
 
+Claude Sonnet 5 (claude-sonnet-5)
+
 ### Debug Log References
+
+None. No HALT conditions were hit; implementation proceeded task-by-task without needing
+debug-log capture. Postgres was run via `docker compose up -d postgres` to generate and apply the
+Alembic migration, and stayed up for the backend test run.
 
 ### Completion Notes List
 
+- `OrderItem.price_at_add` (`Numeric(8, 2)`, matching `Dish.price`'s own precision) added via
+  autogenerated Alembic revision `819cce996301`, chained onto the existing head
+  (`daca523f69f5`), confirmed as the sole head before and after. No `server_default`: no story
+  before this one ever inserts an `OrderItem` row, so the column is safe as `nullable=False` with
+  no default.
+- `CreateOrderItemRequest`/`OrderItemResponse` added to `data_models/order.py`, exported from
+  `data_models/__init__.py`, matching `OrderResponse`'s established shape.
+- `OrderNotFoundError`/`DishNotAvailableError` added to `exceptions/__init__.py`. `DishNotFoundError`
+  and `TableNotFoundError` were reused as-is, not duplicated.
+- `OrderService` gained `get_open_order_for_table`, `list_items`, `add_item`, and a private
+  `_get_order` helper, mirroring `MenuService`'s list+add shape and `open_table`'s by-id-lookup
+  and rejection-logging conventions. No guarded/atomic UPDATE or row lock added to `add_item`: AD-6
+  governs transitioning an existing `OrderItem`'s status, not this plain insert of a new one, and
+  no multi-row invariant is at stake the way `_lock_dish` defends against.
+- `api/orders.py` gained three routes: `GET /tables/{table_id}` (the table_id -> Order read this
+  story adds, since nothing before it could fetch an existing Order), `GET /{order_id}/items`, and
+  `POST /{order_id}/items`. All three reuse the existing Waiter-only `OrdersDep`, no Admin
+  fallback, consistent with 3.1's precedent. Gave the table_id route its own error-description
+  dict (`_GET_ORDER_ERROR_DESCRIPTIONS`) rather than reusing `open_table`'s, since its 404 can mean
+  either "no such table" or "table exists but nothing open on it", a distinct signal from
+  `open_table`'s single-cause 404.
+- No guard was added against adding an item to a non-`pending` Order: no story before or including
+  this one can ever produce an Order in any other status (FR-8/close and `Order.status` derivation
+  are FR-8/Story 3.3 territory, neither has shipped), so that guard would be untestable dead code
+  today. Noted in the story's own Task 4 rather than silently omitted.
+- Frontend: `TableOrderDetailPage.tsx` rewritten from its Story 1.0/1.4 placeholder into the real
+  page, reading `tableId` via `useParams()` (the first page in this codebase needing a route
+  param). New shared `components/orders/OrderItemStatusBadge.tsx` implements UX-DR1, scoped to
+  today's 3-member `OrderItemStatus` (no `served`/`closed`/`cancelled` cases, matching Story 3.1's
+  own `TableTile.badgeColor` precedent for not pre-building unreachable states). Three new hooks in
+  `orderService.ts` (`useOrderForTable`, `useOrderItems`, `useAddOrderItem`), all accepting an
+  optional id where the page can't yet know it (mirrors `useRecipeIngredients`'s dependent-query
+  shape). No actions column on the Order Item rows, no live updates, no Close-order bar, all
+  explicitly out of scope per this story's own scope note.
+- Full regression run clean: `uv run pytest` — 242 passed (backend, including 25 in
+  `test_orders.py`, 17 new). `npx tsc -b --force` — zero errors (the `IngredientsPage.tsx(97,23)`
+  error Story 3.1 flagged as pre-existing is gone; unrelated to this story, not investigated
+  further). `pnpm test` (via `corepack pnpm`, `pnpm` was not on PATH in this environment) — the new
+  `TableOrderDetailPage.test.tsx` (5 tests) passed cleanly every run, isolated and as part of the
+  full suite. Three pre-existing, unrelated test files (`UsersPage.test.tsx`,
+  `IngredientsPage.test.tsx`, `MenuManagementPage.test.tsx`) intermittently hit their 5000ms
+  timeout only when the full suite runs under this machine's parallel worker load, and pass cleanly
+  every time when run in isolation; none of those three files were touched by this story. Flagged
+  here rather than silently ignored, but not fixed as out of this story's scope.
+
 ### File List
+
+- `backend/data_models/order.py` (modified — added `price_at_add` to `OrderItem`,
+  `CreateOrderItemRequest`, `OrderItemResponse`)
+- `backend/data_models/__init__.py` (modified — exported the two new schemas)
+- `backend/exceptions/__init__.py` (modified — added `OrderNotFoundError`, `DishNotAvailableError`)
+- `backend/alembic/versions/819cce996301_add_price_at_add_to_order_items.py` (new)
+- `backend/services/order_service.py` (modified — added `get_open_order_for_table`, `list_items`,
+  `add_item`, `_get_order`)
+- `backend/api/orders.py` (modified — added `get_order_for_table`, `list_order_items`,
+  `add_order_item` routes, `OrderIdPath`)
+- `backend/tests/test_orders.py` (modified — 17 new tests, plus `_open_table`/`_create_dish`/
+  `_create_available_dish` helpers)
+- `frontend/src/types/order.ts` (modified — added `OrderItemStatus`, `OrderItem`)
+- `frontend/src/services/orderService.ts` (modified — added `useOrderForTable`, `useOrderItems`,
+  `useAddOrderItem`)
+- `frontend/src/components/orders/OrderItemStatusBadge.tsx` (new)
+- `frontend/src/pages/waiter/TableOrderDetailPage.tsx` (modified — full implementation, was a
+  placeholder)
+- `frontend/src/pages/waiter/TableOrderDetailPage.test.tsx` (new)
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-08-15 | Story 3.2 implemented end-to-end (backend `OrderService`/`api/orders.py` additions,
+`price_at_add` migration, frontend `TableOrderDetailPage.tsx`), all 7 tasks complete, full
+regression green (backend 242/242; frontend's own new tests 5/5, pre-existing unrelated flakiness
+under full-suite load noted in Completion Notes). |

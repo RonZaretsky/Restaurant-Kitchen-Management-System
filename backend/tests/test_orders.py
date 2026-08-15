@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import Order, RestaurantTable, TableStatus, User, UserRole
+from data_models import Ingredient, Order, RestaurantTable, TableStatus, Unit, User, UserRole
 from services.auth_service import AuthService
 from services.order_service import OrderService
 
@@ -46,6 +46,48 @@ async def _create_table(client: AsyncClient, db_session: AsyncSession, table_num
     response = await client.post("/api/tables", json={"table_number": table_number, "capacity": 4})
     assert response.status_code == 201
     return response.json()
+
+
+async def _open_table(
+    client: AsyncClient, db_session: AsyncSession, table_number: int = 1
+) -> tuple[dict, User, dict]:
+    table = await _create_table(client, db_session, table_number)
+    waiter = await _login_as_waiter(client, db_session, username=f"waiter-{table_number}")
+    response = await client.post(f"/api/orders/tables/{table['id']}/open")
+    assert response.status_code == 201
+    return response.json(), waiter, table
+
+
+async def _create_dish(client: AsyncClient, name: str = "Margherita", price: str = "12.50") -> dict:
+    category_response = await client.post("/api/menu/categories", json={"name": f"{name} Category"})
+    assert category_response.status_code == 201
+    category = category_response.json()
+    dish_response = await client.post(
+        "/api/menu/dishes",
+        json={"name": name, "price": price, "category_id": category["id"], "prep_time_minutes": 15},
+    )
+    assert dish_response.status_code == 201
+    return dish_response.json()
+
+
+async def _create_available_dish(
+    client: AsyncClient, db_session: AsyncSession, name: str = "Margherita", price: str = "12.50"
+) -> dict:
+    await _create_user(db_session, f"dish-admin-{name}", UserRole.admin)
+    await _login(client, f"dish-admin-{name}")
+    dish = await _create_dish(client, name, price)
+    ingredient = Ingredient(name=f"{name} Ingredient", unit=Unit.kg, current_stock=10, min_stock_threshold=1)
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    recipe_response = await client.post(
+        f"/api/menu/dishes/{dish['id']}/recipe-ingredients",
+        json={"ingredient_id": ingredient.id, "quantity": "0.500", "unit": "kg"},
+    )
+    assert recipe_response.status_code == 201
+    available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
+    assert available_response.status_code == 200
+    return available_response.json()
 
 
 @pytest.mark.asyncio
@@ -248,3 +290,248 @@ async def test_warehouse_manager_cannot_list_tables(client: AsyncClient, db_sess
 
     # Assert
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_waiter_can_fetch_the_open_order_for_a_table(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _waiter, table = await _open_table(client, db_session)
+
+    # Act
+    response = await client.get(f"/api/orders/tables/{table['id']}")
+
+    # Assert
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == order["id"]
+    assert body["table_id"] == table["id"]
+
+
+@pytest.mark.asyncio
+async def test_fetching_order_for_a_table_with_no_open_order_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: the table exists but was never opened, so it has no Order at all.
+    table = await _create_table(client, db_session)
+    await _login_as_waiter(client, db_session)
+
+    # Act
+    response = await client.get(f"/api/orders/tables/{table['id']}")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_fetching_order_for_a_nonexistent_table_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as_waiter(client, db_session)
+
+    # Act
+    response = await client.get("/api/orders/tables/999999")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_waiter_can_add_an_available_dish_to_an_open_order(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Shakshuka")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=2)
+
+    # Act
+    response = await client.post(
+        f"/api/orders/{order['id']}/items",
+        json={"dish_id": dish["id"], "quantity": 2, "notes": "no onions"},
+    )
+
+    # Assert
+    assert response.status_code == 201
+    body = response.json()
+    assert body["order_id"] == order["id"]
+    assert body["dish_id"] == dish["id"]
+    assert body["status"] == "pending"
+    assert body["quantity"] == 2
+    assert body["notes"] == "no onions"
+    assert body["price_at_add"] == dish["price"]
+
+
+@pytest.mark.asyncio
+async def test_adding_an_unavailable_dish_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _create_user(db_session, "dish-admin-unavailable", UserRole.admin)
+    await _login(client, "dish-admin-unavailable")
+    dish = await _create_dish(client, "Unavailable Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=3)
+
+    # Act
+    response = await client.post(
+        f"/api/orders/{order['id']}/items", json={"dish_id": dish["id"], "quantity": 1}
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, dish unavailable"
+
+
+@pytest.mark.asyncio
+async def test_adding_a_nonexistent_dish_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=4)
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items", json={"dish_id": 999999, "quantity": 1})
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_adding_an_item_to_a_nonexistent_order_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Ghost Order Dish")
+    await _login_as_waiter(client, db_session, username="waiter-ghost")
+
+    # Act
+    response = await client.post("/api/orders/999999/items", json={"dish_id": dish["id"], "quantity": 1})
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_order_items_list_starts_empty_and_reflects_additions(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="List Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=5)
+
+    # Act: a fresh Order has no items yet.
+    empty_response = await client.get(f"/api/orders/{order['id']}/items")
+
+    # Assert
+    assert empty_response.status_code == 200
+    assert empty_response.json() == []
+
+    # Act: add two items.
+    first = await client.post(f"/api/orders/{order['id']}/items", json={"dish_id": dish["id"], "quantity": 1})
+    assert first.status_code == 201
+    second = await client.post(
+        f"/api/orders/{order['id']}/items",
+        json={"dish_id": dish["id"], "quantity": 3, "notes": "extra spicy"},
+    )
+    assert second.status_code == 201
+    list_response = await client.get(f"/api/orders/{order['id']}/items")
+
+    # Assert
+    assert list_response.status_code == 200
+    items = list_response.json()
+    assert len(items) == 2
+    assert items[0]["id"] == first.json()["id"]
+    assert items[1]["id"] == second.json()["id"]
+    assert items[1]["notes"] == "extra spicy"
+    assert items[1]["quantity"] == 3
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_use_order_item_endpoints(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Admin Blocked Dish")
+    order, _waiter, table = await _open_table(client, db_session, table_number=6)
+    await _create_user(db_session, "blocked-admin", UserRole.admin)
+    await _login(client, "blocked-admin")
+
+    # Act / Assert
+    assert (await client.get(f"/api/orders/tables/{table['id']}")).status_code == 403
+    assert (await client.get(f"/api/orders/{order['id']}/items")).status_code == 403
+    assert (
+        await client.post(f"/api/orders/{order['id']}/items", json={"dish_id": dish["id"], "quantity": 1})
+    ).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cook_cannot_use_order_item_endpoints(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Cook Blocked Dish")
+    order, _waiter, table = await _open_table(client, db_session, table_number=7)
+    await _create_user(db_session, "blocked-cook", UserRole.cook)
+    await _login(client, "blocked-cook")
+
+    # Act / Assert
+    assert (await client.get(f"/api/orders/tables/{table['id']}")).status_code == 403
+    assert (await client.get(f"/api/orders/{order['id']}/items")).status_code == 403
+    assert (
+        await client.post(f"/api/orders/{order['id']}/items", json={"dish_id": dish["id"], "quantity": 1})
+    ).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_warehouse_manager_cannot_use_order_item_endpoints(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Warehouse Blocked Dish")
+    order, _waiter, table = await _open_table(client, db_session, table_number=8)
+    await _create_user(db_session, "blocked-wh", UserRole.warehouse_manager)
+    await _login(client, "blocked-wh")
+
+    # Act / Assert
+    assert (await client.get(f"/api/orders/tables/{table['id']}")).status_code == 403
+    assert (await client.get(f"/api/orders/{order['id']}/items")).status_code == 403
+    assert (
+        await client.post(f"/api/orders/{order['id']}/items", json={"dish_id": dish["id"], "quantity": 1})
+    ).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_cannot_use_order_item_endpoints(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Anon Blocked Dish")
+    order, _waiter, table = await _open_table(client, db_session, table_number=9)
+    client.cookies.clear()
+
+    # Act / Assert
+    assert (await client.get(f"/api/orders/tables/{table['id']}")).status_code == 401
+    assert (await client.get(f"/api/orders/{order['id']}/items")).status_code == 401
+    assert (
+        await client.post(f"/api/orders/{order['id']}/items", json={"dish_id": dish["id"], "quantity": 1})
+    ).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_price_at_add_is_unaffected_by_a_later_dish_price_change(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: AD-7, add an item, then change the Dish's price.
+    dish = await _create_available_dish(client, db_session, name="Price Lock Dish", price="20.00")
+    order, waiter, _table = await _open_table(client, db_session, table_number=10)
+    add_response = await client.post(
+        f"/api/orders/{order['id']}/items", json={"dish_id": dish["id"], "quantity": 1}
+    )
+    assert add_response.status_code == 201
+    item_id = add_response.json()["id"]
+    assert add_response.json()["price_at_add"] == "20.00"
+
+    await _create_user(db_session, "price-admin", UserRole.admin)
+    await _login(client, "price-admin")
+    patch_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"price": "35.00"})
+    assert patch_response.status_code == 200
+
+    # Act: re-fetch the item as the Waiter, after the price change.
+    await _login(client, waiter.username)
+    items_response = await client.get(f"/api/orders/{order['id']}/items")
+
+    # Assert
+    assert items_response.status_code == 200
+    item = next(i for i in items_response.json() if i["id"] == item_id)
+    assert item["price_at_add"] == "20.00"
