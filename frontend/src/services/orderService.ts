@@ -17,8 +17,15 @@ interface AddOrderItemPayload {
   notes?: string | null;
 }
 
-/** The shared cache key for one Order's item list, used by the query and its mutation's invalidation. */
-function orderItemsQueryKey(orderId: number | undefined) {
+/**
+ * The shared cache key for one Order's item list.
+ *
+ * Exported (Story 3.3) so TableOrderDetailPage.tsx's live `order.item_added`
+ * subscriber can invalidate the same key this file's own query and mutation
+ * already use, rather than reconstructing the array by hand and risking the
+ * two drifting apart.
+ */
+export function orderItemsQueryKey(orderId: number | undefined) {
   return ["orders", orderId, "items"] as const;
 }
 

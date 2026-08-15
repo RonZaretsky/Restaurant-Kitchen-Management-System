@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -7,10 +9,11 @@ import CardActionArea from "@mui/material/CardActionArea";
 import Chip from "@mui/material/Chip";
 import Typography from "@mui/material/Typography";
 
+import { useRealtime } from "../../components/shell/RealtimeProvider";
 import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
 import { useOpenTable } from "../../services/orderService";
-import { useTables } from "../../services/tableService";
+import { TABLES_QUERY_KEY, useTables } from "../../services/tableService";
 import type { Table } from "../../types/table";
 
 /**
@@ -81,7 +84,7 @@ function TableTile({
 }
 
 /**
- * The Waiter's Tables grid (Story 3.1, extended by Story 3.2).
+ * The Waiter's Tables grid (Story 3.1, extended by Story 3.2 and 3.3).
  *
  * Every Restaurant Table rendered as a tile with its status badge (AC3).
  * Clicking an available tile opens it into a new Order (AC1, Story 3.1) and
@@ -93,13 +96,30 @@ function TableTile({
  * affordance, v1 has no reservation-arrival flow. Reuses `tableService.ts`'s
  * existing `useTables()` (Story 2.4's `GET /api/tables`, widened in Story 3.1
  * to permit a Waiter), rather than adding a second Table-list endpoint or hook.
+ * Subscribes to the live `table.status_changed` push (Story 3.3) so another
+ * Waiter opening a Table updates this grid without a manual refresh.
  *
  * @returns The Tables page.
  */
 export function TablesPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { subscribe } = useRealtime();
   const { data: tables, isLoading, isError, error, refetch } = useTables();
   const openMutation = useOpenTable();
+
+  // Story 3.3: Observer/Pub-Sub. This component subscribes to the
+  // table.status_changed event OrderService publishes without knowing which
+  // Waiter's action triggered it, so any Waiter opening any Table flips its
+  // status live for every other connected Waiter (AC2/AC3). Invalidating
+  // the existing tables query is the refetch signal, matching this
+  // codebase's established invalidate-then-refetch mutation pattern rather
+  // than merging the pushed payload directly into the cache.
+  useEffect(() => {
+    return subscribe("table.status_changed", () => {
+      void queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY });
+    });
+  }, [subscribe, queryClient]);
 
   const handleOpen = (tableId: number) => {
     openMutation.mutate(tableId, {

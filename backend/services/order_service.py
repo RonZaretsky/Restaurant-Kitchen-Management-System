@@ -9,10 +9,12 @@ from data_models import (
     Dish,
     Order,
     OrderItem,
+    OrderItemResponse,
     OrderStatus,
     RestaurantTable,
     TableStatus,
     User,
+    UserRole,
 )
 from exceptions import (
     DishNotAvailableError,
@@ -21,22 +23,31 @@ from exceptions import (
     TableNotAvailableError,
     TableNotFoundError,
 )
+from services.realtime_service import RealtimeService
 
 
 class OrderService:
     """Opens Tables into new Orders.
 
-    Config-free, so it is registered as a container-level Factory with only
-    the logger injected, matching TableService's shape.
+    Config-free aside from the realtime_service collaborator, so it is
+    registered as a container-level Factory with the logger and
+    realtime_service injected, matching TableService's shape plus the push
+    seam Story 3.3 adds. That seam is an Observer/Pub-Sub pattern: this
+    service publishes table.status_changed/order.item_added events without
+    knowing who, if anyone, is listening, and RealtimeService/ConnectionRegistry
+    fan them out to every subscribed frontend client (AD-2).
     """
 
-    def __init__(self, logger: Any) -> None:
+    def __init__(self, logger: Any, realtime_service: RealtimeService) -> None:
         """Initialize the service.
 
         Args:
             logger: The loguru logger injected from the container.
+            realtime_service: Injected service used to push live updates to
+                connected Waiter terminals (AD-2, Story 3.3).
         """
         self._logger = logger
+        self._realtime_service = realtime_service
 
     async def open_table(self, db: AsyncSession, actor: User, table_id: int) -> Order:
         """Mark an available Table occupied and start a new Order on it (AC1).
@@ -90,6 +101,18 @@ class OrderService:
             actor.id,
             table_id,
             order.id,
+        )
+        # A plain dict, not a Pydantic response model like order.item_added's
+        # payload below: TablesPage.tsx's subscriber only reads this as a
+        # refetch signal and never parses table_id/status out of it (it calls
+        # useTables() again for the real data), so there is no consumer that
+        # needs a full TableResponse, and building one here would cost an
+        # extra SELECT of the just-updated row purely to satisfy a payload
+        # shape nothing reads.
+        await self._realtime_service.broadcast(
+            [UserRole.waiter],
+            "table.status_changed",
+            {"table_id": table_id, "status": TableStatus.occupied.value},
         )
         return order
 
@@ -218,6 +241,11 @@ class OrderService:
             item.id,
             item.dish_id,
             item.quantity,
+        )
+        await self._realtime_service.broadcast(
+            [UserRole.waiter],
+            "order.item_added",
+            OrderItemResponse.model_validate(item).model_dump(mode="json"),
         )
         return item
 

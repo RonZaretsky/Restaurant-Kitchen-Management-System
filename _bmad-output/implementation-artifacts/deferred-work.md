@@ -464,3 +464,24 @@
   changed silently. **Action:** pick one symbol (the mockups and the project's Israeli setting both
   point at ₪), then apply it in one pass, ideally via a single shared `formatPrice` helper rather
   than a literal in each screen.
+
+## Deferred from: code review of story-3-3 (2026-08-15)
+
+- **No batching/coalescing for rapid successive Order Item adds**, each firing a full broadcast +
+  cache invalidation on every connected Waiter terminal (`backend/services/order_service.py`,
+  `add_item`). Out of scope at this project's stated demo/NFR-5 scale (4 concurrent terminals).
+  **Action:** if this system ever needs to handle a real service's item-entry rate, consider
+  debouncing the broadcast or batching several adds into one event.
+- **No test exercises the zero-connected-Waiters broadcast path** for the two new events. The
+  underlying `broadcast_to_roles`/`_targets` short-circuit is already covered generically by
+  `test_websocket.py`'s existing suite. **Action:** low priority; add if a future story's own
+  producer needs the zero-listener path proven for a new reason.
+- **`FakeWebSocket` is now duplicated across three frontend test files**
+  (`RealtimeProvider.test.tsx`, `TablesPage.test.tsx`, `TableOrderDetailPage.test.tsx`), all
+  explicitly noting they copied it. **Action:** if a fourth test file needs the same double, extract
+  it to a shared test-support module (e.g. `src/testUtils/FakeWebSocket.ts`).
+- **The two new `OrderService.broadcast()` call sites have no `try`/`except` around them.** Verified
+  safe today: `ConnectionRegistry.broadcast_to_roles` already catches JSON serialization errors and
+  `_send` catches every per-connection failure individually, so the call is provably exception-safe
+  as written. **Action:** if that guarantee ever changes (e.g. `broadcast()`'s own signature or
+  behavior is altered upstream), revisit whether the call sites need their own guard.

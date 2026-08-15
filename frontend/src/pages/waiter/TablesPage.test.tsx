@@ -2,8 +2,9 @@ import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { RealtimeProvider } from "../../components/shell/RealtimeProvider";
 import { TablesPage } from "./TablesPage";
 
 // Mocks only fetch, driving the real tableService/orderService hooks,
@@ -29,18 +30,52 @@ function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
+/**
+ * A minimal stand-in for the browser's WebSocket, copied from
+ * RealtimeProvider.test.tsx (Story 3.3): TablesPage now renders inside a
+ * RealtimeProvider, which opens a real WebSocket on mount, and jsdom's real
+ * one attempts an actual, slow, eventually-failing network connection.
+ */
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+
+  url: string;
+  readyState = 1; // OPEN
+  onopen: (() => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+  }
+
+  close(code = 1006) {
+    this.readyState = 3; // CLOSED
+    this.onclose?.({ code });
+  }
+}
+
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <TablesPage />
+        <RealtimeProvider>
+          <TablesPage />
+        </RealtimeProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe("TablesPage", () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     navigateMock.mockClear();
@@ -178,6 +213,33 @@ describe("TablesPage", () => {
 
     // Assert
     expect(await screen.findByText("No tables configured yet.")).toBeInTheDocument();
+  });
+
+  it("refetches the table list when a live table.status_changed event arrives", async () => {
+    // Arrange: the list starts as one available table, then the backend
+    // reports it occupied on the second fetch, simulating another Waiter's
+    // concurrent open (Story 3.3, AC2/AC3).
+    let tables = [AVAILABLE_TABLE];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, tables));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+
+    // Act
+    renderPage();
+    await screen.findByText("available");
+    tables = [{ ...AVAILABLE_TABLE, status: "occupied" }];
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    socket.onmessage?.({
+      data: JSON.stringify({ event: "table.status_changed", payload: { table_id: 1, status: "occupied" } }),
+    });
+
+    // Assert
+    expect(await screen.findByText("occupied")).toBeInTheDocument();
   });
 
   it("shows a retry-capable error when the table list cannot be loaded", async () => {
