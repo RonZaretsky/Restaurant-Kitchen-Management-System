@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is under way: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is under way: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live.**
 
 ```
 backend/
@@ -116,10 +116,16 @@ backend/
                      Story 3.2 added get_open_order_for_table, list_items, add_item, and a private
                      _get_order seam (mirrors MenuService's list+add shape); add_item is a plain
                      check-then-insert, no guard/lock, AD-6 governs transitioning an existing
-                     OrderItem's status, not creating a new one at pending
+                     OrderItem's status, not creating a new one at pending. Story 3.3 made this the
+                     project's first Observer/Pub-Sub publisher: open_table broadcasts
+                     table.status_changed (a plain dict, table_id+status only, a refetch signal not
+                     a state transfer) and add_item broadcasts order.item_added
+                     (OrderItemResponse.model_validate(item).model_dump(mode="json"), so the pushed
+                     shape can never drift from the REST response shape), both to UserRole.waiter
+                     only, both only after their db.commit() succeeds
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
-                     calls into services/ (AD-1); broadcast(roles, event, payload). Still has NO
-                     producers: no service emits anything yet (see Domain rules)
+                     calls into services/ (AD-1); broadcast(roles, event, payload).
+                     **RESOLVED by Story 3.3**: OrderService is now its first producer (see above)
   exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409),
                      NotFoundError family (404, one shared base since Story 2.3, see trap 17)
   exceptions/handlers.py    register_exception_handlers(app); exactly four handlers, one per family
@@ -186,7 +192,9 @@ frontend/src/
                         never reaches the server), useOrderItems (accepts `number | undefined`,
                         same enabled-gating shape), and useAddOrderItem (invalidates the item list
                         AND menuService's DISHES_QUERY_KEY on settle, a 409 means the cached dish is
-                        stale too)
+                        stale too). Story 3.3 exported orderItemsQueryKey (was module-private) so
+                        TableOrderDetailPage.tsx's live order.item_added subscriber can invalidate
+                        the same key this file's own query/mutation already use
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
   components/orders/OrderItemStatusBadge.tsx  Story 3.2: the shared Order Item status badge
@@ -220,13 +228,19 @@ frontend/src/
                         sorting/highlighting/detail-drill-down, that scope belongs to Epic 4's Story
                         4.3), waiter/TablesPage.tsx (Story 3.1: the Tables grid, one tile per
                         Table with its status badge, only an `available` tile is clickable, opens
-                        the Table into a new Order and navigates to its detail page), and
+                        the Table into a new Order and navigates to its detail page; Story 3.3
+                        subscribes to the live table.status_changed push and invalidates
+                        TABLES_QUERY_KEY on receipt, so another Waiter opening a Table updates this
+                        grid with no manual refresh), and
                         waiter/TableOrderDetailPage.tsx (Story 3.2, `/waiter/tables/:tableId`,
                         replacing its Story 1.4 placeholder: resolves the route param to its open
                         Order via useOrderForTable, an add-dish form with the inline "Rejected,
                         dish unavailable" 409, and a read-only Order Item list with
                         OrderItemStatusBadge per row and "No items added yet" empty state; a 404
                         "no open order" is presented as its own state with a link back to Tables,
+                        Story 3.3 subscribes to the live order.item_added push and invalidates
+                        orderItemsQueryKey(order.id), guarded against order?.id still being
+                        undefined in the narrow window before the Order lookup resolves,
                         not a Retry that could never succeed; the heading resolves the Table's
                         table_number via the already-cached useTables(), never the route param's
                         raw id), each with its own *.test.tsx alongside. Deliberately NOT in this
@@ -552,6 +566,17 @@ These are the ones that cost hours because nothing errors:
     future `nullable=False` column add on a table a shipped story might already have inserted into
     needs the same treatment.
 
+23. **A `providers.Factory` in `container.py` that injects another provider must be declared
+    *after* it.** `DeclarativeContainer`'s provider declarations are plain Python class-body
+    assignments, evaluated top to bottom, not resolved lazily by name. Story 3.3 needed
+    `order_service` to receive `realtime_service`, but `order_service` was declared first (right
+    after `table_service`), so the container raised `NameError: name 'realtime_service' is not
+    defined` at import time the moment the injection was added. Fixed by moving `order_service`'s
+    declaration below `realtime_service`'s (and `connection_registry`'s, which `realtime_service`
+    itself depends on). **Any new cross-service dependency added to an existing provider needs the
+    same check**: verify the provider it now references is declared earlier in the file, not just
+    that it exists somewhere in it.
+
 ---
 
 ## Where code goes
@@ -752,13 +777,15 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   `$42.00`. Neither is wrong per its own story's scope, but only one should survive. Logged in
   `deferred-work.md`, not fixed by Story 3.2 since no AC there covers the Cook's screen. **Any
   story that touches price display should resolve this rather than adding a third convention.**
-- **`RealtimeService` has no producers yet.** The transport is live (Story 1.5) and
-  `useRealtime()`'s `subscribe(event, handler)` exists on the frontend, but no service emits any
-  event, so nothing in the UI updates from another user's action, only from its own mutations or a
-  window-focus refetch. AD-2 governs the naming when the first producer lands. Story 2.4's AC4
-  ("re-enable the moment the table returns to available") is the first AC this shortfall leaves
-  partially unmet, deferred to Epic 3 by decision (see `deferred-work.md`). **Any story whose AC
-  says "live", "instantly", or "the moment" needs to check whether a producer exists yet.**
+- **RESOLVED (partially) by Story 3.3.** `RealtimeService` now has its first two producers:
+  `OrderService.open_table` broadcasts `table.status_changed`, `OrderService.add_item` broadcasts
+  `order.item_added`, both to `UserRole.waiter`, both consumed live by `TablesPage.tsx`/
+  `TableOrderDetailPage.tsx`. This is still not blanket coverage: `TableService.update_table` (Table
+  edits) and any future Table-close path still push nothing, so Story 2.4's AC4 ("re-enable the
+  moment the table returns to available") remains partially unmet, still deferred (see
+  `deferred-work.md`). **Any story whose AC says "live", "instantly", or "the moment" for a mutation
+  other than opening a Table or adding an Order Item still needs to check whether a producer exists
+  for it.**
 - A Recipe Suggestion never writes to a live Dish — Admin confirmation is the only path to the menu.
 - A newly created Dish is **unconditionally unavailable**, regardless of anything a caller submits
   (`CreateDishRequest` has no `is_available` field at all). Menu Categories are **create-only** in
@@ -889,7 +916,7 @@ from `frontend/`.
   mechanism directly (a focused probe) rather than assuming coverage.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **247 tests**, frontend **130 tests** (as of Story 3.2).
+Backend suite is now **249 tests**, frontend **133 tests** (as of Story 3.3).
 
 ---
 
@@ -1230,5 +1257,45 @@ findings, not by any review subagent). Two screens now disagree on the currency 
 (`TableOrderDetailPage` renders `₪`, `cook/DishesPage` renders `$`), logged in `deferred-work.md`
 rather than fixed silently on a screen this story's AC doesn't cover. Suites are now **247 backend
 and 130 frontend tests**.
+
+**2026-08-15 patch (Story 3.3, View Live Order and Table Status, plus its code review):** First
+real producers on `RealtimeService` (Story 1.5 built the transport, nothing emitted over it until
+now, confirmed by grep before starting). `OrderService.open_table` broadcasts `table.status_changed`
+(`{table_id, status}`, a plain dict since the only consumer treats it as a refetch signal, not a
+state transfer), `OrderService.add_item` broadcasts `order.item_added`
+(`OrderItemResponse.model_validate(item).model_dump(mode="json")`, so the pushed shape can never
+drift from the REST response shape), both to `UserRole.waiter` only, both only after their
+`db.commit()` succeeds. First real frontend consumers: `TablesPage.tsx` subscribes to
+`table.status_changed` and invalidates `TABLES_QUERY_KEY`; `TableOrderDetailPage.tsx` subscribes to
+`order.item_added` and invalidates `orderItemsQueryKey(order.id)`. Both are page-wide subscriptions
+(not filtered to "this page's own table/order" before invalidating), matching FR-6/NFR-5's "every
+Waiter sees every Table and every Order" rule; `invalidateQueries` on a non-matching key is a
+harmless no-op, not something to guard against.
+
+**Trap 23 added**: a `providers.Factory` in `container.py` that injects another provider must be
+declared after it, plain top-to-bottom class-body evaluation, not lazy name resolution. Discovered
+when `order_service` needed `realtime_service` injected but was declared above it, raising
+`NameError` at import time; fixed by reordering, not by any lazy-reference trick.
+
+**Backend/frontend parity was an explicit requirement for this story** (not just an AC, a
+session-level instruction): every emitted event needed a working, visibly-updating frontend
+consumer, verified two ways, by automated tests and by manually driving two independent browser
+sessions (two different Waiters) against a rebuilt Docker stack, confirming both live paths with
+screenshots at each step, not just DOM assertions in a single-tab test.
+
+Code review: 6 patches (named the Observer/Pub-Sub pattern per CLAUDE.md's requirement, since
+neither the backend publisher nor the frontend subscribers named it initially; added a role-exclusion
+assertion to both new backend tests, a connected Cook now asserted to receive nothing, closing a real
+gap where a regression broadcasting to every Role would have passed CI; fixed a narrow but genuine
+stale-query-key race in `TableOrderDetailPage.tsx`'s subscriber, which could invalidate
+`orderItemsQueryKey(undefined)` if `order.item_added` arrived before the page's own Order lookup
+resolved; guarded two brittle `FakeWebSocket.instances[0]` test reads; documented the container
+ordering requirement and the `table.status_changed` payload's plain-dict shape). 5 findings dismissed
+as false positives after verifying against the actual code: `OrderItemResponse` has zero relationship
+fields so a raised lazy-load concern was unfounded, `ConnectionRegistry.broadcast_to_roles`/`_send`
+already catch every failure mode they could raise so wrapping the call sites again would be
+defensive code against an unreachable scenario, and `RealtimeService` being a `Factory` not
+`Singleton` is harmless since it only wraps a shared `Resource`-backed registry, matching every
+other service in this codebase. Suites are now **249 backend and 133 frontend tests**.
 
 Last Updated: 2026-08-15
