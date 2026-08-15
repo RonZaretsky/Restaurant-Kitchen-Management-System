@@ -2,8 +2,9 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { RealtimeProvider } from "../../components/shell/RealtimeProvider";
 import { TableOrderDetailPage } from "./TableOrderDetailPage";
 
 // Mocks only fetch, driving the real orderService/menuService/tableService hooks,
@@ -85,20 +86,54 @@ function stubReads(overrides: {
   };
 }
 
+/**
+ * A minimal stand-in for the browser's WebSocket, copied from
+ * RealtimeProvider.test.tsx (Story 3.3): this page now renders inside a
+ * RealtimeProvider, which opens a real WebSocket on mount, and jsdom's real
+ * one attempts an actual, slow, eventually-failing network connection.
+ */
+class FakeWebSocket {
+  static instances: FakeWebSocket[] = [];
+
+  url: string;
+  readyState = 1; // OPEN
+  onopen: (() => void) | null = null;
+  onclose: ((event: { code: number }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    FakeWebSocket.instances.push(this);
+  }
+
+  close(code = 1006) {
+    this.readyState = 3; // CLOSED
+    this.onclose?.({ code });
+  }
+}
+
 function renderPage(initialPath = "/waiter/tables/1") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialPath]}>
-        <Routes>
-          <Route path="/waiter/tables/:tableId" element={<TableOrderDetailPage />} />
-        </Routes>
+        <RealtimeProvider>
+          <Routes>
+            <Route path="/waiter/tables/:tableId" element={<TableOrderDetailPage />} />
+          </Routes>
+        </RealtimeProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe("TableOrderDetailPage", () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -270,6 +305,25 @@ describe("TableOrderDetailPage", () => {
     // Assert
     expect(await screen.findByText(/No dishes on the menu yet/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to order" })).not.toBeInTheDocument();
+  });
+
+  it("refetches the item list when a live order.item_added event arrives", async () => {
+    // Arrange: the item list starts empty, then the backend reports one item
+    // on the second fetch, simulating another Waiter's concurrent add (Story
+    // 3.3, AC2/AC3).
+    let items: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
+
+    // Act
+    renderPage();
+    await screen.findByText("No items added yet.");
+    items = [PENDING_ITEM];
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    socket.onmessage?.({ data: JSON.stringify({ event: "order.item_added", payload: PENDING_ITEM }) });
+
+    // Assert
+    expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
   });
 
   it("shows a retry-capable error when the order cannot be loaded", async () => {

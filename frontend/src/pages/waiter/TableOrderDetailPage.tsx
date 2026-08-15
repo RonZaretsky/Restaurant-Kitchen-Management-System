@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link as RouterLink, useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -14,10 +15,16 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import { OrderItemStatusBadge } from "../../components/orders/OrderItemStatusBadge";
+import { useRealtime } from "../../components/shell/RealtimeProvider";
 import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
 import { useDishes } from "../../services/menuService";
-import { useAddOrderItem, useOrderForTable, useOrderItems } from "../../services/orderService";
+import {
+  orderItemsQueryKey,
+  useAddOrderItem,
+  useOrderForTable,
+  useOrderItems,
+} from "../../services/orderService";
 import { useTables } from "../../services/tableService";
 import { MAX_ORDER_ITEM_QUANTITY } from "../../types/order";
 
@@ -113,6 +120,8 @@ function formatPrice(priceAtAdd: string): string {
 export function TableOrderDetailPage() {
   const { tableId } = useParams<{ tableId: string }>();
   const parsedTableId = parseRouteId(tableId);
+  const queryClient = useQueryClient();
+  const { subscribe } = useRealtime();
 
   const [dishId, setDishId] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -122,6 +131,27 @@ export function TableOrderDetailPage() {
   const { data: order } = orderQuery;
   const itemsQuery = useOrderItems(order?.id);
   const { data: items } = itemsQuery;
+
+  // Story 3.3: Observer/Pub-Sub. This component subscribes to the
+  // order.item_added event OrderService publishes without knowing which
+  // Waiter's action triggered it, so any Waiter adding an item to any Order
+  // updates this page live if it happens to be this Order (AC2/AC3).
+  // Page-wide subscription, not filtered to this order's id before
+  // invalidating: invalidateQueries only refetches queries that actually
+  // match the key, so invalidating a key for an order this page is not
+  // showing is a harmless no-op, not a bug. Guarded on order?.id being
+  // resolved, though: before that, invalidating orderItemsQueryKey(undefined)
+  // would target a key nothing reads, silently missing a live update that
+  // arrives in the narrow window before this page's own Order lookup
+  // settles.
+  useEffect(() => {
+    if (order?.id === undefined) {
+      return undefined;
+    }
+    return subscribe("order.item_added", () => {
+      void queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(order.id) });
+    });
+  }, [subscribe, queryClient, order?.id]);
   const dishesQuery = useDishes();
   const { data: dishes } = dishesQuery;
   // Reused rather than fetched per-table: the Tables grid this page is reached from has already

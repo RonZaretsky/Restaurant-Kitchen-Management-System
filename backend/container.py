@@ -89,15 +89,21 @@ class Container(containers.DeclarativeContainer):
         logger=logging,
     )
 
-    order_service = providers.Factory(
-        OrderService,
-        logger=logging,
-    )
-
     connection_registry = providers.Resource(_init_connection_registry, logger=logging)
 
     realtime_service = providers.Factory(
         RealtimeService,
         registry=connection_registry,
         logger=logging,
+    )
+
+    # order_service must stay below realtime_service: these are plain Python
+    # class-body assignments evaluated top to bottom, so injecting
+    # realtime_service into a provider declared above it raises NameError at
+    # import time. Any future provider that depends on another must be
+    # declared after it, the same way.
+    order_service = providers.Factory(
+        OrderService,
+        logger=logging,
+        realtime_service=realtime_service,
     )
