@@ -224,6 +224,33 @@ class DishNotAvailableError(ConflictError):
     detail = "Rejected, dish unavailable"
 
 
+class OrderItemNotFoundError(NotFoundError):
+    """Raised when no Order Item matches the given id, or it belongs to a different Order."""
+
+    detail = "Order item not found"
+
+
+class OrderItemNotPendingError(ConflictError):
+    """Raised when editing an Order Item that is not currently pending (AC4, Story 3.4).
+
+    The guarded UPDATE cannot distinguish "already in_preparation" from "lost the race between
+    this request's read and write", and both use the same detail, mirroring
+    TableNotAvailableError's own precedent.
+    """
+
+    detail = "Rejected, item not pending"
+
+
+class OrderItemNotCancellableError(ConflictError):
+    """Raised when cancelling an Order Item that is not pending or in_preparation (AC2/AC3, Story 3.4).
+
+    Covers an item already ready or already cancelled, and the race where a second cancel/edit
+    lands between this request's read and its guarded UPDATE.
+    """
+
+    detail = "Rejected, item not cancellable"
+
+
 class UnitMismatchError(ConflictError):
     """Raised when a Recipe Ingredient line's unit differs from its Ingredient's own unit.
 
