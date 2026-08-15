@@ -17,6 +17,11 @@ interface AddOrderItemPayload {
   notes?: string | null;
 }
 
+interface EditOrderItemPayload {
+  quantity: number;
+  notes?: string | null;
+}
+
 /**
  * The shared cache key for one Order's item list.
  *
@@ -123,5 +128,50 @@ export function useAddOrderItem(
       await queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(orderId) });
       await queryClient.invalidateQueries({ queryKey: DISHES_QUERY_KEY });
     },
+  });
+}
+
+/**
+ * Edits a pending Order Item's quantity and/or note (AC1).
+ *
+ * Invalidates on settle, not only on success, matching `useAddOrderItem`'s own reasoning: a 409
+ * (the item is no longer pending) means this client's cached row is already stale, and the
+ * failing path needs the refetch too.
+ *
+ * @param orderId - The Order the item belongs to, or undefined before it is known.
+ * @returns The TanStack Query mutation for editing an Order Item.
+ */
+export function useEditOrderItem(
+  orderId: number | undefined,
+): UseMutationResult<OrderItem, Error, { itemId: number; payload: EditOrderItemPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ itemId, payload }: { itemId: number; payload: EditOrderItemPayload }) =>
+      apiRequest<OrderItem>(`/api/orders/${orderId}/items/${itemId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(orderId) }),
+  });
+}
+
+/**
+ * Cancels a pending or in_preparation Order Item (AC2/AC3).
+ *
+ * Invalidates on settle for the same reason `useEditOrderItem` does.
+ *
+ * @param orderId - The Order the item belongs to, or undefined before it is known.
+ * @returns The TanStack Query mutation for cancelling an Order Item.
+ */
+export function useCancelOrderItem(
+  orderId: number | undefined,
+): UseMutationResult<OrderItem, Error, number> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (itemId: number) =>
+      apiRequest<OrderItem>(`/api/orders/${orderId}/items/${itemId}/cancel`, { method: "POST" }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(orderId) }),
   });
 }

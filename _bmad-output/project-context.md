@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is under way: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is under way: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design).**
 
 ```
 backend/
@@ -53,9 +53,14 @@ backend/
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
   entrypoint.sh       Docker CMD: alembic upgrade head, then the app. Never in the lifespan.
-  alembic/            async-template migration environment; alembic/versions/ now has 4 revisions
+  alembic/            async-template migration environment; alembic/versions/ now has 5 revisions
                      (baseline, two case-insensitive-index fixes, Story 3.2's price_at_add column
-                     add). Neither Story 2.3 nor 2.4 needed one, both ORM schemas already fit
+                     add, Story 3.4's cancelled OrderItemStatus enum value). Neither Story 2.3 nor
+                     2.4 needed one, both ORM schemas already fit. Adding a Postgres enum value is
+                     the one migration shape autogenerate cannot produce (empty upgrade); it must be
+                     hand-written as `op.execute("ALTER TYPE ... ADD VALUE '...'")`, and its
+                     downgrade() must raise rather than fake a DROP TYPE, since Postgres cannot
+                     cleanly remove an enum value
   tests/              conftest.py + one test file per module below
   api/router.py      aggregator; include_router()s auth, admin, inventory, menu, tables, orders, websocket
   api/auth.py        POST /auth/login (sets the JWT httpOnly cookie), GET /auth/me (Story 1.4, the
@@ -86,7 +91,11 @@ backend/
                      route in the project gated to exactly one non-admin Role, no admin fallback).
                      Story 3.2 added GET /api/orders/tables/{table_id} (resolves table_id -> its
                      currently open Order, the read nothing before this could do), and GET/POST
-                     /api/orders/{order_id}/items, all on the same waiter-only OrdersDep
+                     /api/orders/{order_id}/items, all on the same waiter-only OrdersDep. Story 3.4
+                     added PATCH /api/orders/{order_id}/items/{item_id} (edit, stays on OrdersDep,
+                     waiter-only) and POST /api/orders/{order_id}/items/{item_id}/cancel (cancel,
+                     new OrderItemCancelDep = waiter, cook, admin — the project's first 3-role
+                     require_role() usage)
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -122,7 +131,15 @@ backend/
                      a state transfer) and add_item broadcasts order.item_added
                      (OrderItemResponse.model_validate(item).model_dump(mode="json"), so the pushed
                      shape can never drift from the REST response shape), both to UserRole.waiter
-                     only, both only after their db.commit() succeeds
+                     only, both only after their db.commit() succeeds. Story 3.4 added edit_item
+                     (guarded UPDATE, WHERE status == pending) and cancel_item (guarded UPDATE,
+                     WHERE status IN (pending, in_preparation)), the 5th/6th guarded-UPDATE
+                     application; a private _get_item seam (mirrors _get_order/_get_table) is the
+                     first _get_* seam in this service checking two ids (item id, and that it
+                     belongs to the given order). Deliberately NOT added: no compensating
+                     StockMovement on cancel (AD-11 is a prohibition, not a feature), and no
+                     realtime_service.broadcast() call from either method (no AC asks for live
+                     here, unlike 3.3's two producers)
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
                      calls into services/ (AD-1); broadcast(roles, event, payload).
                      **RESOLVED by Story 3.3**: OrderService is now its first producer (see above)
@@ -166,7 +183,9 @@ frontend/src/
   types/inventory.ts      Ingredient (Story 2.3)
   types/table.ts          TableStatus, Table (Story 2.4)
   types/order.ts          OrderStatus, Order (Story 3.1); OrderItemStatus, OrderItem,
-                        MAX_ORDER_ITEM_QUANTITY (Story 3.2, mirrors the backend's own cap by hand)
+                        MAX_ORDER_ITEM_QUANTITY (Story 3.2, mirrors the backend's own cap by hand).
+                        Story 3.4 added "cancelled" to the OrderItemStatus union, mirroring the
+                        backend's new enum value by hand, same as MAX_ORDER_ITEM_QUANTITY above
   services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12)
@@ -194,7 +213,10 @@ frontend/src/
                         AND menuService's DISHES_QUERY_KEY on settle, a 409 means the cached dish is
                         stale too). Story 3.3 exported orderItemsQueryKey (was module-private) so
                         TableOrderDetailPage.tsx's live order.item_added subscriber can invalidate
-                        the same key this file's own query/mutation already use
+                        the same key this file's own query/mutation already use. Story 3.4 added
+                        useEditOrderItem (PATCH, itemId + payload) and useCancelOrderItem (POST,
+                        itemId), both invalidating orderItemsQueryKey(orderId) onSettled, same
+                        rejected-mutation-needs-a-refresh rule as this file's other mutations
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
   components/orders/OrderItemStatusBadge.tsx  Story 3.2: the shared Order Item status badge
@@ -202,7 +224,8 @@ frontend/src/
                         than inlined so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can
                         import it verbatim. Scoped to today's 3-member OrderItemStatus, no fallback
                         case for a value outside it (deferred, same call Story 3.1's review made
-                        for TableTile.badgeColor), becomes live when Story 3.4 adds `cancelled`
+                        for TableTile.badgeColor). Story 3.4 added the 4th member: "Cancelled"
+                        label, Cancel icon, "error" MUI color (COLORS' type widened to include it)
   components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
                         AppShell (app bar + nav + Outlet; Story 1.7 added a Sign Out IconButton
                         next to ThemeToggle, same icon-button-with-visible-aria-label shape,
@@ -243,9 +266,22 @@ frontend/src/
                         undefined in the narrow window before the Order lookup resolves,
                         not a Retry that could never succeed; the heading resolves the Table's
                         table_number via the already-cached useTables(), never the route param's
-                        raw id), each with its own *.test.tsx alongside. Deliberately NOT in this
-                        story: an actions column on Order Item rows (edit/cancel, Story 3.4), live
-                        updates (Story 3.3), the Close-order bar/total (FR-8, a later story)
+                        raw id), each with its own *.test.tsx alongside. Story 3.4 added the
+                        Actions column: a per-row OrderItemRow subcomponent owning its own
+                        useEditOrderItem/useCancelOrderItem instances (per-row, not shared from the
+                        page — editing item A and cancelling item B are independent actions, unlike
+                        TablesPage.tsx's page-level-exclusive "open" mutation). pending gets Edit +
+                        a plain Cancel; in_preparation gets Cancel behind an in-row confirm-reveal
+                        (no modal, matching UsersPage.tsx's "Deactivate {name}?" precedent);
+                        ready/cancelled get no actions. The edit/cancel-discard "Back" and confirm
+                        "Confirm cancel" buttons are deliberately not both labeled "Cancel" (a
+                        review finding: two same-named "Cancel" buttons could render on screen at
+                        once with 2+ pending items). The editable Qty/Note fields are gated on
+                        `isEditing && item.status === "pending"`, not `isEditing` alone, so a row
+                        stuck mid-edit falls back to read-only if its item transitions away from
+                        pending under it. Deliberately NOT in this story: live updates for edit/
+                        cancel (Story 3.3 added live push for open/add only), the Close-order
+                        bar/total (FR-8, a later story)
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
@@ -786,6 +822,18 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   `deferred-work.md`). **Any story whose AC says "live", "instantly", or "the moment" for a mutation
   other than opening a Table or adding an Order Item still needs to check whether a producer exists
   for it.**
+- **Story 3.4 added the `cancelled` OrderItemStatus and its edit/cancel rules.** An OrderItem can be
+  edited (quantity/notes) only while `pending` (waiter-only); it can be cancelled from `pending` or
+  `in_preparation` (waiter, cook, **and** admin — the first 3-role `require_role()` grant in the
+  project). Cancelling never reverses stock (AD-11 applied for the first time in code, not just
+  stated). `list_items` stays deliberately unfiltered — a cancelled line still shows, it just carries
+  the `cancelled` badge — since no `Order.status` aggregate-derivation code exists yet to need
+  filtering (that lands with Epic 5). Neither `edit_item` nor `cancel_item` broadcasts over the
+  WebSocket; no AC in this story asked for "live", unlike Story 3.3's two producers. Backend grants
+  Cook/Admin cancel permission with **no matching frontend screen yet** (Kitchen Display is still a
+  placeholder, no admin/* screen shows Order data) — this is not a parity gap, it's the same
+  ahead-of-UI pattern `InventoryWriteDep` set for Admin between Stories 2.1 and 2.6; the Waiter's
+  `TableOrderDetailPage` is the only frontend consumer this story wires up.
 - A Recipe Suggestion never writes to a live Dish — Admin confirmation is the only path to the menu.
 - A newly created Dish is **unconditionally unavailable**, regardless of anything a caller submits
   (`CreateDishRequest` has no `is_available` field at all). Menu Categories are **create-only** in
@@ -1297,5 +1345,45 @@ already catch every failure mode they could raise so wrapping the call sites aga
 defensive code against an unreachable scenario, and `RealtimeService` being a `Factory` not
 `Singleton` is harmless since it only wraps a shared `Resource`-backed registry, matching every
 other service in this codebase. Suites are now **249 backend and 133 frontend tests**.
+
+**2026-08-15 patch (Story 3.4, Edit or Cancel an Order Item, plus its code review):** Third
+`orders`-domain endpoint pair. `OrderService.edit_item` (guarded UPDATE, `WHERE status = 'pending'`)
+and `cancel_item` (guarded UPDATE, `WHERE status IN ('pending', 'in_preparation')`) are the 5th/6th
+guarded-UPDATE applications in this codebase (AD-6/trap 18); a new private `_get_item` seam is the
+first `_get_*` seam checking two ids (item id, and that it belongs to the given order). `cancelled`
+added to `OrderItemStatus` via a hand-written Alembic migration (`ALTER TYPE ... ADD VALUE`,
+autogenerate cannot produce this; `downgrade()` raises rather than fake a `DROP TYPE`), applied and
+confirmed live against Postgres. `OrderItemCancelDep` (waiter, cook, admin) is the project's first
+3-role `require_role()` grant; `require_role(*roles)` already supported any number of roles (trap
+8), this was just the first call site to actually use three. Frontend: `TableOrderDetailPage.tsx`
+gained an Actions column via a new per-row `OrderItemRow` subcomponent, owning its own
+`useEditOrderItem`/`useCancelOrderItem` mutation instances (per-row, not shared — editing item A and
+cancelling item B are independent actions, unlike `TablesPage.tsx`'s page-level-exclusive "open"
+mutation). In-row confirm-reveal for the `in_preparation` cancel path (no modal, this codebase has
+never introduced one), reusing `UsersPage.tsx`'s "Deactivate {name}?" precedent.
+
+Backend/frontend parity was again an explicit session-level requirement; verified by inspecting
+`frontend/src/pages/cook/KitchenDisplayPage.tsx` and every `admin/*` page directly (not just
+trusting the story's own claim) to confirm no reachable Cook/Admin order-viewing surface exists yet
+— the Cook/Admin cancel grant shipping backend-only is the same ahead-of-UI pattern
+`InventoryWriteDep` set between Stories 2.1 and 2.6, not a gap.
+
+Code review: three parallel agents (Blind Hunter, Edge Case Hunter, Acceptance Auditor)
+independently converged on the same core defect — `notes: undefined` (dropped by `JSON.stringify`)
+sent instead of an explicit `null` when a Waiter cleared a note, violating this project's "always
+send both fields explicitly" rule. Also fixed: a dead-end where a row stuck mid-edit lost all action
+buttons if its item's status changed away from `pending` under it (the Qty/Note `TextField`s were
+gated on `isEditing` alone, not `isEditing && status === "pending"` like the action buttons were);
+two visually-identical "Cancel" buttons (discard-edit vs. cancel-item) that could render
+simultaneously with the same accessible name on a multi-pending-item order, the discard button
+renamed to "Back"; and a stale error `Alert` that survived discarding the failed action that caused
+it (mutations weren't `.reset()` on discard/back). Several findings verified as non-issues and
+dismissed: the migration-safety concern (it was verified live, not just reasoned about, per the
+story's own Debug Log), and two Change Log test-count inaccuracies (file totals mislabeled as
+new-test counts, corrected). Deferred (test-coverage gaps, non-blocking, see `deferred-work.md`): no
+regression test pinning that `edit_item`/`cancel_item` never broadcast; no positive AD-9 cross-Waiter
+cancel test; three near-identical role-cancel tests not collapsed into one parametrized test;
+`UpdateOrderItemRequest.notes` doesn't normalize an explicit `""` to `None` server-side. Suites are
+now **270 backend and 142 frontend tests**.
 
 Last Updated: 2026-08-15

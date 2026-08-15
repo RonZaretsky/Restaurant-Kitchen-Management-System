@@ -21,10 +21,9 @@ export interface Order {
 /**
  * Mirrors backend/data_models/order.py's OrderItemStatus enum values exactly.
  *
- * Deliberately only 3 members: `cancelled` (AD-11) does not exist on the backend enum until
- * Story 3.4 ships its own migration, do not add it speculatively.
+ * `cancelled` (AD-11) added by Story 3.4's own migration.
  */
-export type OrderItemStatus = "pending" | "in_preparation" | "ready";
+export type OrderItemStatus = "pending" | "in_preparation" | "ready" | "cancelled";
 
 /**
  * Mirrors backend/data_models/order.py's MAX_ORDER_ITEM_QUANTITY.

@@ -10,15 +10,20 @@ from data_models import (
     Order,
     OrderItem,
     OrderItemResponse,
+    OrderItemStatus,
     OrderStatus,
     RestaurantTable,
     TableStatus,
+    UpdateOrderItemRequest,
     User,
     UserRole,
 )
 from exceptions import (
     DishNotAvailableError,
     DishNotFoundError,
+    OrderItemNotCancellableError,
+    OrderItemNotFoundError,
+    OrderItemNotPendingError,
     OrderNotFoundError,
     TableNotAvailableError,
     TableNotFoundError,
@@ -249,6 +254,117 @@ class OrderService:
         )
         return item
 
+    async def edit_item(
+        self,
+        db: AsyncSession,
+        actor: User,
+        order_id: int,
+        item_id: int,
+        payload: UpdateOrderItemRequest,
+    ) -> OrderItem:
+        """Edit a pending Order Item's quantity and/or note (AC1).
+
+        Guarded on status = 'pending' at the moment of the write (AD-6): an item that has already
+        moved to in_preparation between this request's read and write must reject the edit, not
+        silently apply it (AC4). No live broadcast, this story's own ACs never say "live" for
+        edit/cancel the way Story 3.3's did for open/add.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter editing the item.
+            order_id: The id of the Order the item belongs to.
+            item_id: The id of the Order Item to edit.
+            payload: The submitted quantity and/or note.
+
+        Returns:
+            The updated Order Item.
+
+        Raises:
+            OrderItemNotFoundError: If no Order Item matches item_id on order_id.
+            OrderItemNotPendingError: If the item's status is not pending at the moment of the write.
+        """
+        item = await self._get_item(db, actor, order_id, item_id)
+
+        result = await db.execute(
+            update(OrderItem)
+            .where(OrderItem.id == item_id, OrderItem.status == OrderItemStatus.pending)
+            .values(quantity=payload.quantity, notes=payload.notes)
+        )
+        if result.rowcount == 0:
+            self._logger.warning(
+                "Order item edit rejected for user_id={}: order_id={} item_id={} is not pending",
+                actor.id,
+                order_id,
+                item_id,
+            )
+            await db.rollback()
+            raise OrderItemNotPendingError()
+
+        await db.commit()
+        await db.refresh(item)
+        self._logger.info(
+            "Order item edited by user_id={}: order_id={} item_id={} quantity={}",
+            actor.id,
+            order_id,
+            item_id,
+            payload.quantity,
+        )
+        return item
+
+    async def cancel_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
+        """Cancel a pending or in_preparation Order Item (AC2/AC3).
+
+        Guarded on status IN ('pending', 'in_preparation') at the moment of the write (AD-6): an
+        item already ready or already cancelled cannot be cancelled again. Cancelling never
+        reverses a prior stock deduction (AD-11), no compensating StockMovement is inserted here
+        or anywhere else; the frontend's confirm dialog for an in_preparation item is what tells
+        the actor this before they commit to it (AC3, UX-DR12), the backend enforces no stock rule
+        because there is none to enforce, only the state transition itself.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter, Cook, or Admin cancelling the item.
+            order_id: The id of the Order the item belongs to.
+            item_id: The id of the Order Item to cancel.
+
+        Returns:
+            The now-cancelled Order Item.
+
+        Raises:
+            OrderItemNotFoundError: If no Order Item matches item_id on order_id.
+            OrderItemNotCancellableError: If the item's status is not pending or in_preparation at
+                the moment of the write.
+        """
+        item = await self._get_item(db, actor, order_id, item_id)
+
+        result = await db.execute(
+            update(OrderItem)
+            .where(
+                OrderItem.id == item_id,
+                OrderItem.status.in_([OrderItemStatus.pending, OrderItemStatus.in_preparation]),
+            )
+            .values(status=OrderItemStatus.cancelled)
+        )
+        if result.rowcount == 0:
+            self._logger.warning(
+                "Order item cancel rejected for user_id={}: order_id={} item_id={} is not cancellable",
+                actor.id,
+                order_id,
+                item_id,
+            )
+            await db.rollback()
+            raise OrderItemNotCancellableError()
+
+        await db.commit()
+        await db.refresh(item)
+        self._logger.info(
+            "Order item cancelled by user_id={}: order_id={} item_id={}",
+            actor.id,
+            order_id,
+            item_id,
+        )
+        return item
+
     async def _get_order(self, db: AsyncSession, actor: User, order_id: int) -> Order:
         """Fetch a single Order by id, or raise if it does not exist.
 
@@ -272,6 +388,36 @@ class OrderService:
             )
             raise OrderNotFoundError()
         return order
+
+    async def _get_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
+        """Fetch a single Order Item by id, scoped to the given Order, or raise if either check fails.
+
+        The first `_get_*` seam in this service with two ids to check, not one: an item_id that
+        exists but belongs to a *different* Order must 404 the same as a missing item_id, never
+        silently operate on the wrong Order's item just because the numeric id happened to match.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter, Cook, or Admin performing the action, used only for logging.
+            order_id: The id of the Order the item is expected to belong to.
+            item_id: The id of the Order Item to fetch.
+
+        Returns:
+            The matching Order Item.
+
+        Raises:
+            OrderItemNotFoundError: If no Order Item matches item_id, or it belongs to a different Order.
+        """
+        item = await db.get(OrderItem, item_id)
+        if item is None or item.order_id != order_id:
+            self._logger.warning(
+                "Order item action rejected for user_id={}: no item_id={} on order_id={}",
+                actor.id,
+                item_id,
+                order_id,
+            )
+            raise OrderItemNotFoundError()
+        return item
 
     async def _get_table(self, db: AsyncSession, actor: User, table_id: int) -> RestaurantTable:
         """Fetch a single Restaurant Table by id, the open's read step.

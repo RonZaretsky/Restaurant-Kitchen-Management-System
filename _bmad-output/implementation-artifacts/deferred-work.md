@@ -485,3 +485,37 @@
   `_send` catches every per-connection failure individually, so the call is provably exception-safe
   as written. **Action:** if that guarantee ever changes (e.g. `broadcast()`'s own signature or
   behavior is altered upstream), revisit whether the call sites need their own guard.
+
+## Deferred from: code review of story-3-4 (2026-08-15)
+
+- **No regression test pins that `edit_item`/`cancel_item` never broadcast over the WebSocket.**
+  This story's scope note is explicit that no `order.item_edited`/`order.item_cancelled` event
+  should be added (no AC asks for "live"), and `OrderService` already holds a trivially-callable
+  `self._realtime_service` collaborator used by sibling methods (`open_table`, `add_item`). A
+  future change that copy-pastes a broadcast call into either method would ship with zero test
+  failures today. **Action:** the story that eventually adds live updates for order-item
+  transitions (likely Epic 5) should also add a negative test proving `edit_item`/`cancel_item`
+  stay silent unless that story explicitly changes that.
+- **No positive test for AD-9's "any Waiter/Cook/Admin may cancel any Order Item, not just their
+  own" rule** — the existing cross-Order tests only cover the negative (wrong `order_id`/`item_id`
+  pairing → 404), not a positive case where Waiter B successfully cancels an item on Waiter A's
+  order. Plausible behavior given no ownership filtering exists anywhere in this service, but
+  asserted only by absence of a negative test today. **Action:** add a positive cross-Waiter cancel
+  test if AD-9 is ever revisited or narrowed.
+- **Three near-identical role-cancel tests instead of one parametrized test**
+  (`test_waiter_can_cancel_a_pending_item`, `test_cook_can_cancel_a_pending_item`,
+  `test_admin_can_cancel_a_pending_item`, `backend/tests/test_orders.py`) — each differs only in
+  which role logs in. The story's own task wording allowed either shape. **Action:** collapse to a
+  `@pytest.mark.parametrize` over roles next time this file is touched, purely for de-duplication.
+- **`UpdateOrderItemRequest.notes` does not normalize an explicit empty string `""` to `None`**
+  (`backend/data_models/order.py`) — a non-UI caller submitting `notes: ""` directly would persist
+  an empty string rather than `NULL`, diverging from the "no note = NULL" convention used
+  elsewhere. The shipped frontend never does this (it now sends explicit `null` when a note is
+  cleared, fixed during this review). **Action:** add a `field_validator` normalizing `""` → `None`
+  if a second, non-frontend caller of this endpoint is ever built.
+- **`OrderItemRow`'s local `isConfirmingCancel`/`isEditing` state has no live-broadcast-driven
+  reset** if the same item transitions under a Waiter's open confirm/edit UI via another actor's
+  concurrent action — recoverable today (the guarded UPDATE still correctly 409s and the row's own
+  render guards now fall back to read-only once `item.status` changes, fixed during this review),
+  but not exercised by an automated test. **Action:** add a frontend test for this sequence if this
+  page ever gains live WebSocket-driven refetching (it doesn't yet — no AC asks for it).

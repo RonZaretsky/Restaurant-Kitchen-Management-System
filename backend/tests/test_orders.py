@@ -54,8 +54,14 @@ async def _login_as_waiter(client: AsyncClient, db_session: AsyncSession, userna
 
 
 async def _create_table(client: AsyncClient, db_session: AsyncSession, table_number: int = 1) -> dict:
-    admin = await _create_user(db_session, "table-admin", UserRole.admin)
-    await _login(client, "table-admin")
+    # Username derived from table_number, not a fixed literal: table_number is
+    # already required to be unique across every call site in this file, so
+    # this stays a no-op rename for every existing single-call test while
+    # letting a test that opens two tables of its own (Story 3.4's
+    # different-order tests) do so without a duplicate-username collision.
+    admin_username = f"table-admin-{table_number}"
+    await _create_user(db_session, admin_username, UserRole.admin)
+    await _login(client, admin_username)
     response = await client.post("/api/tables", json={"table_number": table_number, "capacity": 4})
     assert response.status_code == 201
     return response.json()
@@ -101,6 +107,17 @@ async def _create_available_dish(
     available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
     assert available_response.status_code == 200
     return available_response.json()
+
+
+async def _add_item(
+    client: AsyncClient, order_id: int, dish_id: int, quantity: int = 1, notes: str | None = None
+) -> dict:
+    payload: dict = {"dish_id": dish_id, "quantity": quantity}
+    if notes is not None:
+        payload["notes"] = notes
+    response = await client.post(f"/api/orders/{order_id}/items", json=payload)
+    assert response.status_code == 201
+    return response.json()
 
 
 @pytest.mark.asyncio
@@ -633,3 +650,428 @@ async def test_quantity_at_the_cap_is_accepted(client: AsyncClient, db_session: 
     # Assert
     assert response.status_code == 201
     assert response.json()["quantity"] == MAX_ORDER_ITEM_QUANTITY
+
+
+@pytest.mark.asyncio
+async def test_waiter_can_edit_a_pending_items_quantity_and_note(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Edit Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=20)
+    item = await _add_item(client, order["id"], dish["id"], quantity=1)
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 4, "notes": "extra spicy"}
+    )
+
+    # Assert
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quantity"] == 4
+    assert body["notes"] == "extra spicy"
+    assert body["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_waiter_can_cancel_a_pending_item(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Waiter Cancel Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=21)
+    item = await _add_item(client, order["id"], dish["id"])
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cook_can_cancel_a_pending_item(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Cook Cancel Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=22)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _create_user(db_session, "cancel-cook", UserRole.cook)
+    await _login(client, "cancel-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_cancel_a_pending_item(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Admin Cancel Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=23)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_admin(client, db_session, "cancel-admin")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_in_preparation_item_succeeds_without_reversing_stock(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: no automatic-deduction code exists yet (Epic 5), so in_preparation
+    # is reached by setting the row directly, matching this file's own
+    # precedent of pre-setting blocking state via db_session when no real
+    # transition endpoint exists to reach it through.
+    dish = await _create_available_dish(client, db_session, name="In Prep Cancel Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=24)
+    item = await _add_item(client, order["id"], dish["id"])
+    db_item = await db_session.get(OrderItem, item["id"])
+    db_item.status = OrderItemStatus.in_preparation
+    await db_session.commit()
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+
+    # Assert: cancelled, and no stock-related code path exists to have run or
+    # failed, AD-11 is a prohibition, not a feature, there is nothing to assert
+    # was reversed because nothing auto-deducts yet.
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_editing_an_in_preparation_item_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="In Prep Edit Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=25)
+    item = await _add_item(client, order["id"], dish["id"])
+    db_item = await db_session.get(OrderItem, item["id"])
+    db_item.status = OrderItemStatus.in_preparation
+    await db_session.commit()
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 9}
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not pending"
+
+
+@pytest.mark.asyncio
+async def test_editing_a_ready_item_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Ready Edit Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=26)
+    item = await _add_item(client, order["id"], dish["id"])
+    db_item = await db_session.get(OrderItem, item["id"])
+    db_item.status = OrderItemStatus.ready
+    await db_session.commit()
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 2}
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not pending"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_ready_item_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Ready Cancel Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=27)
+    item = await _add_item(client, order["id"], dish["id"])
+    db_item = await db_session.get(OrderItem, item["id"])
+    db_item.status = OrderItemStatus.ready
+    await db_session.commit()
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not cancellable"
+
+
+@pytest.mark.asyncio
+async def test_editing_an_already_cancelled_item_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Cancelled Edit Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=28)
+    item = await _add_item(client, order["id"], dish["id"])
+    cancel_response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+    assert cancel_response.status_code == 200
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 3}
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not pending"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_already_cancelled_item_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Double Cancel Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=29)
+    item = await _add_item(client, order["id"], dish["id"])
+    first_cancel = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+    assert first_cancel.status_code == 200
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not cancellable"
+
+
+@pytest.mark.asyncio
+async def test_editing_a_nonexistent_item_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=30)
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/999999", json={"quantity": 2}
+    )
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_nonexistent_item_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=31)
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/999999/cancel")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_editing_an_item_belonging_to_a_different_order_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Cross Order Edit Dish")
+    order_a, _waiter_a, _table_a = await _open_table(client, db_session, table_number=32)
+    item = await _add_item(client, order_a["id"], dish["id"])
+    order_b, _waiter_b, _table_b = await _open_table(client, db_session, table_number=33)
+
+    # Act: item belongs to order_a, addressed here via order_b's id.
+    response = await client.patch(
+        f"/api/orders/{order_b['id']}/items/{item['id']}", json={"quantity": 2}
+    )
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_item_belonging_to_a_different_order_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Cross Order Cancel Dish")
+    order_a, _waiter_a, _table_a = await _open_table(client, db_session, table_number=34)
+    item = await _add_item(client, order_a["id"], dish["id"])
+    order_b, _waiter_b, _table_b = await _open_table(client, db_session, table_number=35)
+
+    # Act
+    response = await client.post(f"/api/orders/{order_b['id']}/items/{item['id']}/cancel")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_warehouse_manager_cannot_edit_or_cancel_an_item(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="WH Blocked Item Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=36)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _create_user(db_session, "item-blocked-wh", UserRole.warehouse_manager)
+    await _login(client, "item-blocked-wh")
+
+    # Act / Assert
+    assert (
+        await client.patch(f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 2})
+    ).status_code == 403
+    assert (
+        await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+    ).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cook_cannot_edit_an_item(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: edit stays Waiter-only, unlike cancel.
+    dish = await _create_available_dish(client, db_session, name="Cook Blocked Edit Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=37)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _create_user(db_session, "edit-blocked-cook", UserRole.cook)
+    await _login(client, "edit-blocked-cook")
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 2}
+    )
+
+    # Assert
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_edit_an_item(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Admin Blocked Edit Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=38)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_admin(client, db_session, "edit-blocked-admin")
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 2}
+    )
+
+    # Assert
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_cannot_edit_or_cancel_an_item(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Anon Blocked Item Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=39)
+    item = await _add_item(client, order["id"], dish["id"])
+    client.cookies.clear()
+
+    # Act / Assert
+    assert (
+        await client.patch(f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 2})
+    ).status_code == 401
+    assert (
+        await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+    ).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_race_between_edit_and_a_competing_transition_only_one_succeeds(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange: the item is pending when this request's read step runs, but a
+    # second request moves it to in_preparation strictly between that read and
+    # this request's guarded UPDATE.
+    dish = await _create_available_dish(client, db_session, name="Race Edit Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=40)
+    item = await _add_item(client, order["id"], dish["id"])
+
+    original_get_item = OrderService._get_item
+
+    async def get_item_then_start_prep(self, db, actor, requested_order_id, requested_item_id):
+        loaded = await original_get_item(self, db, actor, requested_order_id, requested_item_id)
+        assert loaded.status is OrderItemStatus.pending
+        racing = await db_session.get(OrderItem, requested_item_id)
+        racing.status = OrderItemStatus.in_preparation
+        await db_session.commit()
+        return loaded
+
+    monkeypatch.setattr(OrderService, "_get_item", get_item_then_start_prep)
+
+    # Act
+    response = await client.patch(
+        f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 5}
+    )
+
+    # Assert
+    assert response.status_code == 409
+
+    # Assert: the write did not land.
+    monkeypatch.undo()
+    db_session.expire_all()
+    unchanged = await db_session.get(OrderItem, item["id"])
+    assert unchanged.quantity == 1
+    assert unchanged.status is OrderItemStatus.in_preparation
+
+
+@pytest.mark.asyncio
+async def test_race_between_cancel_and_a_competing_transition_only_one_succeeds(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange: the item is pending when this request's read step runs, but a
+    # second request moves it to ready strictly between that read and this
+    # request's guarded UPDATE.
+    dish = await _create_available_dish(client, db_session, name="Race Cancel Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=41)
+    item = await _add_item(client, order["id"], dish["id"])
+
+    original_get_item = OrderService._get_item
+
+    async def get_item_then_mark_ready(self, db, actor, requested_order_id, requested_item_id):
+        loaded = await original_get_item(self, db, actor, requested_order_id, requested_item_id)
+        assert loaded.status is OrderItemStatus.pending
+        racing = await db_session.get(OrderItem, requested_item_id)
+        racing.status = OrderItemStatus.ready
+        await db_session.commit()
+        return loaded
+
+    monkeypatch.setattr(OrderService, "_get_item", get_item_then_mark_ready)
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+
+    # Assert
+    assert response.status_code == 409
+
+    # Assert: the write did not land.
+    monkeypatch.undo()
+    db_session.expire_all()
+    unchanged = await db_session.get(OrderItem, item["id"])
+    assert unchanged.status is OrderItemStatus.ready
+
+
+@pytest.mark.asyncio
+async def test_last_write_wins_on_two_sequential_edits(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="LWW Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=42)
+    item = await _add_item(client, order["id"], dish["id"])
+
+    # Act: two sequential edits, simulating two overlapping actors, both succeed.
+    first = await client.patch(f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 2})
+    second = await client.patch(f"/api/orders/{order['id']}/items/{item['id']}", json={"quantity": 5})
+
+    # Assert: no conflict response, the second commit simply wins (NFR-6).
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["quantity"] == 5

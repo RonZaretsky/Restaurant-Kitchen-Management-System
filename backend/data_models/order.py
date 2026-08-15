@@ -39,6 +39,7 @@ class OrderItemStatus(enum.Enum):
     pending = "pending"
     in_preparation = "in_preparation"
     ready = "ready"
+    cancelled = "cancelled"
 
 
 class RestaurantTable(Base):
@@ -168,6 +169,21 @@ class CreateOrderItemRequest(BaseModel):
     """
 
     dish_id: int = Field(gt=0, le=_INT4_MAX)
+    quantity: int = Field(gt=0, le=MAX_ORDER_ITEM_QUANTITY)
+    notes: str | None = None
+
+
+class UpdateOrderItemRequest(BaseModel):
+    """Body of a Waiter's request to edit a pending Order Item's quantity and/or note.
+
+    Not a partial PATCH like UpdateTableRequest: quantity is always required, there is no
+    meaningful "leave quantity alone" partial state the way a Table's number/capacity can be
+    edited independently. notes stays optional/nullable exactly like CreateOrderItemRequest's own
+    notes field; no reject-explicit-null/at-least-one-field validators are needed here, since the
+    frontend always sends both fields and None already means "no note" uniformly on both the add
+    and edit paths.
+    """
+
     quantity: int = Field(gt=0, le=MAX_ORDER_ITEM_QUANTITY)
     notes: str | None = None
 
