@@ -58,7 +58,9 @@ backend/
   tests/              conftest.py + one test file per module below
   api/router.py      aggregator; include_router()s auth, admin, inventory, menu, tables, orders, websocket
   api/auth.py        POST /auth/login (sets the JWT httpOnly cookie), GET /auth/me (Story 1.4, the
-                     frontend's only way to learn who is logged in across a page reload)
+                     frontend's only way to learn who is logged in across a page reload), POST
+                     /auth/logout (Story 1.7: clears the cookie, deliberately NOT gated behind
+                     CurrentUserDep so it succeeds even against a missing/expired cookie)
   api/admin.py        Story 1.3's User-management routes, the reference implementation for
                      role-gated routes with declared error responses (see trap 8)
   api/inventory.py    Story 2.1: POST /api/inventory/ingredients, the first route to permit more
@@ -150,7 +152,10 @@ frontend/src/
   services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12)
-  services/authService.ts  useCurrentUser / useLogin
+  services/authService.ts  useCurrentUser / useLogin / useLogout (Story 1.7: invalidates
+                        CURRENT_USER_QUERY_KEY on success, the mirror of useLogin's own
+                        invalidation; no manual navigate(), RequireAuth's existing 401-redirect
+                        handles it once the refetch reports the session gone)
   services/menuService.ts  Story 2.3: categories/dishes/recipe-ingredient hooks; Story 2.6:
                         useCreateCategory / useCreateDish (payload types private to this file,
                         matching tableService.ts's precedent)
@@ -165,8 +170,10 @@ frontend/src/
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
   components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
-                        AppShell (app bar + nav + Outlet), AppShellSkeleton (the cold-load
-                        stand-in: app bar shape, not a blank page), ThemeModeProvider/ThemeToggle,
+                        AppShell (app bar + nav + Outlet; Story 1.7 added a Sign Out IconButton
+                        next to ThemeToggle, same icon-button-with-visible-aria-label shape,
+                        rendering its own isError Alert on a failed logout), AppShellSkeleton (the
+                        cold-load stand-in: app bar shape, not a blank page), ThemeModeProvider/ThemeToggle,
                         ConnectionStatusContext/ReconnectingBanner, RealtimeProvider (Story 1.5:
                         owns the single WebSocket connection, drives ConnectionStatusContext with
                         real state, capped exponential backoff reconnect, exposes useRealtime()'s
@@ -671,6 +678,13 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   second connection from the same User closes the first. A connection's session is re-verified
   periodically while it stays open, so a socket cannot outlive its JWT or survive a Role change/
   deactivation indefinitely (bounded by the re-verification interval, not instant).
+- **RESOLVED by Story 1.7.** User logout was missing from the PRD/epics entirely until a
+  `correct-course` pass added FR-26. `POST /api/auth/logout` clears the client's cookie only, it
+  does **not** revoke the underlying JWT server-side (v1 has no revocation store, AD-3), so a token
+  copied out before logout stays valid until its natural 8-hour expiry if replayed. An accepted v1
+  scope limitation (closed-staff, physical-terminal threat model), not a bug. The route is
+  deliberately unauthenticated (no `CurrentUserDep`), so it succeeds even against a missing or
+  expired cookie, logout must never itself 401 the person trying to end their session.
 
 ---
 
@@ -772,7 +786,7 @@ from `frontend/`.
   mechanism directly (a focused probe) rather than assuming coverage.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **225 tests**, frontend **117 tests** (as of Story 3.1).
+Backend suite is now **229 tests**, frontend **119 tests** (as of Story 1.7).
 
 ---
 
@@ -1037,5 +1051,35 @@ neither `pnpm test` nor routine development ever ran a full `docker compose buil
 build`'s `tsc -b` step fails the whole image on a type error. Fixed as an incidental one-line
 change, unrelated to this story's own scope. Domain rules gained the note that opening a Table is
 the second guarded-UPDATE application. Suites are now **225 backend and 117 frontend tests**.
+
+**2026-08-14 patch (Story 1.7, User Logout, plus its code review):** Added retroactively via
+`correct-course` after discovering, during manual testing, that logout did not exist anywhere in the
+PRD, epics, UX mockups, or code (confirmed by grep across `backend/`/`frontend/src/`, zero matches).
+FR-26 added to the PRD; Story 1.7 added to Epic 1 alongside the other auth-lifecycle stories, even
+though Epic 1's other 6 stories were already `done`.
+
+`POST /api/auth/logout` (`api/auth.py`) clears the session cookie via `response.delete_cookie` with
+attributes matching `login`'s own `set_cookie` call exactly (a mismatch would leave the browser's
+cookie in place). Deliberately **not** gated behind `CurrentUserDep`, unlike every other protected
+route: logout must succeed even when the presented cookie is missing, expired, or otherwise invalid,
+so a User on a lapsed tab can still click Sign Out and land cleanly on Login. This is a one-route
+exception to the "every mutating action requires an authenticated session" posture (NFR-2), justified
+because logout mutates no domain resource, only the client's own cookie. `useLogout()` (`authService.ts`)
+mirrors `useLogin()`'s invalidation shape and deliberately adds **no** manual `navigate()`, it relies
+on `RequireAuth`'s existing 401-redirect firing once the invalidated `useCurrentUser()` query refetches
+as unauthorized, reusing the exact same path an expired session already takes rather than adding a
+second, parallel one. `AppShell.tsx` gained a Sign Out `IconButton` next to `ThemeToggle`.
+
+The review's most substantive finding, after 7 others were dismissed as false positives on inspection
+(the "cookie attribute mismatch" and "CSRF" claims didn't survive checking `login`'s own `set_cookie`
+call and `SameSite=lax`'s actual semantics; a "malformed cookie" test would have exercised nothing
+since `logout` never reads the cookie's contents at all): `useLogout()` had no `onError` handling and
+`AppShell` showed no failure state, violating this file's own "every mutation renders its own isError"
+rule (see "the shape every new domain screen should copy" above) — the first place that rule was
+checked against shell-level chrome rather than a page-level form. Fixed with an inline `Alert`
+rendering the backend's own error message, per UX-DR17, plus a covering integration test. Domain rules
+gained the note that logout clears the client's cookie only, v1 has no server-side JWT revocation
+(AD-3), a token copied out beforehand stays valid until natural expiry, an accepted v1 limitation, not
+a gap this story could or should close. Suites are now **229 backend and 119 frontend tests**.
 
 Last Updated: 2026-08-14

@@ -62,6 +62,10 @@ describe("login through to the Role home surface, against the real auth service"
             ? delayed(jsonResponse(200, COOK))
             : Promise.resolve(jsonResponse(401, { detail: "Not authenticated" }));
         }
+        if (path.includes("/api/auth/logout")) {
+          signedIn = false;
+          return Promise.resolve(jsonResponse(204, undefined));
+        }
         return Promise.reject(new Error(`unexpected request: ${path}`));
       }),
     );
@@ -103,6 +107,78 @@ describe("login through to the Role home surface, against the real auth service"
     // It flaked twice in three full-suite runs once Story 2.6 grew the suite
     // enough to contend for CPU, while passing every time in isolation. The
     // assertions are unchanged; only the patience is.
+  }, 20000);
+
+  it("returns to Login when Sign Out is clicked, against the real logout service", async () => {
+    // Arrange
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const memoryRouter = createMemoryRouter(routes, { initialEntries: ["/login"] });
+    const user = userEvent.setup();
+
+    // Act: sign in first, same as the login test.
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeModeProvider>
+          <RouterProvider router={memoryRouter} />
+        </ThemeModeProvider>
+      </QueryClientProvider>,
+    );
+    await user.type(await screen.findByLabelText(/Username/), "acohen");
+    await user.type(screen.getByLabelText(/Password/), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("heading", { name: "Kitchen Display" });
+
+    // Act: click Sign Out.
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    // Assert
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Kitchen Display" })).not.toBeInTheDocument();
+  }, 20000);
+
+  it("shows an inline error and stays signed in when the logout request fails", async () => {
+    // Arrange: logout itself 500s, so the session must remain intact.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = String(url);
+        if (path.includes("/api/auth/login")) {
+          signedIn = true;
+          return Promise.resolve(jsonResponse(200, { role: "cook" }));
+        }
+        if (path.includes("/api/auth/me")) {
+          return signedIn
+            ? delayed(jsonResponse(200, COOK))
+            : Promise.resolve(jsonResponse(401, { detail: "Not authenticated" }));
+        }
+        if (path.includes("/api/auth/logout")) {
+          return Promise.resolve(jsonResponse(500, { detail: "Internal server error" }));
+        }
+        return Promise.reject(new Error(`unexpected request: ${path}`));
+      }),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const memoryRouter = createMemoryRouter(routes, { initialEntries: ["/login"] });
+    const user = userEvent.setup();
+
+    // Act: sign in, then attempt to sign out.
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeModeProvider>
+          <RouterProvider router={memoryRouter} />
+        </ThemeModeProvider>
+      </QueryClientProvider>,
+    );
+    await user.type(await screen.findByLabelText(/Username/), "acohen");
+    await user.type(screen.getByLabelText(/Password/), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("heading", { name: "Kitchen Display" });
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    // Assert: an error shows (the backend's own detail message, per UX-DR17),
+    // and the session is not disturbed.
+    expect(await screen.findByText("Internal server error")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Kitchen Display" })).toBeInTheDocument();
   }, 20000);
 
   it("keeps the User signed in when the session check fails for a transport reason", async () => {

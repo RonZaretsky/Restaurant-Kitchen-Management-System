@@ -1,10 +1,15 @@
+import LogoutIcon from "@mui/icons-material/Logout";
+import Alert from "@mui/material/Alert";
 import AppBar from "@mui/material/AppBar";
 import Box from "@mui/material/Box";
+import IconButton from "@mui/material/IconButton";
 import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import { styled } from "@mui/material/styles";
 import { NavLink, Outlet } from "react-router";
 
+import { useLogout } from "../../services/authService";
+import { ApiError } from "../../services/httpClient";
 import type { CurrentUser, UserRole } from "../../types/user";
 import { ReconnectingBanner } from "./ReconnectingBanner";
 import { ThemeToggle } from "./ThemeToggle";
@@ -62,6 +67,7 @@ const NavItem = styled(NavLink)(({ theme }) => ({
  */
 export function AppShell({ user }: { user: CurrentUser }) {
   const navItems = ROLE_NAV_ITEMS[user.role];
+  const logoutMutation = useLogout();
 
   return (
     <>
@@ -81,8 +87,23 @@ export function AppShell({ user }: { user: CurrentUser }) {
             {user.full_name} · {ROLE_LABELS[user.role]}
           </Typography>
           <ThemeToggle />
+          <IconButton
+            color="inherit"
+            onClick={() => logoutMutation.mutate()}
+            disabled={logoutMutation.isPending}
+            aria-label="Sign out"
+          >
+            <LogoutIcon />
+          </IconButton>
         </Toolbar>
       </AppBar>
+      {logoutMutation.isError && (
+        <Alert severity="error">
+          {logoutMutation.error instanceof ApiError
+            ? logoutMutation.error.message
+            : "Could not sign out. Try again."}
+        </Alert>
+      )}
       <ReconnectingBanner />
       <Box component="main" sx={{ padding: 3 }}>
         <Outlet />
