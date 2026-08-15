@@ -37,7 +37,9 @@ interface CreateDishPayload {
 }
 
 const CATEGORIES_QUERY_KEY = ["menu", "categories"] as const;
-const DISHES_QUERY_KEY = ["menu", "dishes"] as const;
+
+/** The shared cache key for the Dish list, also invalidated by orderService.ts's useAddOrderItem(). */
+export const DISHES_QUERY_KEY = ["menu", "dishes"] as const;
 
 /** The shared cache key for one Dish's recipe, used by the query and every mutation's invalidation. */
 function recipeIngredientsQueryKey(dishId: number) {

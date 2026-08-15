@@ -1,8 +1,21 @@
+from decimal import Decimal
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import Ingredient, Order, RestaurantTable, TableStatus, Unit, User, UserRole
+from data_models import (
+    Ingredient,
+    Order,
+    OrderItem,
+    OrderItemStatus,
+    RestaurantTable,
+    TableStatus,
+    Unit,
+    User,
+    UserRole,
+)
+from data_models.order import MAX_ORDER_ITEM_QUANTITY
 from services.auth_service import AuthService
 from services.order_service import OrderService
 
@@ -360,6 +373,14 @@ async def test_waiter_can_add_an_available_dish_to_an_open_order(
     assert body["notes"] == "no onions"
     assert body["price_at_add"] == dish["price"]
 
+    # Assert: the row really carries the dish's price, not just the response body.
+    db_session.expire_all()
+    db_item = await db_session.get(OrderItem, body["id"])
+    assert db_item.price_at_add == Decimal(dish["price"])
+    assert db_item.status is OrderItemStatus.pending
+    assert db_item.quantity == 2
+    assert db_item.notes == "no onions"
+
 
 @pytest.mark.asyncio
 async def test_adding_an_unavailable_dish_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
@@ -535,3 +556,80 @@ async def test_price_at_add_is_unaffected_by_a_later_dish_price_change(
     assert items_response.status_code == 200
     item = next(i for i in items_response.json() if i["id"] == item_id)
     assert item["price_at_add"] == "20.00"
+
+
+@pytest.mark.asyncio
+async def test_waiter_can_list_dishes(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: the Table/Order detail screen cannot render its dish picker without
+    # this read, so Story 3.2 widened GET /api/menu/dishes to permit a Waiter.
+    dish = await _create_available_dish(client, db_session, name="Waiter Readable Dish")
+    await _login_as_waiter(client, db_session, username="waiter-menu")
+
+    # Act
+    response = await client.get("/api/menu/dishes")
+
+    # Assert
+    assert response.status_code == 200
+    assert any(d["id"] == dish["id"] for d in response.json())
+
+
+@pytest.mark.asyncio
+async def test_warehouse_manager_cannot_list_dishes(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: the widening above is Waiter-only, no AC grants a Warehouse Manager
+    # the dish catalog.
+    await _create_user(db_session, "wh-menu", UserRole.warehouse_manager)
+    await _login(client, "wh-menu")
+
+    # Act
+    response = await client.get("/api/menu/dishes")
+
+    # Assert
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_waiter_cannot_read_a_dishs_recipe(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: the dish-list widening is deliberately narrower than MenuReadDep,
+    # a Waiter gets the catalog but never the kitchen-side recipe.
+    dish = await _create_available_dish(client, db_session, name="Recipe Guarded Dish")
+    await _login_as_waiter(client, db_session, username="waiter-recipe")
+
+    # Act
+    response = await client.get(f"/api/menu/dishes/{dish['id']}/recipe-ingredients")
+
+    # Assert
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_quantity_above_the_cap_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: quantity is capped so price_at_add * quantity stays inside
+    # Order.total_amount's Numeric(10, 2) range (FR-8/AD-7).
+    dish = await _create_available_dish(client, db_session, name="Capped Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=11)
+
+    # Act
+    response = await client.post(
+        f"/api/orders/{order['id']}/items",
+        json={"dish_id": dish["id"], "quantity": MAX_ORDER_ITEM_QUANTITY + 1},
+    )
+
+    # Assert
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_quantity_at_the_cap_is_accepted(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: the cap itself is a valid value, the boundary is inclusive.
+    dish = await _create_available_dish(client, db_session, name="At Cap Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=12)
+
+    # Act
+    response = await client.post(
+        f"/api/orders/{order['id']}/items",
+        json={"dish_id": dish["id"], "quantity": MAX_ORDER_ITEM_QUANTITY},
+    )
+
+    # Assert
+    assert response.status_code == 201
+    assert response.json()["quantity"] == MAX_ORDER_ITEM_QUANTITY

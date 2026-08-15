@@ -429,3 +429,38 @@
   No AC requires this; NFR-5's "concurrent terminals" describes separate devices, not same-browser
   tabs. **Action:** if this becomes a real complaint, a `BroadcastChannel` or `storage` event listener
   in `authService.ts` would close it.
+
+## Deferred from: code review of story-3.2 (2026-08-15)
+
+- **`get_open_order_for_table` uses `.scalar_one_or_none()` on a set nothing constrains to one row**
+  (`backend/services/order_service.py:126`). The docstring asserts "only one non-closed Order can
+  exist per Table at a time," but nothing enforces it: there is no unique constraint or partial
+  index on `orders(table_id) WHERE status <> 'closed'`, and the invariant rests entirely on
+  `open_table`'s guarded UPDATE of `RestaurantTable.status`. If a second non-closed Order ever
+  lands, `MultipleResultsFound` is raised, which is in neither the `NotFoundError` nor the
+  `ConflictError` family, so it surfaces as an unhandled 500 (trap 17's shape). Unreachable today,
+  since no code path returns a Table to `available`. **Action:** when FR-8's close ships (or Story
+  3.3/3.4 touch this area), add a partial unique index on `orders(table_id) WHERE status <>
+  'closed'`, or soften the query to `.order_by(Order.id.desc()).limit(1)`.
+- **`OrderItemStatusBadge` has no fallback for a status outside its three-member map**
+  (`frontend/src/components/orders/OrderItemStatusBadge.tsx:40`). All three lookups
+  (`LABELS`/`ICONS`/`COLORS`) return `undefined` for an unrecognized value, so MUI renders a bare
+  default Chip with no icon and no text rather than failing loudly. `apiRequest` casts JSON with no
+  runtime validation, so the TS union is not enforcement. This mirrors the deferral Story 3.1's
+  review already recorded for `TableTile.badgeColor`. **Action:** Story 3.4 adds `cancelled` to
+  `OrderItemStatus` (AD-11) — add an exhaustive guard at that point, so a missing mapping fails
+  visibly instead of rendering an empty Status cell.
+- **`CreateOrderItemRequest.notes` is unbounded and unstripped** (`backend/data_models/order.py:157`).
+  No `max_length` against a `Text` column, and no `_strip_and_require_content`, so a whitespace-only
+  or multi-megabyte note is accepted, stored, and re-sent in every `list_items` response (and later
+  to Epic 5's Kitchen Display). Pre-existing project-wide pattern: `CreateDishRequest.description`
+  is identical, and this story's spec explicitly chose to match it rather than diverge. **Action:**
+  if note length ever causes a real payload or display problem, bound `notes`, `description`, and
+  any sibling free-text fields together in one pass rather than piecemeal.
+- **Two screens now disagree on the currency symbol.** `TableOrderDetailPage.tsx`'s Order Item rows
+  render `42.00 ₪`, following that surface's own mockup (`key-table-order-detail.html:325`), while
+  `frontend/src/pages/cook/DishesPage.tsx:76` renders `` `$${dish.price}` ``. Only one can be
+  correct, and no AC in Story 3.2 covers the Cook's Dishes screen, so it was left alone rather than
+  changed silently. **Action:** pick one symbol (the mockups and the project's Israeli setting both
+  point at ₪), then apply it in one pass, ideally via a single shared `formatPrice` helper rather
+  than a literal in each screen.

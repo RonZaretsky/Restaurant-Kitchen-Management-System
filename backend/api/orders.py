@@ -40,7 +40,9 @@ _GET_ORDER_ERROR_DESCRIPTIONS = {
 _ITEM_ERROR_DESCRIPTIONS = {
     401: _ERROR_DESCRIPTIONS[401],
     403: _ERROR_DESCRIPTIONS[403],
-    404: "No matching Order was found",
+    # Both causes, not just the Order one: add_order_item raises
+    # DishNotFoundError for an unknown dish_id as well.
+    404: "No matching Order or Dish was found",
     409: "The Dish is currently unavailable",
 }
 

@@ -27,6 +27,15 @@ export interface Order {
 export type OrderItemStatus = "pending" | "in_preparation" | "ready";
 
 /**
+ * Mirrors backend/data_models/order.py's MAX_ORDER_ITEM_QUANTITY.
+ *
+ * Kept in sync by hand, the same way the status unions above mirror their
+ * backend enums. Submitting more than this is a 422, so the form rejects it
+ * first rather than letting the server be the only thing that says no.
+ */
+export const MAX_ORDER_ITEM_QUANTITY = 99;
+
+/**
  * Mirrors the JSON shape of backend/data_models/order.py's OrderItemResponse.
  *
  * `price_at_add` stays a string, same Decimal-as-string reasoning as `Order.total_amount` above.

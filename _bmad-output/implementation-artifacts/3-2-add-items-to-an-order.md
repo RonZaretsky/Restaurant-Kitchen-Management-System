@@ -6,7 +6,7 @@ story: 2
 
 # Story 3.2: Add Items to an Order
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -436,6 +436,98 @@ established in Story 1.0 (AD-4).
     `npx tsc -b` from `frontend/` (Story 3.1 left one pre-existing unrelated error in
     `IngredientsPage.tsx(97,23)`, confirm no *new* errors, that one is not this story's to fix).
 
+### Review Findings
+
+- [x] [Review][Patch] **`quantity` accepts up to int4 max, but `Order.total_amount` is
+  `Numeric(10, 2)`** — bounded only by `le=_INT4_MAX`, so 2,147,483,647 portions is accepted, and
+  FR-8's later `price_at_add * quantity` overflows the 99,999,999.99 ceiling as an unhandled 500 on
+  an Order nobody can close. **Resolved by Ofek 2026-08-15: cap at 99 per line**, backend
+  `Field(gt=0, le=99)` mirrored in the frontend's `parsePositiveQuantity`; a larger order takes a
+  second line [backend/data_models/order.py:156]
+- [x] [Review][Patch] **A Waiter gets 403 from `GET /api/menu/dishes`, so the entire page renders
+  as an error for the only Role that can reach it** — `MenuReadDep` permits admin+cook only
+  [backend/api/menu.py:38]; the page's `useDishes()` and its combined `isError` gate mean AC1/AC2/AC3
+  are all unreachable in a running system. Widen `MenuReadDep` to include `UserRole.waiter`, the
+  exact precedent `TablesReadDep` set in Story 3.1, and add a backend test asserting a Waiter gets
+  200 [frontend/src/pages/waiter/TableOrderDetailPage.tsx:82]
+- [x] [Review][Patch] **The page heading prints the Table's database id labelled as a table number**
+  — tiles are labelled `table.table_number` but navigate with `table.id`, and the heading renders
+  the route param verbatim, so a table with `table_number=12, id=3` shows "Table 3"
+  [frontend/src/pages/waiter/TableOrderDetailPage.tsx:129]
+- [x] [Review][Patch] **The migration cannot be re-applied once any Order Item exists** —
+  `price_at_add` is added `nullable=False` with no `server_default`, so `downgrade` then `upgrade`
+  fails on a NOT NULL violation, and `entrypoint.sh` runs `alembic upgrade head` on every container
+  start (trap 2). Add with a `server_default`, then drop the default in the same revision
+  [backend/alembic/versions/819cce996301_add_price_at_add_to_order_items.py:36]
+- [x] [Review][Patch] **A 409 "dish unavailable" never refreshes the dish list, so the same
+  rejection repeats forever** — `useAddOrderItem` invalidates only the items key, and only
+  `onSuccess`. The stale copy driving the failure is `DISHES_QUERY_KEY`, which is never invalidated
+  on either path, contradicting the `onSettled` precedent `useUpdateTable`/`useOpenTable` set
+  [frontend/src/services/orderService.ts:104]
+- [x] [Review][Patch] **Retry fires the items query while its id is still `undefined`** —
+  `refetch()` bypasses `enabled`, so clicking Retry (which is shown precisely when `order` is
+  undefined) requests `/api/orders/undefined/items` and gets a 422 that then latches as the
+  user-visible reason the page failed [frontend/src/pages/waiter/TableOrderDetailPage.tsx:89]
+- [x] [Review][Patch] **A non-numeric route param renders "Table NaN" and a raw Pydantic 422** —
+  `Number(tableId)` is unguarded (trap 19); `/waiter/tables/abc` yields `NaN` in the heading and
+  "Input should be a valid integer..." in the alert. The file's own `parsePositiveQuantity` is the
+  correct pattern, just not applied here [frontend/src/pages/waiter/TableOrderDetailPage.tsx:72]
+- [x] [Review][Patch] **A table with no open Order is presented as a transport failure with a Retry
+  that can never succeed** — `isError` is used bare with no `error.status` discrimination, so a
+  legitimate domain state (404, reached by direct URL to an `available` table) is indistinguishable
+  from being offline, and offers no way forward
+  [frontend/src/pages/waiter/TableOrderDetailPage.tsx:134]
+- [x] [Review][Patch] **The disabled submit button and the invalid quantity field state no visible
+  reason** — `error={...}` with no `helperText`, `disabled={!canSubmit}` with no accompanying text,
+  against project-context's standing rule that a disabled control's reason must be visible text
+  [frontend/src/pages/waiter/TableOrderDetailPage.tsx:173]
+- [x] [Review][Patch] **`docs/database-schema.md` no longer matches the ORM** — the `OrderItem`
+  table has no `price_at_add` row, while project-context asserts as fact that `data_models/` mirrors
+  this doc, and AD-7 names `price_at_add` as one of only two schema deltas the spine requires
+  [docs/database-schema.md:123]
+- [x] [Review][Patch] **`_ITEM_ERROR_DESCRIPTIONS`'s 404 covers only one of its two real causes** —
+  `add_order_item` also raises `DishNotFoundError` for an unknown `dish_id`, which the docstring
+  documents and a test exercises. This story's own Task 5 warned against exactly this, and it was
+  applied correctly to the sibling dict [backend/api/orders.py:43]
+- [x] [Review][Patch] **The AC1 price assertion skips the direct DB read its own task mandated** —
+  Task 7 required verifying `price_at_add` "via a direct read, not just the response body"; the test
+  asserts only the POST response. The file already carries Story 3.1's precedent for the direct-read
+  shape [backend/tests/test_orders.py:355]
+- [x] [Review][Patch] **Completion Notes overstate the new backend test count** — the note claims
+  "17 new"; `test_orders.py` went from 12 tests at `baseline_commit` to 25, so 13 are new
+  [_bmad-output/implementation-artifacts/3-2-add-items-to-an-order.md]
+- [x] [Review][Patch] **Price renders as a bare string with no currency** — Task 6 asked for
+  `price_at_add` "formatted" and the mockup shows "42.00 ₪"; the cell renders "42.00"
+  [frontend/src/pages/waiter/TableOrderDetailPage.tsx:216]
+- [x] [Review][Patch] **An empty or whitespace-only note renders as a blank cell, not the em dash**
+  — `item.notes ?? "—"` substitutes only on `null`, never on `""` or `"   "`. Unreachable through
+  this page's own form (which trims to `undefined`) but reachable via the API
+  [frontend/src/pages/waiter/TableOrderDetailPage.tsx:187]
+- [x] [Review][Patch] **An empty dish list leaves a dead form with no stated reason** — the
+  `order && dishes` guard passes on `[]`, giving an empty picker beside a permanently disabled
+  button on a fresh install [frontend/src/pages/waiter/TableOrderDetailPage.tsx:154]
+- [x] [Review][Patch] **The add-item submit test could not fail if the page posted the wrong
+  payload** — the mock hardcoded the `notes` value it echoed back and never read `init.body`, so the
+  assertion passed regardless of what was actually submitted (the "test that pins the wrong thing"
+  anti-pattern project-context records). Under-triaged when findings were first written up, caught
+  while rewriting the file; the mock now echoes the parsed body and the test asserts
+  `dish_id`/`quantity`/`notes` on the captured request
+  [frontend/src/pages/waiter/TableOrderDetailPage.test.tsx]
+- [x] [Review][Defer] **Currency symbol now disagrees between two screens** — this page renders
+  `42.00 ₪` per its own mockup, while `DishesPage.tsx:76` renders `$${dish.price}`. Only one can be
+  right. Left alone here rather than silently changing the Cook's screen, which no AC in this story
+  covers; flagged for Ofek [frontend/src/pages/cook/DishesPage.tsx:76]
+- [x] [Review][Defer] **`get_open_order_for_table` degrades to an unhandled 500 if its unenforced
+  invariant ever breaks** [backend/services/order_service.py:126] — deferred, unreachable today; no
+  code path returns a Table to `available`, so a second non-closed Order per Table cannot exist yet.
+- [x] [Review][Defer] **`OrderItemStatusBadge` has no fallback for a status outside its three-member
+  map** [frontend/src/components/orders/OrderItemStatusBadge.tsx:40] — deferred, matches the
+  precedent Story 3.1's review set for `TableTile.badgeColor`; becomes live when Story 3.4 adds
+  `cancelled`.
+- [x] [Review][Defer] **`notes` is unbounded and unstripped** [backend/data_models/order.py:157] —
+  deferred, pre-existing project-wide pattern (`CreateDishRequest.description` is identical); this
+  story's spec explicitly chose to match it.
+
 ## Dev Notes
 
 ### Architecture compliance
@@ -576,7 +668,7 @@ Alembic migration, and stayed up for the backend test run.
   shape). No actions column on the Order Item rows, no live updates, no Close-order bar, all
   explicitly out of scope per this story's own scope note.
 - Full regression run clean: `uv run pytest` — 242 passed (backend, including 25 in
-  `test_orders.py`, 17 new). `npx tsc -b --force` — zero errors (the `IngredientsPage.tsx(97,23)`
+  `test_orders.py`, 13 new). `npx tsc -b --force` — zero errors (the `IngredientsPage.tsx(97,23)`
   error Story 3.1 flagged as pre-existing is gone; unrelated to this story, not investigated
   further). `pnpm test` (via `corepack pnpm`, `pnpm` was not on PATH in this environment) — the new
   `TableOrderDetailPage.test.tsx` (5 tests) passed cleanly every run, isolated and as part of the
@@ -586,8 +678,48 @@ Alembic migration, and stayed up for the backend test run.
   every time when run in isolation; none of those three files were touched by this story. Flagged
   here rather than silently ignored, but not fixed as out of this story's scope.
 
+### Code Review Patches (2026-08-15)
+
+All 16 patch findings applied; 3 deferred, 4 dismissed as noise. Notable:
+
+- **The blocker all three review layers found independently:** `GET /api/menu/dishes` was gated to
+  admin+cook, so the Waiter, the only Role that can reach this page, got a 403 and the combined
+  `isError` rendered the entire surface as an error. AC1/AC2/AC3 were unreachable in a running
+  system despite every test passing, because the frontend test stubbed that endpoint 200 and
+  `test_menu.py` contained no Waiter case at all. Fixed with a new `DishCatalogReadDep`
+  (admin, cook, waiter) on `list_dishes` **only**, deliberately narrower than widening
+  `MenuReadDep`, which would also have handed a Waiter every Dish's recipe. Three backend tests
+  now pin it: a Waiter gets 200 on the catalog, a Warehouse Manager still gets 403, and a Waiter
+  still gets 403 on `recipe-ingredients`.
+- The page heading rendered the Table's primary key labelled as a table number (tiles are labelled
+  `table_number` but navigate with `id`). Now resolved through the already-cached `useTables()`;
+  the test fixture uses `id: 1, table_number: 12` so a regression fails loudly.
+- The migration was not re-appliable: `nullable=False` with no `server_default` meant a
+  downgrade/upgrade cycle would fail once any Order Item existed, and `entrypoint.sh` runs
+  `alembic upgrade head` on every container start. Now adds with a temporary default and drops it.
+  Verified by hand against Postgres: downgraded, inserted an `order_items` row, re-upgraded
+  successfully, confirmed the column ends `NOT NULL` with no lingering default.
+- `quantity` was bounded only by int4, so `price_at_add * quantity` would overflow
+  `Order.total_amount`'s `Numeric(10, 2)` when FR-8 computes it. Capped at 99 per line
+  (`MAX_ORDER_ITEM_QUANTITY`, Ofek's call), mirrored in the frontend parser so an over-cap value is
+  refused before it becomes a raw Pydantic 422.
+- A 404 from the order lookup is no longer presented as a transport failure with a Retry that could
+  never succeed; a table with no open Order gets its own message and a link back to Tables.
+- The add-item test previously hardcoded the value it asserted and never read the request body, so
+  it could not have failed if the page posted the wrong dish or quantity. It now echoes the parsed
+  body back and asserts the captured request.
+
+Regression after patches: backend **247 passed** (was 242, +5 new), frontend **130 tests, the 11
+in `TableOrderDetailPage.test.tsx` all passing** (was 5), `npx tsc -b --force` zero errors. The
+same three pre-existing files (`UsersPage`, `IngredientsPage`, `MenuManagementPage`) still
+intermittently time out only under full-suite parallel load and pass in isolation, none of them
+touched by this story or these patches.
+
 ### File List
 
+- `backend/api/menu.py` (modified — added `DishCatalogReadDep`, widened `list_dishes` for Waiter)
+- `docs/database-schema.md` (modified — documented the `price_at_add` column)
+- `frontend/src/services/menuService.ts` (modified — exported `DISHES_QUERY_KEY`)
 - `backend/data_models/order.py` (modified — added `price_at_add` to `OrderItem`,
   `CreateOrderItemRequest`, `OrderItemResponse`)
 - `backend/data_models/__init__.py` (modified — exported the two new schemas)

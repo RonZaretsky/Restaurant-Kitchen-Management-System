@@ -8,6 +8,7 @@ import {
 
 import type { Order, OrderItem } from "../types/order";
 import { apiRequest } from "./httpClient";
+import { DISHES_QUERY_KEY } from "./menuService";
 import { TABLES_QUERY_KEY } from "./tableService";
 
 interface AddOrderItemPayload {
@@ -51,13 +52,18 @@ export function useOpenTable(): UseMutationResult<Order, Error, number> {
  * is the read that resolves table_id -> the Order to render, whether reached by direct navigation,
  * a page refresh, or a second Waiter opening the same page.
  *
- * @param tableId - The Table whose open Order is being fetched.
+ * `enabled: tableId !== null` keeps a malformed route param (`/waiter/tables/abc`)
+ * from being sent to the server as a request that can only ever 422.
+ *
+ * @param tableId - The Table whose open Order is being fetched, or null if the
+ *   route param was not a usable id.
  * @returns The TanStack Query result for that Table's open Order.
  */
-export function useOrderForTable(tableId: number): UseQueryResult<Order, Error> {
+export function useOrderForTable(tableId: number | null): UseQueryResult<Order, Error> {
   return useQuery({
     queryKey: ["orders", "table", tableId] as const,
     queryFn: () => apiRequest<Order>(`/api/orders/tables/${tableId}`),
+    enabled: tableId !== null,
     retry: false,
   });
 }
@@ -87,6 +93,11 @@ export function useOrderItems(orderId: number | undefined): UseQueryResult<Order
  * reason `useOrderItems` accepts it optionally. The caller only invokes the returned mutation once
  * an Order is known, submission is gated on that in the page.
  *
+ * Invalidates the Dish list on settle as well as the item list. A rejected add is the case that
+ * most needs it: a 409 "dish unavailable" means this client's cached copy of that Dish is already
+ * stale, and without a refetch the picker keeps offering it, so every retry fails identically.
+ * Same reasoning `useUpdateTable`/`useOpenTable` documented for the Table list.
+ *
  * @param orderId - The Order the item is being added to, or undefined before it is known.
  * @returns The TanStack Query mutation for submitting a new Order Item.
  */
@@ -101,6 +112,9 @@ export function useAddOrderItem(
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(orderId) }),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(orderId) });
+      await queryClient.invalidateQueries({ queryKey: DISHES_QUERY_KEY });
+    },
   });
 }

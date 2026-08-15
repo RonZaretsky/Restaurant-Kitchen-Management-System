@@ -14,6 +14,13 @@ from .base import Base
 from .menu import _INT4_MAX
 
 
+# The most portions of one Dish a single Order Item may carry. Keeps
+# price_at_add * quantity inside Order.total_amount's Numeric(10, 2) range
+# (FR-8/AD-7); see CreateOrderItemRequest. Mirrored by the frontend's own
+# quantity parser so the two agree on what is submittable.
+MAX_ORDER_ITEM_QUANTITY = 99
+
+
 class TableStatus(enum.Enum):
     available = "available"
     occupied = "occupied"
@@ -150,10 +157,18 @@ class OrderResponse(BaseModel):
 
 
 class CreateOrderItemRequest(BaseModel):
-    """Body of a Waiter's request to add an Order Item to an open Order."""
+    """Body of a Waiter's request to add an Order Item to an open Order.
+
+    quantity is capped well below the int4 bound the other id fields use. The
+    Order total (FR-8) is the sum of price_at_add * quantity over these rows,
+    and Order.total_amount is Numeric(10, 2), so an int4-sized quantity would
+    overflow that column and raise an unhandled error on an Order nobody could
+    then close. 99 is a realistic per-line maximum; a larger order takes a
+    second line.
+    """
 
     dish_id: int = Field(gt=0, le=_INT4_MAX)
-    quantity: int = Field(gt=0, le=_INT4_MAX)
+    quantity: int = Field(gt=0, le=MAX_ORDER_ITEM_QUANTITY)
     notes: str | None = None
 
 
