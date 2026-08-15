@@ -48,6 +48,44 @@ const PENDING_ITEM = {
   price_at_add: "42.00",
 };
 
+const PENDING_ITEM_WITH_NOTE = {
+  ...PENDING_ITEM,
+  notes: "no onions",
+};
+
+const IN_PREPARATION_ITEM = {
+  id: 2,
+  order_id: 10,
+  dish_id: 5,
+  quantity: 2,
+  status: "in_preparation",
+  notes: null,
+  cook_id: 3,
+  price_at_add: "42.00",
+};
+
+const READY_ITEM = {
+  id: 3,
+  order_id: 10,
+  dish_id: 5,
+  quantity: 1,
+  status: "ready",
+  notes: null,
+  cook_id: 3,
+  price_at_add: "42.00",
+};
+
+const CANCELLED_ITEM = {
+  id: 4,
+  order_id: 10,
+  dish_id: 5,
+  quantity: 1,
+  status: "cancelled",
+  notes: null,
+  cook_id: null,
+  price_at_add: "42.00",
+};
+
 function jsonResponse(status: number, body: unknown): Response {
   const text = JSON.stringify(body);
   return {
@@ -324,6 +362,241 @@ describe("TableOrderDetailPage", () => {
 
     // Assert
     expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
+  });
+
+  it("edits a pending item, always sending both quantity and note", async () => {
+    // Arrange: the mock echoes the submitted body back, matching the add-item
+    // test's own "never hardcode what the page sent" pattern, so a page that
+    // diffed against cached data (forbidden outright, project-context.md) or
+    // omitted a field would fail here.
+    let items = [PENDING_ITEM];
+    let submitted: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/items/1") && init.method === "PATCH") {
+          submitted = JSON.parse(String(init.body));
+          const updated = { ...PENDING_ITEM, ...submitted };
+          items = [updated];
+          return Promise.resolve(jsonResponse(200, updated));
+        }
+        return stubReads({ items })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act: two "Qty"/"Note" fields exist at once once editing starts, the
+    // add-item form's own and this row's edit fields, so disambiguate by
+    // taking the row's (the second of each pair in DOM order).
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const qtyFields = screen.getAllByLabelText("Qty");
+    const qtyField = qtyFields[qtyFields.length - 1];
+    await user.clear(qtyField);
+    await user.type(qtyField, "4");
+    const noteFields = screen.getAllByLabelText("Note (optional)");
+    await user.type(noteFields[noteFields.length - 1], "extra spicy");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Assert
+    await screen.findByText("extra spicy");
+    expect(submitted).toEqual({ quantity: 4, notes: "extra spicy" });
+  });
+
+  it("sends an explicit null, not an omitted field, when a note is cleared to empty", async () => {
+    // Arrange
+    let items = [PENDING_ITEM_WITH_NOTE];
+    let submitted: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/items/1") && init.method === "PATCH") {
+          submitted = JSON.parse(String(init.body));
+          const updated = { ...PENDING_ITEM_WITH_NOTE, ...submitted };
+          items = [updated];
+          return Promise.resolve(jsonResponse(200, updated));
+        }
+        return stubReads({ items })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const noteFields = screen.getAllByLabelText("Note (optional)");
+    await user.clear(noteFields[noteFields.length - 1]);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Assert: "notes" must be present with an explicit null, not silently
+    // dropped from the payload (JSON.stringify would omit an undefined value).
+    await vi.waitFor(() => expect(submitted).toBeDefined());
+    expect(submitted).toHaveProperty("notes", null);
+  });
+
+  it("discarding an edit clears the row back to read-only with no stale error", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/items/1") && init.method === "PATCH") {
+          return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not pending" }));
+        }
+        return stubReads({ items: [PENDING_ITEM] })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act: a failed Save leaves an inline error, then discarding the edit
+    // must clear that error rather than leaving it displayed under a
+    // now-read-only row.
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Rejected, item not pending");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    // Assert
+    expect(screen.queryByText("Rejected, item not pending")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("cancels a pending item immediately, with no confirm step", async () => {
+    // Arrange
+    let items = [PENDING_ITEM];
+    const cancelMock = vi.fn(() => Promise.resolve(jsonResponse(200, { ...PENDING_ITEM, status: "cancelled" })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/items/1/cancel") && init.method === "POST") {
+          items = [{ ...PENDING_ITEM, status: "cancelled" }];
+          return cancelMock();
+        }
+        return stubReads({ items })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    // Assert: exactly one call, no intermediate confirm click was needed.
+    await vi.waitFor(() => expect(cancelMock).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+  });
+
+  it("requires an explicit confirm before cancelling an in_preparation item", async () => {
+    // Arrange
+    let items = [IN_PREPARATION_ITEM];
+    const cancelMock = vi.fn(() =>
+      Promise.resolve(jsonResponse(200, { ...IN_PREPARATION_ITEM, status: "cancelled" })),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/items/2/cancel") && init.method === "POST") {
+          items = [{ ...IN_PREPARATION_ITEM, status: "cancelled" }];
+          return cancelMock();
+        }
+        return stubReads({ items })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act: the first Cancel click only reveals the confirm, it must not call the endpoint yet.
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    // Assert: nothing sent yet, the warning is visible.
+    expect(cancelMock).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(/Stock already deducted for this item will not be restored/),
+    ).toBeInTheDocument();
+
+    // Act: only the explicit Confirm click sends the request.
+    await user.click(screen.getByRole("button", { name: "Confirm cancel" }));
+
+    // Assert
+    await vi.waitFor(() => expect(cancelMock).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+  });
+
+  it("has no Edit control on an in_preparation row", async () => {
+    // Arrange
+    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [IN_PREPARATION_ITEM] })));
+
+    // Act
+    renderPage();
+
+    // Assert
+    await screen.findByText("In preparation");
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+  });
+
+  it("has no action controls on a ready or cancelled row", async () => {
+    // Arrange
+    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [READY_ITEM, CANCELLED_ITEM] })));
+
+    // Act
+    renderPage();
+
+    // Assert
+    await screen.findByText("Ready");
+    await screen.findByText("Cancelled");
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("shows a rejected edit inline", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/items/1") && init.method === "PATCH") {
+          return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not pending" }));
+        }
+        return stubReads({ items: [PENDING_ITEM] })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Assert
+    expect(await screen.findByText("Rejected, item not pending")).toBeInTheDocument();
+  });
+
+  it("shows a rejected cancel inline", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/items/1/cancel") && init.method === "POST") {
+          return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not cancellable" }));
+        }
+        return stubReads({ items: [PENDING_ITEM] })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    // Assert
+    expect(await screen.findByText("Rejected, item not cancellable")).toBeInTheDocument();
   });
 
   it("shows a retry-capable error when the order cannot be loaded", async () => {

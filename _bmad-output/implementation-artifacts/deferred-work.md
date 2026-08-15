@@ -485,3 +485,85 @@
   `_send` catches every per-connection failure individually, so the call is provably exception-safe
   as written. **Action:** if that guarantee ever changes (e.g. `broadcast()`'s own signature or
   behavior is altered upstream), revisit whether the call sites need their own guard.
+
+## Deferred from: code review of story-3-4 (2026-08-15)
+
+- **No regression test pins that `edit_item`/`cancel_item` never broadcast over the WebSocket.**
+  This story's scope note is explicit that no `order.item_edited`/`order.item_cancelled` event
+  should be added (no AC asks for "live"), and `OrderService` already holds a trivially-callable
+  `self._realtime_service` collaborator used by sibling methods (`open_table`, `add_item`). A
+  future change that copy-pastes a broadcast call into either method would ship with zero test
+  failures today. **Action:** the story that eventually adds live updates for order-item
+  transitions (likely Epic 5) should also add a negative test proving `edit_item`/`cancel_item`
+  stay silent unless that story explicitly changes that.
+- **No positive test for AD-9's "any Waiter/Cook/Admin may cancel any Order Item, not just their
+  own" rule** — the existing cross-Order tests only cover the negative (wrong `order_id`/`item_id`
+  pairing → 404), not a positive case where Waiter B successfully cancels an item on Waiter A's
+  order. Plausible behavior given no ownership filtering exists anywhere in this service, but
+  asserted only by absence of a negative test today. **Action:** add a positive cross-Waiter cancel
+  test if AD-9 is ever revisited or narrowed.
+- **Three near-identical role-cancel tests instead of one parametrized test**
+  (`test_waiter_can_cancel_a_pending_item`, `test_cook_can_cancel_a_pending_item`,
+  `test_admin_can_cancel_a_pending_item`, `backend/tests/test_orders.py`) — each differs only in
+  which role logs in. The story's own task wording allowed either shape. **Action:** collapse to a
+  `@pytest.mark.parametrize` over roles next time this file is touched, purely for de-duplication.
+- **`UpdateOrderItemRequest.notes` does not normalize an explicit empty string `""` to `None`**
+  (`backend/data_models/order.py`) — a non-UI caller submitting `notes: ""` directly would persist
+  an empty string rather than `NULL`, diverging from the "no note = NULL" convention used
+  elsewhere. The shipped frontend never does this (it now sends explicit `null` when a note is
+  cleared, fixed during this review). **Action:** add a `field_validator` normalizing `""` → `None`
+  if a second, non-frontend caller of this endpoint is ever built.
+- **`OrderItemRow`'s local `isConfirmingCancel`/`isEditing` state has no live-broadcast-driven
+  reset** if the same item transitions under a Waiter's open confirm/edit UI via another actor's
+  concurrent action — recoverable today (the guarded UPDATE still correctly 409s and the row's own
+  render guards now fall back to read-only once `item.status` changes, fixed during this review),
+  but not exercised by an automated test. **Action:** add a frontend test for this sequence if this
+  page ever gains live WebSocket-driven refetching (it doesn't yet — no AC asks for it).
+
+## Deferred from: code review of story-4-1 (2026-08-15)
+
+- **Movement history's "Recorded by" column shows a raw user id (`User #10`), never a resolved
+  name**, unlike the UX mockup's "Noa (Warehouse Manager)" (`frontend/src/pages/warehouse/IngredientDetailPage.tsx`,
+  `StockMovementResponse.performed_by`). Deliberate, documented in the story's own Dev Notes at
+  build time: matches `OrderItemResponse.cook_id`'s existing no-join precedent, but unlike `cook_id`
+  (resolvable client-side via `useDishes()`, a menu-read endpoint every relevant role can already
+  call), there is no endpoint any non-Admin role can call to resolve a *user* id to a name —
+  `GET /api/admin/users` is Admin-only, and neither Warehouse Manager nor Cook has another path to
+  it. Confirmed during manual testing (2026-08-15) and explicitly left deferred rather than fixed:
+  no AC requires it, and building a new read endpoint open to more roles (or denormalizing the name
+  onto `StockMovementResponse` at write time) is new scope beyond this story. **Action:** if a later
+  story (4.2/4.3, or a polish pass) wants name resolution here, the two live options are a
+  lightweight "resolve ids to names" endpoint open to Warehouse Manager/Cook, or denormalizing
+  `performed_by`'s name onto the `StockMovement` row at insert time.
+
+- **`current_stock + delta` is not bounded against `Ingredient.current_stock`'s own `Numeric(10,3)`
+  ceiling** (`backend/services/inventory_service.py`, `record_movement`). A value that pushes an
+  already-near-ceiling `current_stock` over it raises a raw `asyncpg.NumericValueOutOfRangeError`
+  (unhandled 500) instead of a clean 422. Already flagged and consciously accepted in Story 4.1's
+  own Dev Notes as matching `CreateIngredientRequest.current_stock`'s identical existing gap; no AC
+  requires a fix. **Action:** if this ever bites a real warehouse manager, add a bound check before
+  the write (or a `CHECK` constraint) and translate the overflow into a 422, applied to both this
+  method and `create_ingredient` together rather than piecemeal.
+- **Backend test coverage gaps on Story 4.1's new endpoints** (`backend/tests/test_inventory.py`):
+  no test for a decimal-places-only precision overflow (valid digit count, too many decimal
+  places, distinct from the total-digit-count overflow case that is tested); `StockMovementResponse.ingredient_id`/`reference_id`
+  are never asserted against the URL param / expected `null`; Admin is never explicitly tested
+  against the two new GET endpoints (only Warehouse Manager/Cook/Waiter are). **Action:** low
+  priority, add opportunistically if this file is touched again by Story 4.2/4.3.
+- **Frontend test coverage gaps on `IngredientDetailPage`** (`frontend/src/pages/warehouse/IngredientDetailPage.test.tsx`):
+  no test simulates a non-404 failure (500/network) to exercise the "Could not load... Retry"
+  path (code inspection shows the branch is correctly implemented); the "preserves typed form
+  values" test checks only the quantity field, not movement-type or notes; the generic
+  non-`ApiError` fallback message is never exercised. **Action:** low priority, same file Story
+  4.2/4.3 will likely touch next.
+- **No client-side precision guard on the quantity field** (`frontend/src/pages/warehouse/IngredientDetailPage.tsx`,
+  `parsePositiveAmount`/`parseAdjustmentAmount`) — an over-precision value passes the client-side
+  regex and only fails server-side with a 422, shown inline with form values preserved, so this is
+  a wasted round trip rather than a silent failure. Same class as the parser gap Story 2.6's review
+  already recorded for `MenuManagementPage.tsx`/`IngredientsPage.tsx`'s own numeric parsers.
+  **Action:** tighten alongside those if a future pass unifies the numeric-parser helpers.
+- **`isQuantityInvalid` shows no visible reason when quantity is typed before a movement type is
+  selected** (`frontend/src/pages/warehouse/IngredientDetailPage.tsx`) — Submit stays disabled with
+  no inline text explaining why until a type is also chosen. Minor; the form's own layout makes the
+  missing selection fairly self-evident. **Action:** add a helper text or select-level error state
+  if this proves confusing in manual testing.

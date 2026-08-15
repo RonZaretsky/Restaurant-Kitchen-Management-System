@@ -22,11 +22,13 @@ import { useDishes } from "../../services/menuService";
 import {
   orderItemsQueryKey,
   useAddOrderItem,
+  useCancelOrderItem,
+  useEditOrderItem,
   useOrderForTable,
   useOrderItems,
 } from "../../services/orderService";
 import { useTables } from "../../services/tableService";
-import { MAX_ORDER_ITEM_QUANTITY } from "../../types/order";
+import { MAX_ORDER_ITEM_QUANTITY, type OrderItem } from "../../types/order";
 
 /** Shown when a request fails for a reason that carries no user-safe message of its own. */
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
@@ -98,6 +100,203 @@ function formatPrice(priceAtAdd: string): string {
 }
 
 /**
+ * One row of the Order Item table, owning its own local edit/confirm state (Story 3.4).
+ *
+ * Mirrors `TablesSetupPage.tsx`'s `TableListRow`/`UsersPage.tsx`'s `UserListRow` shape: editing or
+ * confirming one row must not re-render or reset the whole list, and each row gets its own
+ * `useEditOrderItem`/`useCancelOrderItem` mutation instance (not one shared across every row),
+ * so editing one item and cancelling another are independent actions, never cross-row disabled or
+ * cross-row error bleed the way a single page-level shared mutation would produce.
+ *
+ * Action visibility follows the ACs exactly: `pending` gets Edit + a plain Cancel (AC1/AC2, no
+ * confirm needed, nothing was deducted yet); `in_preparation` gets Cancel only, behind an in-row
+ * confirm reveal stating the prior stock deduction will not be restored (AC3/AC4/UX-DR12, the
+ * `UsersPage.tsx` "Deactivate {name}?" in-row-reveal precedent, not a modal, this codebase has
+ * never introduced one); `ready`/`cancelled` get no actions at all.
+ *
+ * @param item - The Order Item this row describes.
+ * @param dishName - The resolved name of the item's Dish.
+ * @param orderId - The Order this item belongs to, passed through to the mutations.
+ * @returns The table row(s) for this Order Item (a second row when the cancel confirm is open).
+ */
+function OrderItemRow({
+  item,
+  dishName,
+  orderId,
+}: {
+  item: OrderItem;
+  dishName: string;
+  orderId: number | undefined;
+}) {
+  const editMutation = useEditOrderItem(orderId);
+  const cancelMutation = useCancelOrderItem(orderId);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [isConfirmingCancel, setIsConfirmingCancel] = useState(false);
+  const [draftQuantity, setDraftQuantity] = useState(String(item.quantity));
+  const [draftNotes, setDraftNotes] = useState(item.notes ?? "");
+
+  // Resyncs from the server only while not mid-edit, same guarded pattern
+  // TablesSetupPage's TableListRow uses, so a background refetch cannot
+  // clobber what the Waiter is actively typing.
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftQuantity(String(item.quantity));
+      setDraftNotes(item.notes ?? "");
+    }
+  }, [item.quantity, item.notes, isEditing]);
+
+  const parsedDraftQuantity = parseQuantity(draftQuantity);
+  const isDraftQuantityInvalid = draftQuantity !== "" && parsedDraftQuantity === null;
+
+  const handleSaveEdit = () => {
+    if (parsedDraftQuantity === null) {
+      return;
+    }
+    const trimmedNotes = draftNotes.trim();
+    editMutation.mutate(
+      {
+        itemId: item.id,
+        payload: { quantity: parsedDraftQuantity, notes: trimmedNotes === "" ? null : trimmedNotes },
+      },
+      { onSuccess: () => setIsEditing(false) },
+    );
+  };
+
+  const handleCancelItem = () => {
+    cancelMutation.mutate(item.id, { onSuccess: () => setIsConfirmingCancel(false) });
+  };
+
+  const handleDiscardEdit = () => {
+    setIsEditing(false);
+    editMutation.reset();
+  };
+
+  const handleBackFromConfirm = () => {
+    setIsConfirmingCancel(false);
+    cancelMutation.reset();
+  };
+
+  const rowError = editMutation.isError
+    ? errorMessage(editMutation.error)
+    : cancelMutation.isError
+      ? errorMessage(cancelMutation.error)
+      : undefined;
+
+  return (
+    <>
+      <TableRow>
+        <TableCell>
+          <OrderItemStatusBadge status={item.status} />
+        </TableCell>
+        <TableCell>{dishName}</TableCell>
+        <TableCell>
+          {isEditing && item.status === "pending" ? (
+            <TextField
+              size="small"
+              label="Note (optional)"
+              value={draftNotes}
+              onChange={(event) => setDraftNotes(event.target.value)}
+            />
+          ) : item.notes?.trim() ? (
+            item.notes
+          ) : (
+            "—"
+          )}
+        </TableCell>
+        <TableCell align="right">
+          {isEditing && item.status === "pending" ? (
+            <TextField
+              size="small"
+              label="Qty"
+              value={draftQuantity}
+              onChange={(event) => setDraftQuantity(event.target.value)}
+              error={isDraftQuantityInvalid}
+              helperText={isDraftQuantityInvalid ? INVALID_QUANTITY_MESSAGE : undefined}
+              slotProps={{ htmlInput: { inputMode: "numeric" } }}
+              sx={{ width: 110 }}
+            />
+          ) : (
+            item.quantity
+          )}
+        </TableCell>
+        <TableCell align="right">{formatPrice(item.price_at_add)}</TableCell>
+        <TableCell align="right">
+          {item.status === "pending" && !isEditing && (
+            <>
+              <Button size="small" onClick={() => setIsEditing(true)}>
+                Edit
+              </Button>
+              <Button size="small" color="error" onClick={handleCancelItem} disabled={cancelMutation.isPending}>
+                Cancel
+              </Button>
+            </>
+          )}
+          {item.status === "pending" && isEditing && (
+            <>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={handleSaveEdit}
+                disabled={parsedDraftQuantity === null || editMutation.isPending}
+              >
+                Save
+              </Button>
+              <Button size="small" onClick={handleDiscardEdit} disabled={editMutation.isPending}>
+                Back
+              </Button>
+            </>
+          )}
+          {item.status === "in_preparation" && !isConfirmingCancel && (
+            <Button size="small" color="error" onClick={() => setIsConfirmingCancel(true)}>
+              Cancel
+            </Button>
+          )}
+        </TableCell>
+      </TableRow>
+      {item.status === "in_preparation" && isConfirmingCancel && (
+        <TableRow>
+          <TableCell colSpan={6} sx={{ borderBottom: "none" }}>
+            <Alert
+              severity="warning"
+              action={
+                <Box sx={{ display: "flex", gap: 1 }}>
+                  <Button
+                    size="small"
+                    color="inherit"
+                    onClick={handleBackFromConfirm}
+                    disabled={cancelMutation.isPending}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    size="small"
+                    color="error"
+                    onClick={handleCancelItem}
+                    disabled={cancelMutation.isPending}
+                  >
+                    Confirm cancel
+                  </Button>
+                </Box>
+              }
+            >
+              Stock already deducted for this item will not be restored. Cancel anyway?
+            </Alert>
+          </TableCell>
+        </TableRow>
+      )}
+      {rowError && (
+        <TableRow>
+          <TableCell colSpan={6} sx={{ borderBottom: "none" }}>
+            <Alert severity="error">{rowError}</Alert>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+/**
  * The Table/Order detail surface (Story 3.2).
  *
  * Reached by table_id alone (`/waiter/tables/:tableId`), so the first thing this page does is
@@ -111,9 +310,8 @@ function formatPrice(priceAtAdd: string): string {
  * right now, which is a legitimate state reachable by URL and gets its own message rather than a
  * Retry button that could never succeed.
  *
- * No actions column on the Order Item rows (edit/cancel is Story 3.4), no live updates (Story
- * 3.3), no Close order bar (a later FR-8 story). Only the add-dish form and a read-only item list
- * with status badges, per this story's own scope note.
+ * Story 3.4 added the Actions column: Edit + Cancel on a pending row, Cancel-behind-a-confirm on
+ * an in_preparation row, nothing on ready/cancelled. No Close order bar yet (a later FR-8 story).
  *
  * @returns The Table/Order detail page.
  */
@@ -351,21 +549,12 @@ export function TableOrderDetailPage() {
                   <TableCell>Note</TableCell>
                   <TableCell align="right">Qty</TableCell>
                   <TableCell align="right">Price</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {items.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell>
-                      <OrderItemStatusBadge status={item.status} />
-                    </TableCell>
-                    <TableCell>{dishName(item.dish_id)}</TableCell>
-                    {/* Trimmed, not just null-checked: an empty or whitespace-only note
-                        would otherwise render as a blank cell instead of the dash. */}
-                    <TableCell>{item.notes?.trim() ? item.notes : "—"}</TableCell>
-                    <TableCell align="right">{item.quantity}</TableCell>
-                    <TableCell align="right">{formatPrice(item.price_at_add)}</TableCell>
-                  </TableRow>
+                  <OrderItemRow key={item.id} item={item} dishName={dishName(item.dish_id)} orderId={order.id} />
                 ))}
               </TableBody>
             </Table>

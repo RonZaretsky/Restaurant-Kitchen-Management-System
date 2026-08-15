@@ -41,9 +41,10 @@ from .order import (
     RestaurantTable,
     TableResponse,
     TableStatus,
+    UpdateOrderItemRequest,
     UpdateTableRequest,
 )
-from .inventory import StockMovement, MovementType
+from .inventory import StockMovement, MovementType, CreateStockMovementRequest, StockMovementResponse
 from .ai import AIRecipeSuggestion, AIChatSession, AIChatMessage, ChatRole
 
 __all__ = [
@@ -57,7 +58,7 @@ __all__ = [
     "CreateRecipeIngredientRequest", "UpdateRecipeIngredientRequest", "RecipeIngredientResponse",
     "RestaurantTable", "Order", "OrderItem", "TableStatus", "OrderStatus", "OrderItemStatus",
     "CreateTableRequest", "UpdateTableRequest", "TableResponse", "OrderResponse",
-    "CreateOrderItemRequest", "OrderItemResponse",
-    "StockMovement", "MovementType",
+    "CreateOrderItemRequest", "OrderItemResponse", "UpdateOrderItemRequest",
+    "StockMovement", "MovementType", "CreateStockMovementRequest", "StockMovementResponse",
     "AIRecipeSuggestion", "AIChatSession", "AIChatMessage", "ChatRole",
 ]

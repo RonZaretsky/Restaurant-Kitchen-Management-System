@@ -86,12 +86,12 @@ development_status:
   3-1-open-a-table-and-start-an-order: done
   3-2-add-items-to-an-order: done
   3-3-view-live-order-and-table-status: done
-  3-4-edit-or-cancel-an-order-item: backlog
+  3-4-edit-or-cancel-an-order-item: done
   epic-3-retrospective: optional
 
   # Epic 4: Warehouse Inventory Operations & Low-Stock Alerts
-  epic-4: backlog
-  4-1-record-manual-stock-movements: backlog
+  epic-4: in-progress
+  4-1-record-manual-stock-movements: done
   4-2-low-stock-alert: backlog
   4-3-view-ingredient-stock-levels: backlog
   epic-4-retrospective: optional

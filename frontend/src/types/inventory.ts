@@ -14,3 +14,22 @@ export interface Ingredient {
   created_at: string;
   updated_at: string;
 }
+
+export type MovementType = "purchase" | "consumption" | "waste" | "adjustment";
+
+/**
+ * Mirrors backend/data_models/inventory.py's StockMovementResponse.
+ * `quantity_change` stays a string (Decimal-as-string, matching
+ * Ingredient.current_stock's own precedent), already signed by the backend
+ * (e.g. "-0.800" for a waste movement).
+ */
+export interface StockMovement {
+  id: number;
+  ingredient_id: number;
+  movement_type: MovementType;
+  quantity_change: string;
+  reference_id: number | null;
+  performed_by: number;
+  timestamp: string;
+  notes: string | null;
+}

@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import CancelIcon from "@mui/icons-material/Cancel";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
 import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
@@ -10,18 +11,21 @@ const LABELS: Record<OrderItemStatus, string> = {
   pending: "Pending",
   in_preparation: "In preparation",
   ready: "Ready",
+  cancelled: "Cancelled",
 };
 
 const ICONS: Record<OrderItemStatus, ReactElement> = {
   pending: <RadioButtonUncheckedIcon />,
   in_preparation: <LocalFireDepartmentIcon />,
   ready: <CheckCircleIcon />,
+  cancelled: <CancelIcon />,
 };
 
-const COLORS: Record<OrderItemStatus, "default" | "warning" | "success"> = {
+const COLORS: Record<OrderItemStatus, "default" | "warning" | "success" | "error"> = {
   pending: "default",
   in_preparation: "warning",
   ready: "success",
+  cancelled: "error",
 };
 
 /**
@@ -29,9 +33,9 @@ const COLORS: Record<OrderItemStatus, "default" | "warning" | "success"> = {
  * built once so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can reuse it rather than
  * each re-implementing their own status-to-color mapping.
  *
- * Scoped to today's 3-member OrderItemStatus type. `cancelled` (AD-11) and Order-level statuses
- * (`served`/`closed`) do not belong here, either because they don't exist on the backend enum yet
- * or because they describe a different type (OrderStatus, not OrderItemStatus).
+ * Covers all 4 OrderItemStatus members, `cancelled` (AD-11, Story 3.4) included. Order-level
+ * statuses (`served`/`closed`) still do not belong here, they describe a different type
+ * (OrderStatus, not OrderItemStatus).
  *
  * @param status - The Order Item's current status.
  * @returns The status Chip for this Order Item.
