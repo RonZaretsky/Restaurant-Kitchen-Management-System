@@ -127,11 +127,10 @@ describe("TablesPage", () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
-  it("has no click affordance on an occupied or reserved tile", async () => {
+  it("navigates straight to the detail page on an occupied tile, without opening it", async () => {
     // Arrange
     const fetchMock = vi.fn((url: string) => {
-      if (String(url).includes("/api/tables"))
-        return Promise.resolve(jsonResponse(200, [OCCUPIED_TABLE, RESERVED_TABLE]));
+      if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, [OCCUPIED_TABLE]));
       return Promise.reject(new Error(`unexpected request: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -139,11 +138,27 @@ describe("TablesPage", () => {
 
     // Act
     renderPage();
-    await screen.findByText("Table 2");
-    await user.click(screen.getByText("Table 2"));
-    await user.click(screen.getByText("Table 3"));
+    await user.click(await screen.findByText("Table 2"));
 
-    // Assert: no open request was ever issued for either tile.
+    // Assert: no open request was ever issued, just a straight navigation.
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/open"))).toBe(true);
+    expect(navigateMock).toHaveBeenCalledWith("/waiter/tables/2");
+  });
+
+  it("has no click affordance on a reserved tile", async () => {
+    // Arrange
+    const fetchMock = vi.fn((url: string) => {
+      if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, [RESERVED_TABLE]));
+      return Promise.reject(new Error(`unexpected request: ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByText("Table 3"));
+
+    // Assert
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/open"))).toBe(true);
     expect(navigateMock).not.toHaveBeenCalled();
   });

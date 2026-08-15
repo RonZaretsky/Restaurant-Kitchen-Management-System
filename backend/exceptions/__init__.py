@@ -188,6 +188,18 @@ class TableNotFoundError(NotFoundError):
     detail = "Table not found"
 
 
+class OrderNotFoundError(NotFoundError):
+    """Raised when a request targets an order_id with no matching row, or a table_id with no
+    currently open Order.
+
+    Both cases return the same 404: whether the id is simply wrong, or the Table exists but has
+    no Order open on it right now (available, or its Order already closed), the caller has
+    nothing to act on either way.
+    """
+
+    detail = "Order not found"
+
+
 class TableNotAvailableError(ConflictError):
     """Raised when opening a Table that is not currently available (AC2).
 
@@ -200,6 +212,16 @@ class TableNotAvailableError(ConflictError):
     """
 
     detail = "Rejected, table not available"
+
+
+class DishNotAvailableError(ConflictError):
+    """Raised when adding an Order Item for a Dish currently marked unavailable (AC2).
+
+    Distinct from EmptyRecipeError (Story 2.2), which blocks an Admin from making a Dish
+    available; this blocks a Waiter from ordering one that already isn't.
+    """
+
+    detail = "Rejected, dish unavailable"
 
 
 class UnitMismatchError(ConflictError):

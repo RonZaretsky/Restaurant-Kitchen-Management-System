@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is now open: Story 3.1 landed the first `orders` route, opening a Table into a new Order.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is under way: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs.**
 
 ```
 backend/
@@ -53,8 +53,9 @@ backend/
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
   entrypoint.sh       Docker CMD: alembic upgrade head, then the app. Never in the lifespan.
-  alembic/            async-template migration environment; alembic/versions/ still has 3 revisions.
-                     Neither Story 2.3 nor 2.4 needed one, both ORM schemas already fit
+  alembic/            async-template migration environment; alembic/versions/ now has 4 revisions
+                     (baseline, two case-insensitive-index fixes, Story 3.2's price_at_add column
+                     add). Neither Story 2.3 nor 2.4 needed one, both ORM schemas already fit
   tests/              conftest.py + one test file per module below
   api/router.py      aggregator; include_router()s auth, admin, inventory, menu, tables, orders, websocket
   api/auth.py        POST /auth/login (sets the JWT httpOnly cookie), GET /auth/me (Story 1.4, the
@@ -72,14 +73,20 @@ backend/
                      Story 2.3 added GET /categories, GET /dishes, and Recipe Ingredient CRUD at
                      /dishes/{dish_id}/recipe-ingredients (GET/POST/PATCH/DELETE). Story 2.5 split
                      a new MenuReadDep (admin, cook) off the three GET routes; every write route
-                     stays on the original MenuDep (admin-only), unchanged
+                     stays on the original MenuDep (admin-only), unchanged. Story 3.2 split GET
+                     /dishes alone onto a narrower DishCatalogReadDep (admin, cook, waiter): a
+                     Waiter needs the dish list to add Order Items but never a Dish's recipe, so
+                     /categories and /recipe-ingredients stay on MenuReadDep, unwidened
   api/tables.py       Story 2.4: GET /api/tables, POST /api/tables, PATCH /api/tables/{id},
                      admin-only. Note the collection paths have NO trailing slash, matching the
                      sibling routers; a trailing slash shipped first and was corrected in review.
                      Story 3.1 split GET onto a new TablesReadDep (admin, waiter); POST/PATCH stay
                      on the original admin-only TablesDep, unchanged
   api/orders.py       Story 3.1: POST /api/orders/tables/{table_id}/open, waiter-only (the first
-                     route in the project gated to exactly one non-admin Role, no admin fallback)
+                     route in the project gated to exactly one non-admin Role, no admin fallback).
+                     Story 3.2 added GET /api/orders/tables/{table_id} (resolves table_id -> its
+                     currently open Order, the read nothing before this could do), and GET/POST
+                     /api/orders/{order_id}/items, all on the same waiter-only OrdersDep
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -105,7 +112,11 @@ backend/
                      (see trap 18)
   services/order_service.py  Story 3.1: open_table, the second guarded-UPDATE application (AD-6),
                      with its read step factored into a private _get_table seam so a race test can
-                     monkeypatch it, mirroring TableService.get_table's role in trap 18's own test
+                     monkeypatch it, mirroring TableService.get_table's role in trap 18's own test.
+                     Story 3.2 added get_open_order_for_table, list_items, add_item, and a private
+                     _get_order seam (mirrors MenuService's list+add shape); add_item is a plain
+                     check-then-insert, no guard/lock, AD-6 governs transitioning an existing
+                     OrderItem's status, not creating a new one at pending
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
                      calls into services/ (AD-1); broadcast(roles, event, payload). Still has NO
                      producers: no service emits anything yet (see Domain rules)
@@ -130,7 +141,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and the first five real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, and the Waiter's Tables grid). The other 8 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and six real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, and the Waiter's Table/Order detail). The other 7 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -148,7 +159,8 @@ frontend/src/
   types/menu.ts           Unit, Category, Dish, RecipeIngredient (Story 2.3)
   types/inventory.ts      Ingredient (Story 2.3)
   types/table.ts          TableStatus, Table (Story 2.4)
-  types/order.ts          OrderStatus, Order (Story 3.1)
+  types/order.ts          OrderStatus, Order (Story 3.1); OrderItemStatus, OrderItem,
+                        MAX_ORDER_ITEM_QUANTITY (Story 3.2, mirrors the backend's own cap by hand)
   services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12)
@@ -158,7 +170,10 @@ frontend/src/
                         handles it once the refetch reports the session gone)
   services/menuService.ts  Story 2.3: categories/dishes/recipe-ingredient hooks; Story 2.6:
                         useCreateCategory / useCreateDish (payload types private to this file,
-                        matching tableService.ts's precedent)
+                        matching tableService.ts's precedent). Story 3.2 exports DISHES_QUERY_KEY
+                        (was module-private) so orderService.ts's add-item mutation can invalidate
+                        it on a stale-dish 409, the same TABLES_QUERY_KEY cross-service export
+                        tableService.ts already set the precedent for
   services/inventoryService.ts  Story 2.3: useIngredients; Story 2.6: useCreateIngredient
                         (INGREDIENTS_QUERY_KEY promoted to a module constant)
   services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable. TABLES_QUERY_KEY
@@ -166,9 +181,20 @@ frontend/src/
                         cache key without a second copy of ["tables"]
   services/orderService.ts  Story 3.1: useOpenTable, invalidates onSettled (not onSuccess only),
                         matching useUpdateTable's own precedent, a lost race needs the same refresh
-                        a rejected edit does
+                        a rejected edit does. Story 3.2 added useOrderForTable (accepts
+                        `number | null`, enabled: tableId !== null, so a malformed route param
+                        never reaches the server), useOrderItems (accepts `number | undefined`,
+                        same enabled-gating shape), and useAddOrderItem (invalidates the item list
+                        AND menuService's DISHES_QUERY_KEY on settle, a 409 means the cached dish is
+                        stale too)
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
+  components/orders/OrderItemStatusBadge.tsx  Story 3.2: the shared Order Item status badge
+                        (UX-DR1, MUI Chip + icon + spelled label), built as its own file rather
+                        than inlined so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can
+                        import it verbatim. Scoped to today's 3-member OrderItemStatus, no fallback
+                        case for a value outside it (deferred, same call Story 3.1's review made
+                        for TableTile.badgeColor), becomes live when Story 3.4 adds `cancelled`
   components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
                         AppShell (app bar + nav + Outlet; Story 1.7 added a Sign Out IconButton
                         next to ThemeToggle, same icon-button-with-visible-aria-label shape,
@@ -182,8 +208,8 @@ frontend/src/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
                         so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
-  pages/{role}/           placeholder components for the 8 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Five are now real:
+  pages/{role}/           placeholder components for the 7 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Six are now real:
                         admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
                         "+ New dish" form and an inline "+ New category" reveal on its Category
                         picker, no dialog), admin/TablesSetupPage.tsx (Story 2.4), cook/DishesPage.tsx
@@ -192,13 +218,20 @@ frontend/src/
                         warehouse/IngredientsPage.tsx (Story 2.6, replacing Story 1.4's placeholder:
                         an "Add ingredient" form plus a dense-row list, deliberately no shortage
                         sorting/highlighting/detail-drill-down, that scope belongs to Epic 4's Story
-                        4.3), and waiter/TablesPage.tsx (Story 3.1: the Tables grid, one tile per
+                        4.3), waiter/TablesPage.tsx (Story 3.1: the Tables grid, one tile per
                         Table with its status badge, only an `available` tile is clickable, opens
-                        the Table into a new Order and navigates to its still-placeholder detail
-                        page), each with its own *.test.tsx alongside.
-                        waiter/TableOrderDetailPage.tsx (`/waiter/tables/:tableId`) is still a
-                        placeholder, deliberately: Story 3.1's scope note ruled it out, its real
-                        content (add-dish form, Order Item list) is Story 3.2/3.3+ territory
+                        the Table into a new Order and navigates to its detail page), and
+                        waiter/TableOrderDetailPage.tsx (Story 3.2, `/waiter/tables/:tableId`,
+                        replacing its Story 1.4 placeholder: resolves the route param to its open
+                        Order via useOrderForTable, an add-dish form with the inline "Rejected,
+                        dish unavailable" 409, and a read-only Order Item list with
+                        OrderItemStatusBadge per row and "No items added yet" empty state; a 404
+                        "no open order" is presented as its own state with a link back to Tables,
+                        not a Retry that could never succeed; the heading resolves the Table's
+                        table_number via the already-cached useTables(), never the route param's
+                        raw id), each with its own *.test.tsx alongside. Deliberately NOT in this
+                        story: an actions column on Order Item rows (edit/cancel, Story 3.4), live
+                        updates (Story 3.3), the Close-order bar/total (FR-8, a later story)
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
@@ -251,6 +284,26 @@ same way the backend's `services/` is; later stories add one file per domain.
   Story 2.1, but the route guard redirected Admin away until Story 2.6's review caught it. Route
   reachability is derived from `ROLE_NAV_ITEMS` via `canRoleVisit`, so granting a Role a
   cross-prefix surface means adding the nav entry, never maintaining a second list.
+  **This check has to trace every endpoint the page's queries call, not only the page's own
+  route.** Story 3.2's `TableOrderDetailPage` correctly gated `GET /api/orders/tables/{table_id}`
+  to Waiter, but its `useDishes()` call hit `GET /api/menu/dishes`, still admin+cook-only from
+  Story 2.5, so the Waiter got a 403 and the whole page rendered as an error. All three review
+  layers caught it independently; nothing in either test suite could, since the frontend test
+  stubbed that endpoint 200 and `test_menu.py` had zero Waiter cases. **When a page composes more
+  than one query, check every one of them against the Role the AC names, not just the one the
+  story's own new route added.**
+- **TanStack Query's `refetch()` bypasses that query's own `enabled` gate.** A dependent query kept
+  `enabled: false` until its id is known is still fired if something calls `refetch()` on it
+  directly, so a page-level "Retry all" handler must check the same condition `enabled` used before
+  calling `refetch()`, not call it unconditionally (Story 3.2 review: the Retry button could fire
+  `/api/orders/undefined/items` before an Order was known, and its 422 then became the user-visible
+  reason the page said it had failed).
+- **A 404 from a read can be a legitimate domain state, not a transport failure, and the two need
+  different UI.** `TableOrderDetailPage`'s order-lookup 404 means "this Table has nothing open on
+  it right now," reachable by a direct URL to an `available` table, not a dropped connection.
+  Folding it into the generic error/Retry path offers a Retry that can never succeed. Discriminate
+  on `error instanceof ApiError && error.status === 404` (the same shape trap 13 already uses for
+  401) and show the domain-appropriate message instead.
 - **Path authorization matches on segment boundaries, and a nav-derived grant is exact.**
   `startsWith(prefix)` alone lets `/admin` match a future `/administration`, and
   `startsWith(navPath)` hands out the whole subtree — that is how Story 2.6's first fix silently
@@ -414,6 +467,14 @@ These are the ones that cost hours because nothing errors:
     `Numeric(p, s)` column exactly; every plain-`Integer`-backed `int` field needs `Field(le=2_147_483_647)`
     unless the column is `BigInteger`.** Check this for every new request schema, do not wait for
     review to catch it a third time.
+    **Extended by Story 3.2's review: a numeric field's real bound is not always its own column's
+    range.** `OrderItem.quantity` was correctly int4-bounded on its own `Integer` column, but
+    `price_at_add * quantity` feeds `Order.total_amount`, a `Numeric(10, 2)`, so an int4-sized
+    quantity overflows that ceiling and raises the same unhandled `NumericValueOutOfRangeError` one
+    write later, on an Order nobody could then close. Capped at 99 per line
+    (`MAX_ORDER_ITEM_QUANTITY`, `data_models/order.py`, a product decision not implied by any
+    column). **Check every numeric field against what it is later multiplied, summed, or joined
+    into, not only the column it is stored in.**
 
 17. **RESOLVED by Story 2.3.** The `*NotFoundError` types now share one `NotFoundError(Exception)`
     base with a single handler, the same way `ConflictError` covers every 409. Story 2.3 crossed
@@ -474,6 +535,22 @@ These are the ones that cost hours because nothing errors:
     ambiguity, `Unit` is always a non-empty string when set). **Run `npx tsc -b` as a matter of
     course before considering a frontend story done, not only `pnpm test`, since vitest never
     typechecks.**
+
+22. **An Alembic column add with `nullable=False` and no `server_default` breaks its own
+    downgrade/upgrade cycle the moment any row exists.** `downgrade()` drops the column; the
+    re-`upgrade()` then violates NOT NULL on whatever rows survived the downgrade, and
+    `entrypoint.sh` runs `alembic upgrade head` on every container start, so this is not a
+    hypothetical, it is what a rollback-then-redeploy actually hits. The autogenerated shape for
+    `OrderItem.price_at_add` (Story 3.2, `819cce996301`) was bare `nullable=False`, justified at
+    write time by "the table is empty right now" — true for the very first `upgrade`, false for
+    every run after. Fixed by adding with a temporary `server_default`, then dropping the default
+    in the same revision (`op.add_column(..., server_default='0')` then
+    `op.alter_column(..., server_default=None)`), so the ORM stays the only thing that decides a
+    real value while the migration itself stays reversible. **Verify this by hand, not by
+    reasoning about it**: downgrade a live database, insert a row through the now-missing column,
+    re-upgrade, confirm it succeeds and the column ends `NOT NULL` with no lingering default. Any
+    future `nullable=False` column add on a table a shipped story might already have inserted into
+    needs the same treatment.
 
 ---
 
@@ -604,7 +681,10 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   rowcount-checked). The `in_preparation` transition does status update + stock decrement +
   `StockMovement` insert in **one transaction**. Extended to `RestaurantTable` edits (must be `available`).
 - **AD-7** `OrderItem.price_at_add` is stored; Order totals always computed from it over non-cancelled
-  items — never a live Dish-price lookup.
+  items — never a live Dish-price lookup. **First real application: Story 3.2.** Captured from
+  `Dish.price` at insert time in `OrderService.add_item`, never rewritten by any later code path.
+  `Order.total_amount` computation itself is still FR-8's job, unbuilt, so it stays `None` on every
+  Order so far.
 - **AD-8** Reject marking a Dish available with zero `RecipeIngredient` rows; reject removing the last
   row while available. **Both halves are now built** (first in Story 2.2's
   `MenuService.update_dish`/`_reject_if_recipe_empty`, second in Story 2.3's
@@ -649,6 +729,29 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   rowcount-checked, only inserting the new `Order` (status `pending`, zero items) once that
   UPDATE succeeds, both writes committed together. `reserved` is treated identically to
   `occupied`, the guarded UPDATE cannot and does not need to tell them apart.
+- **RESOLVED by Story 3.2.** `GET /api/menu/dishes` now also permits `UserRole.waiter`, via a new
+  `DishCatalogReadDep` split off `list_dishes` alone (`MenuReadDep` itself, and every other menu
+  read, stays admin+cook). A Waiter needs the dish catalog to add Order Items but has no FR-backed
+  reason to read a Dish's recipe, so this is deliberately narrower than the `TablesReadDep`/
+  `InventoryReadDep` precedent of widening a whole shared read-dep at once.
+- **Order Item reads and writes are order-scoped (`/api/orders/{order_id}/items`), not
+  table-scoped, and `OrderService.list_items`/`add_item` are a second application of
+  `MenuService`'s list+add shape** (`list_recipe_ingredients`/`add_recipe_ingredient` →
+  `list_items`/`add_item`). The frontend always has `order_id` in hand by the time it lists or adds
+  items, via `GET /api/orders/tables/{table_id}` first, so no item route needs to carry both a
+  `table_id` and an `order_id`. `add_item` is a plain check-then-insert (Dish exists, Dish is
+  available, then insert at `pending`), no row lock, no guarded UPDATE. **Order Item quantity is
+  capped at 99 per line** (`MAX_ORDER_ITEM_QUANTITY`, `data_models/order.py`), so
+  `price_at_add * quantity` cannot overflow `Order.total_amount`'s `Numeric(10, 2)` once FR-8
+  computes it (trap 16's extension). No guard exists yet against adding an item to a non-`pending`
+  Order: no story so far can produce an Order in any other status (FR-8/close and `Order.status`
+  derivation are FR-8/Story 3.3 territory), so that guard would be dead code no test could exercise
+  honestly today, a deliberate omission, not an oversight.
+- **Two screens currently disagree on the currency symbol.** `TableOrderDetailPage`'s Order Item
+  rows render `42.00 ₪`, following that surface's own mockup; `cook/DishesPage.tsx` renders
+  `$42.00`. Neither is wrong per its own story's scope, but only one should survive. Logged in
+  `deferred-work.md`, not fixed by Story 3.2 since no AC there covers the Cook's screen. **Any
+  story that touches price display should resolve this rather than adding a third convention.**
 - **`RealtimeService` has no producers yet.** The transport is live (Story 1.5) and
   `useRealtime()`'s `subscribe(event, handler)` exists on the frontend, but no service emits any
   event, so nothing in the UI updates from another user's action, only from its own mutations or a
@@ -786,7 +889,7 @@ from `frontend/`.
   mechanism directly (a focused probe) rather than assuming coverage.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **229 tests**, frontend **119 tests** (as of Story 1.7).
+Backend suite is now **247 tests**, frontend **130 tests** (as of Story 3.2).
 
 ---
 
@@ -1082,4 +1185,50 @@ gained the note that logout clears the client's cookie only, v1 has no server-si
 (AD-3), a token copied out beforehand stays valid until natural expiry, an accepted v1 limitation, not
 a gap this story could or should close. Suites are now **229 backend and 119 frontend tests**.
 
-Last Updated: 2026-08-14
+**2026-08-15 patch (Story 3.2, Add Items to an Order, plus its code review):** Second `orders`-domain
+slice. `api/orders.py` gained `GET /api/orders/tables/{table_id}` (resolves a Table to its
+currently open Order, since nothing before this story could fetch an *existing* one, only the
+transient POST-open response) and `GET`/`POST /api/orders/{order_id}/items`, mirroring
+`MenuService`'s list+add shape. `OrderItem.price_at_add` (AD-7's first real application) landed via
+the project's fourth Alembic revision, `819cce996301`; `Order.total_amount` still stays `None`
+everywhere, FR-8's job. Two new exceptions (`OrderNotFoundError`, `DishNotAvailableError`);
+`OrderService` gained `get_open_order_for_table`, `list_items`, `add_item`, `_get_order`.
+
+Frontend: `waiter/TableOrderDetailPage.tsx` replaces its Story 1.4 placeholder, the sixth real
+domain screen (7 IA surfaces remain). New shared `components/orders/OrderItemStatusBadge.tsx`
+(UX-DR1), scoped to today's 3-member `OrderItemStatus`, built for Story 3.4/Kitchen Display to
+reuse. `orderService.ts` gained `useOrderForTable`/`useOrderItems`/`useAddOrderItem`;
+`menuService.ts` now exports `DISHES_QUERY_KEY` so the add-item mutation can invalidate it on a
+409, a stale-dish rejection needing the same refresh a stale-table one already gets.
+
+**The review's headline finding, caught independently by all three review layers**: `GET
+/api/menu/dishes` was gated to admin+cook, so a Waiter, the only Role that can reach this page, got
+a 403 on the dish picker, and the page's combined `isError` rendered nothing but an error message.
+AC1/AC2/AC3 were unreachable in a running system while every test passed, because the frontend test
+stubbed that endpoint 200 and `test_menu.py` had zero Waiter cases. This is the Role-reachability
+rule Story 2.6 already established, one hop removed: checking the page's own new route is not
+enough, every endpoint any of its queries call transitively needs the same check (now stated
+explicitly above). Fixed with a new `DishCatalogReadDep` scoped to `list_dishes` only, a Waiter
+never gets a Dish's recipe.
+
+**Trap 22 added**: an Alembic column add with `nullable=False` and no `server_default` breaks
+`downgrade`/`upgrade` the moment any row exists; fixed with a temporary default dropped in the same
+revision, verified by hand against a live Postgres (downgrade, insert a row through the missing
+column, re-upgrade, confirm success). Trap 16 extended: a numeric field's bound must also cover
+arithmetic performed on it downstream, not just its own column, `OrderItem.quantity` was correctly
+int4-bounded but unbounded against `price_at_add * quantity` overflowing `Order.total_amount`'s
+`Numeric(10, 2)`; capped at 99 per line. "The shape every new domain screen should copy" gained two
+more entries: `refetch()` bypasses a query's own `enabled` gate, and a 404 that is a legitimate
+domain state (not a transport failure) needs the same `status`-based discrimination trap 13 already
+uses for 401.
+
+Also patched: the page heading rendered the Table's primary key labelled as a table number (tiles
+show `table_number`, navigation uses `id`; now resolved through the already-cached `useTables()`);
+and a frontend add-item test hardcoded the value it asserted and never read the request body, so it
+could not have failed if the page posted the wrong dish or quantity (caught while writing up
+findings, not by any review subagent). Two screens now disagree on the currency symbol
+(`TableOrderDetailPage` renders `₪`, `cook/DishesPage` renders `$`), logged in `deferred-work.md`
+rather than fixed silently on a screen this story's AC doesn't cover. Suites are now **247 backend
+and 130 frontend tests**.
+
+Last Updated: 2026-08-15

@@ -1,10 +1,26 @@
+from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import Order, RestaurantTable, TableStatus, User
-from exceptions import TableNotAvailableError, TableNotFoundError
+from data_models import (
+    CreateOrderItemRequest,
+    Dish,
+    Order,
+    OrderItem,
+    OrderStatus,
+    RestaurantTable,
+    TableStatus,
+    User,
+)
+from exceptions import (
+    DishNotAvailableError,
+    DishNotFoundError,
+    OrderNotFoundError,
+    TableNotAvailableError,
+    TableNotFoundError,
+)
 
 
 class OrderService:
@@ -75,6 +91,158 @@ class OrderService:
             table_id,
             order.id,
         )
+        return order
+
+    async def get_open_order_for_table(self, db: AsyncSession, actor: User, table_id: int) -> Order:
+        """Fetch the Order currently open on a Table.
+
+        "Open" means not yet closed, FR-8's close action (a later story) is the only thing that
+        can ever change that. Only one non-closed Order can exist per Table at a time, opening a
+        Table requires it to be available first (Story 3.1's AC2), so this is a single filtered
+        SELECT, not a "most recent of several" query.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter making the request, used only for logging.
+            table_id: The id of the Table whose open Order is being fetched.
+
+        Returns:
+            The matching, currently-open Order.
+
+        Raises:
+            TableNotFoundError: If no Table matches table_id.
+            OrderNotFoundError: If the Table exists but has no currently open Order.
+        """
+        table = await db.get(RestaurantTable, table_id)
+        if table is None:
+            self._logger.warning(
+                "Order lookup rejected for user_id={}: no table with table_id={}",
+                actor.id,
+                table_id,
+            )
+            raise TableNotFoundError()
+
+        result = await db.execute(
+            select(Order).where(Order.table_id == table_id, Order.status != OrderStatus.closed)
+        )
+        order = result.scalar_one_or_none()
+        if order is None:
+            self._logger.warning(
+                "Order lookup rejected for user_id={}: table_id={} has no open order",
+                actor.id,
+                table_id,
+            )
+            raise OrderNotFoundError()
+        return order
+
+    async def list_items(self, db: AsyncSession, actor: User, order_id: int) -> Sequence[OrderItem]:
+        """List every Order Item on an Order, in id order.
+
+        A plain SELECT against current state every call, never cached, mirroring
+        MenuService.list_recipe_ingredients.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter making the request, used only for logging.
+            order_id: The id of the Order whose items are being listed.
+
+        Returns:
+            Every OrderItem row for this Order.
+
+        Raises:
+            OrderNotFoundError: If no Order matches order_id.
+        """
+        await self._get_order(db, actor, order_id)
+        result = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id).order_by(OrderItem.id))
+        return result.scalars().all()
+
+    async def add_item(
+        self, db: AsyncSession, actor: User, order_id: int, payload: CreateOrderItemRequest
+    ) -> OrderItem:
+        """Add a new Order Item to an Order, at status pending (AC1).
+
+        No guarded/atomic UPDATE is needed here: AD-6 governs transitioning an existing OrderItem's
+        status, not this plain insert of a new one. No row lock is needed either, this mirrors
+        MenuService.add_recipe_ingredient's plain check-then-insert shape.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter adding the item.
+            order_id: The id of the Order the item is being added to.
+            payload: The submitted dish, quantity, and optional note.
+
+        Returns:
+            The newly created Order Item, price_at_add copied from the Dish's
+            current price (AD-7).
+
+        Raises:
+            OrderNotFoundError: If no Order matches order_id.
+            DishNotFoundError: If no Dish matches payload.dish_id.
+            DishNotAvailableError: If the Dish is currently unavailable.
+        """
+        await self._get_order(db, actor, order_id)
+
+        dish = await db.get(Dish, payload.dish_id)
+        if dish is None:
+            self._logger.warning(
+                "Order item addition rejected for user_id={}: order_id={} no dish with dish_id={}",
+                actor.id,
+                order_id,
+                payload.dish_id,
+            )
+            raise DishNotFoundError()
+
+        if not dish.is_available:
+            self._logger.warning(
+                "Order item addition rejected for user_id={}: order_id={} dish_id={} is unavailable",
+                actor.id,
+                order_id,
+                payload.dish_id,
+            )
+            raise DishNotAvailableError()
+
+        item = OrderItem(
+            order_id=order_id,
+            dish_id=payload.dish_id,
+            quantity=payload.quantity,
+            notes=payload.notes,
+            price_at_add=dish.price,
+        )
+        db.add(item)
+        await db.commit()
+        await db.refresh(item)
+        self._logger.info(
+            "Order item added by user_id={}: order_id={} item_id={} dish_id={} quantity={}",
+            actor.id,
+            order_id,
+            item.id,
+            item.dish_id,
+            item.quantity,
+        )
+        return item
+
+    async def _get_order(self, db: AsyncSession, actor: User, order_id: int) -> Order:
+        """Fetch a single Order by id, or raise if it does not exist.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter performing the action, used only for logging.
+            order_id: The id to look up.
+
+        Returns:
+            The matching Order.
+
+        Raises:
+            OrderNotFoundError: If no Order matches order_id.
+        """
+        order = await db.get(Order, order_id)
+        if order is None:
+            self._logger.warning(
+                "Order action rejected for user_id={}: no order with order_id={}",
+                actor.id,
+                order_id,
+            )
+            raise OrderNotFoundError()
         return order
 
     async def _get_table(self, db: AsyncSession, actor: User, table_id: int) -> RestaurantTable:

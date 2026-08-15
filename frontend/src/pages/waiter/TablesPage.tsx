@@ -29,15 +29,17 @@ function errorMessage(error: Error): string {
 /**
  * One tile of the Tables grid.
  *
- * Only an `available` tile is an open target: clicking it opens the Table
- * into a new Order and navigates to its detail page (AC1). An occupied or
- * reserved tile carries no click handler at all (AC2), it exists only to
- * show the status badge, matching key-tables.html's read-only tiles for
- * those two states.
+ * An `available` tile opens the Table into a new Order and navigates to its
+ * detail page (AC1, Story 3.1). An `occupied` tile has an already-open Order
+ * on it (Story 3.2 built that detail page's real content), so it navigates
+ * straight there with no open call. A `reserved` tile stays a read-only
+ * status display, there is no reservation-arrival flow in v1 (PRD FR-4) so
+ * nothing exists yet for a Waiter to reach by clicking it.
  *
  * @param table - The Table this tile describes.
  * @param onOpen - Called with this Table's id when an available tile is clicked.
- * @param disabled - Whether any open request is currently in flight, shared
+ * @param onView - Called with this Table's id when an occupied tile is clicked.
+ * @param disabled - Whether an open request is currently in flight, shared
  *   page-wide across every tile so a second click cannot open a different
  *   Table while the first request is still resolving.
  * @returns The tile for this Table.
@@ -45,13 +47,14 @@ function errorMessage(error: Error): string {
 function TableTile({
   table,
   onOpen,
+  onView,
   disabled,
 }: {
   table: Table;
   onOpen: (tableId: number) => void;
+  onView: (tableId: number) => void;
   disabled: boolean;
 }) {
-  const isAvailable = table.status === "available";
   const badgeColor =
     table.status === "available" ? "success" : table.status === "reserved" ? "info" : "default";
 
@@ -62,13 +65,15 @@ function TableTile({
     </Box>
   );
 
-  if (!isAvailable) {
+  if (table.status === "reserved") {
     return <Card variant="outlined">{content}</Card>;
   }
 
+  const onClick = table.status === "available" ? () => onOpen(table.id) : () => onView(table.id);
+
   return (
     <Card variant="outlined">
-      <CardActionArea onClick={() => onOpen(table.id)} disabled={disabled}>
+      <CardActionArea onClick={onClick} disabled={disabled}>
         {content}
       </CardActionArea>
     </Card>
@@ -76,14 +81,18 @@ function TableTile({
 }
 
 /**
- * The Waiter's Tables grid (Story 3.1).
+ * The Waiter's Tables grid (Story 3.1, extended by Story 3.2).
  *
- * Every Restaurant Table rendered as a tile with its status badge
- * (AC3). Clicking an available tile opens it into a new Order (AC1) and
- * navigates to its detail page; an occupied or reserved tile has no open
- * affordance (AC2). Reuses `tableService.ts`'s existing `useTables()`
- * (Story 2.4's `GET /api/tables`, widened in this story to permit a Waiter),
- * rather than adding a second Table-list endpoint or hook.
+ * Every Restaurant Table rendered as a tile with its status badge (AC3).
+ * Clicking an available tile opens it into a new Order (AC1, Story 3.1) and
+ * navigates to its detail page. Clicking an occupied tile navigates straight
+ * to that same detail page without opening anything, since Story 3.2 gave
+ * that page real content (the Order's item list and add-dish form) — before
+ * that story, an occupied tile had no click affordance at all because there
+ * was nothing to see there yet. A reserved tile still has no click
+ * affordance, v1 has no reservation-arrival flow. Reuses `tableService.ts`'s
+ * existing `useTables()` (Story 2.4's `GET /api/tables`, widened in Story 3.1
+ * to permit a Waiter), rather than adding a second Table-list endpoint or hook.
  *
  * @returns The Tables page.
  */
@@ -96,6 +105,10 @@ export function TablesPage() {
     openMutation.mutate(tableId, {
       onSuccess: () => navigate(`/waiter/tables/${tableId}`),
     });
+  };
+
+  const handleView = (tableId: number) => {
+    navigate(`/waiter/tables/${tableId}`);
   };
 
   return (
@@ -142,6 +155,7 @@ export function TablesPage() {
               key={table.id}
               table={table}
               onOpen={handleOpen}
+              onView={handleView}
               disabled={openMutation.isPending}
             />
           ))}

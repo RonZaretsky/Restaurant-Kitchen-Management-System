@@ -132,6 +132,7 @@ A single dish line within an order. Each item can be tracked and cooked independ
 | status | ENUM | NOT NULL, default `pending` | `pending` / `in_preparation` / `ready` |
 | notes | TEXT | nullable | Special requests from customer (e.g. "no onions") |
 | cook_id | INT | FK → User.id, nullable | Cook who picked up and is preparing this item |
+| price_at_add | NUMERIC(8,2) | NOT NULL | The Dish's price at the moment this item was added (AD-7). Order totals are always summed from this, never from a live `Dish.price` lookup, so a later price change never alters an already-open order. |
 
 **Relationships:**
 - `Order` 1 → ∞ `OrderItem`
