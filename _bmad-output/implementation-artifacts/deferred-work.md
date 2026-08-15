@@ -384,3 +384,29 @@
   **Action:** if a sixth screen needs either, extract `errorMessage`/`GENERIC_ERROR_MESSAGE` next to
   `ApiError` in `httpClient.ts`, and the `Unit` enum's UI options next to its `types/menu.ts`
   definition.
+
+## Deferred from: code review of story-3-1 (2026-08-14)
+
+- **`test_orders.py`'s race test runs both writes through the same `db_session`/connection**
+  (`backend/tests/test_orders.py:710`), proving the guarded-UPDATE predicate is logically correct
+  but not exercising true cross-connection concurrency. Mirrors `test_tables.py`'s own established
+  race-test pattern verbatim, which this story's own spec mandated reusing. A real multi-connection
+  test harness is a test-infrastructure investment beyond any single story's scope. **Action:** if
+  a future story needs to prove real cross-transaction behavior (e.g. actual isolation-level
+  interaction), build a shared two-connection test fixture then.
+- **No synchronous click-lock on `TableTile`/`handleOpen`** (`frontend/src/pages/waiter/TablesPage.tsx:69`)
+  — `openMutation.isPending` updates asynchronously, leaving a narrow window for a double-click to
+  fire two concurrent open requests. The backend's guarded UPDATE already prevents any
+  data-integrity consequence; worst case is a flashed extra 409. **Action:** if this proves
+  annoying in manual testing, add a `useRef` synchronous guard on the click handler.
+- **`TableTile`'s `badgeColor` ternary has no exhaustive/default guard** for a `TableStatus` value
+  outside `available`/`occupied`/`reserved` (`frontend/src/pages/waiter/TablesPage.tsx:53`).
+  `TableStatus` is a closed 3-member enum shared with the backend; no current code path can produce
+  a fourth value. **Action:** if a future story adds a new Table status, switch this to an
+  exhaustive lookup map so a missing color mapping fails loudly instead of rendering an unlabeled
+  default badge.
+- **`OrderResponse` exposes bare `table_id`/`waiter_id` integers with no denormalized context**
+  (table number, waiter name) (`backend/data_models/order.py:126`). Explicitly out of scope per
+  Story 3.1's own scope note. **Action:** the table detail page (Story 3.2/3.3+) will need to
+  resolve these ids into something displayable — decide there whether that's a join in the
+  response or a separate lookup.

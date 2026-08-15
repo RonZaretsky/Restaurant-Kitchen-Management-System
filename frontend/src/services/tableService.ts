@@ -19,7 +19,8 @@ interface UpdateTablePayload {
   capacity?: number;
 }
 
-const TABLES_QUERY_KEY = ["tables"] as const;
+/** The shared cache key for the Table list, reused by orderService.ts's useOpenTable(). */
+export const TABLES_QUERY_KEY = ["tables"] as const;
 
 /**
  * Fetches every Restaurant Table.

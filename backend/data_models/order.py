@@ -132,3 +132,17 @@ class OrderItem(Base):
     status: Mapped[OrderItemStatus] = mapped_column(Enum(OrderItemStatus), nullable=False, default=OrderItemStatus.pending)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     cook_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+
+
+class OrderResponse(BaseModel):
+    """Body of any orders endpoint response describing an Order."""
+
+    model_config = {"from_attributes": True}
+
+    id: int
+    table_id: int
+    waiter_id: int
+    status: OrderStatus
+    created_at: datetime
+    closed_at: datetime | None
+    total_amount: Decimal | None

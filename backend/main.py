@@ -27,6 +27,7 @@ container.wire(
         "api.inventory",
         "api.menu",
         "api.tables",
+        "api.orders",
     ]
 )
 

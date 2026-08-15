@@ -1,5 +1,5 @@
 # generated: 2026-08-08
-# last_updated: 2026-08-13
+# last_updated: 2026-08-14
 # project: Restaurant-Kitchen-Management-System
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 #     all emit over its channel and depend on the {domain}.{event} naming it fixes.
 
 generated: 2026-08-08
-last_updated: 2026-08-13
+last_updated: 2026-08-14
 project: Restaurant-Kitchen-Management-System
 project_key: NOKEY
 tracking_system: file-system
@@ -81,8 +81,8 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Table Service & Order Taking
-  epic-3: backlog
-  3-1-open-a-table-and-start-an-order: backlog
+  epic-3: in-progress
+  3-1-open-a-table-and-start-an-order: done
   3-2-add-items-to-an-order: backlog
   3-3-view-live-order-and-table-status: backlog
   3-4-edit-or-cancel-an-order-item: backlog

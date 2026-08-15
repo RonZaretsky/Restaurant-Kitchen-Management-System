@@ -41,13 +41,14 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is now open: Story 3.1 landed the first `orders` route, opening a Table into a new Order.**
 
 ```
 backend/
   main.py            app factory + lifespan; calls exceptions/handlers.py's register_exception_handlers(app)
   container.py       DeclarativeContainer: config, logging, database, connection_registry, auth_service,
-                     user_service, inventory_service, menu_service, table_service, realtime_service
+                     user_service, inventory_service, menu_service, table_service, order_service,
+                     realtime_service
   constants.py       SETTINGS (app name, version, config path)
   config.yaml        ${ENV_VAR: default} interpolation, parsed by utils.load_config
   utils.py           config loader
@@ -55,7 +56,7 @@ backend/
   alembic/            async-template migration environment; alembic/versions/ still has 3 revisions.
                      Neither Story 2.3 nor 2.4 needed one, both ORM schemas already fit
   tests/              conftest.py + one test file per module below
-  api/router.py      aggregator; include_router()s auth, admin, inventory, menu, tables, websocket
+  api/router.py      aggregator; include_router()s auth, admin, inventory, menu, tables, orders, websocket
   api/auth.py        POST /auth/login (sets the JWT httpOnly cookie), GET /auth/me (Story 1.4, the
                      frontend's only way to learn who is logged in across a page reload)
   api/admin.py        Story 1.3's User-management routes, the reference implementation for
@@ -72,7 +73,11 @@ backend/
                      stays on the original MenuDep (admin-only), unchanged
   api/tables.py       Story 2.4: GET /api/tables, POST /api/tables, PATCH /api/tables/{id},
                      admin-only. Note the collection paths have NO trailing slash, matching the
-                     sibling routers; a trailing slash shipped first and was corrected in review
+                     sibling routers; a trailing slash shipped first and was corrected in review.
+                     Story 3.1 split GET onto a new TablesReadDep (admin, waiter); POST/PATCH stay
+                     on the original admin-only TablesDep, unchanged
+  api/orders.py       Story 3.1: POST /api/orders/tables/{table_id}/open, waiter-only (the first
+                     route in the project gated to exactly one non-admin Role, no admin fallback)
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -96,6 +101,9 @@ backend/
                      second half, a unit-mismatch guard, and _lock_dish (see trap 9)
   services/table_service.py  Story 2.4: Table creation/listing and the guarded-UPDATE edit path
                      (see trap 18)
+  services/order_service.py  Story 3.1: open_table, the second guarded-UPDATE application (AD-6),
+                     with its read step factored into a private _get_table seam so a race test can
+                     monkeypatch it, mirroring TableService.get_table's role in trap 18's own test
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
                      calls into services/ (AD-1); broadcast(roles, event, payload). Still has NO
                      producers: no service emits anything yet (see Domain rules)
@@ -120,7 +128,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and the first four real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, and Ingredients). The other 9 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and the first five real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, and the Waiter's Tables grid). The other 8 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -138,6 +146,7 @@ frontend/src/
   types/menu.ts           Unit, Category, Dish, RecipeIngredient (Story 2.3)
   types/inventory.ts      Ingredient (Story 2.3)
   types/table.ts          TableStatus, Table (Story 2.4)
+  types/order.ts          OrderStatus, Order (Story 3.1)
   services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12)
@@ -147,7 +156,12 @@ frontend/src/
                         matching tableService.ts's precedent)
   services/inventoryService.ts  Story 2.3: useIngredients; Story 2.6: useCreateIngredient
                         (INGREDIENTS_QUERY_KEY promoted to a module constant)
-  services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable
+  services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable. TABLES_QUERY_KEY
+                        exported (Story 3.1) so orderService.ts's mutation can invalidate the same
+                        cache key without a second copy of ["tables"]
+  services/orderService.ts  Story 3.1: useOpenTable, invalidates onSettled (not onSuccess only),
+                        matching useUpdateTable's own precedent, a lost race needs the same refresh
+                        a rejected edit does
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
   components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
@@ -161,17 +175,23 @@ frontend/src/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
                         so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
-  pages/{role}/           placeholder components for the 9 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Four are now real:
+  pages/{role}/           placeholder components for the 8 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Five are now real:
                         admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
                         "+ New dish" form and an inline "+ New category" reveal on its Category
                         picker, no dialog), admin/TablesSetupPage.tsx (Story 2.4), cook/DishesPage.tsx
                         (Story 2.5, strictly read-only, groups every Dish by Category, resolves
-                        Recipe Ingredient lines to names via useIngredients()), and
+                        Recipe Ingredient lines to names via useIngredients()),
                         warehouse/IngredientsPage.tsx (Story 2.6, replacing Story 1.4's placeholder:
                         an "Add ingredient" form plus a dense-row list, deliberately no shortage
                         sorting/highlighting/detail-drill-down, that scope belongs to Epic 4's Story
-                        4.3), each with its own *.test.tsx alongside
+                        4.3), and waiter/TablesPage.tsx (Story 3.1: the Tables grid, one tile per
+                        Table with its status badge, only an `available` tile is clickable, opens
+                        the Table into a new Order and navigates to its still-placeholder detail
+                        page), each with its own *.test.tsx alongside.
+                        waiter/TableOrderDetailPage.tsx (`/waiter/tables/:tableId`) is still a
+                        placeholder, deliberately: Story 3.1's scope note ruled it out, its real
+                        content (add-dish form, Order Item list) is Story 3.2/3.3+ territory
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
@@ -433,6 +453,21 @@ These are the ones that cost hours because nothing errors:
     duplicate-check-before-insert always wins in a single-threaded test, so the handler only runs
     under a genuine concurrent race in production.
 
+21. **Neither `pnpm test` nor a routine `npx tsc -b` run gets exercised against a fresh Docker
+    image, so a build-breaking TypeScript error can sit in the tree for stories at a time.**
+    `IngredientsPage.tsx`'s `handleCreate` guard (`unit === ""`) had been narrowed unreachable by
+    the `canSubmit` expression a few lines above (a `const`-binding control-flow narrowing quirk:
+    comparing `unit !== ""` once in an `&&` chain persists the narrowed type for the rest of the
+    function, so the later `unit === ""` compares `Unit` against a literal it can no longer be).
+    `npx tsc -b` reports it correctly whenever run, but Story 2.6 never ran a `docker compose build`
+    after landing it, and no CI exists to run one automatically (see Workflow). It broke
+    `docker compose build frontend` outright (`pnpm build` runs `tsc -b && vite build`, so a type
+    error there fails the whole image, not a warning), and only surfaced when Story 3.1 needed a
+    fresh image built. Fixed with `!unit` instead of the literal comparison (no narrowing
+    ambiguity, `Unit` is always a non-empty string when set). **Run `npx tsc -b` as a matter of
+    course before considering a frontend story done, not only `pnpm test`, since vitest never
+    typechecks.**
+
 ---
 
 ## Where code goes
@@ -596,10 +631,17 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   self-service signup, no email recovery. Passwords are bcrypt-hashed, never logged or returned.
 - Tables are **added and edited, never deleted.** Editing is gated on the table being `available`,
   enforced by a guarded conditional `UPDATE` (trap 18), and the Tables setup screen has no delete
-  affordance anywhere by design (PRD Non-Goals). `GET /api/tables` is currently **Admin-only**,
-  which contradicts the Role-level rule two bullets down and is a deliberate Story 2.4 scoping
-  choice: Epic 3 widens it when Waiters need table reads. No test asserts a Waiter is refused, so
-  widening breaks nothing.
+  affordance anywhere by design (PRD Non-Goals). **RESOLVED by Story 3.1.** `GET /api/tables` now
+  also permits `UserRole.waiter` via a new `TablesReadDep` (mirrors `MenuReadDep`/`InventoryReadDep`'s
+  split), closing the gap this bullet used to flag as deferred to Epic 3. `POST`/`PATCH` stay on the
+  original admin-only `TablesDep`, unchanged.
+- **Opening a Table into an Order is the second guarded-UPDATE application (Story 3.1, AD-6),
+  and the first route in the project scoped to exactly one non-admin Role with no admin
+  fallback.** `OrderService.open_table` follows `TableService.update_table`'s exact shape:
+  `UPDATE restaurant_tables SET status = 'occupied' WHERE id = :id AND status = 'available'`,
+  rowcount-checked, only inserting the new `Order` (status `pending`, zero items) once that
+  UPDATE succeeds, both writes committed together. `reserved` is treated identically to
+  `occupied`, the guarded UPDATE cannot and does not need to tell them apart.
 - **`RealtimeService` has no producers yet.** The transport is live (Story 1.5) and
   `useRealtime()`'s `subscribe(event, handler)` exists on the frontend, but no service emits any
   event, so nothing in the UI updates from another user's action, only from its own mutations or a
@@ -730,7 +772,7 @@ from `frontend/`.
   mechanism directly (a focused probe) rather than assuming coverage.
 
 Every story in `epics.md` is written as Given/When/Then acceptance criteria, those are the tests.
-Backend suite is now **213 tests**, frontend **93 tests** (as of Story 1.6).
+Backend suite is now **225 tests**, frontend **117 tests** (as of Story 3.1).
 
 ---
 
@@ -968,4 +1010,32 @@ handling or the outer form's implicit submit steals it; and a mutation whose cal
 selects the created row should seed the cache in `onSuccess` before invalidating, since invalidation
 only *schedules* a refetch. Suites are now **213 backend and 90 frontend tests**.
 
-Last Updated: 2026-08-13
+**2026-08-14 patch (Story 3.1, Open a Table and Start an Order, plus its code review):** First
+`orders` domain route: `api/orders.py` (`POST /api/orders/tables/{table_id}/open`), `OrderResponse`
+(`data_models/order.py`), `TableNotAvailableError` (`exceptions/__init__.py`, distinct from
+`TableInUseError` since that one's docstring scopes it specifically to an Admin's edit attempt),
+and `services/order_service.py`. `OrderService.open_table` is the second application of AD-6's
+guarded-UPDATE pattern (`table_service.py`'s `update_table` was the first), with its read step
+factored into a private `_get_table` seam purely so the race test could monkeypatch it, mirroring
+`TableService.get_table`'s own role in trap 18's test. `GET /api/tables` widened onto a new
+`TablesReadDep` (admin, waiter), closing the gap this file had flagged as deferred to Epic 3 since
+Story 2.4; `POST`/`PATCH` stay admin-only, unchanged. First route in the project gated to exactly
+one non-admin Role with no admin fallback (`require_role(UserRole.waiter)`).
+
+Frontend: `waiter/TablesPage.tsx` replaces its Story 1.4 placeholder, the fifth real domain screen.
+Reused the existing `useTables()` hook rather than duplicating it in the new `orderService.ts`
+(a deliberate deviation from the story's literal task text, exporting `TABLES_QUERY_KEY` from
+`tableService.ts` instead); `useOpenTable()` invalidates `onSettled`, not `onSuccess` only, per the
+review (a lost race means the cached `available` status is already stale, same reasoning
+`useUpdateTable` documented first). `TableOrderDetailPage.tsx` remains a placeholder by design,
+Story 3.2/3.3+ territory.
+
+**Trap 21 added**, found while standing up a fresh Docker image for manual testing, not by any
+test suite: a pre-existing Story 2.6 TypeScript error in `IngredientsPage.tsx` (a `const`-narrowing
+quirk making one branch of a submit guard unreachable) had sat in the tree undetected because
+neither `pnpm test` nor routine development ever ran a full `docker compose build`, and `pnpm
+build`'s `tsc -b` step fails the whole image on a type error. Fixed as an incidental one-line
+change, unrelated to this story's own scope. Domain rules gained the note that opening a Table is
+the second guarded-UPDATE application. Suites are now **225 backend and 117 frontend tests**.
+
+Last Updated: 2026-08-14

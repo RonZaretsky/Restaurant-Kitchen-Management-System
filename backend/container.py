@@ -10,6 +10,7 @@ from clients.websocket import ConnectionRegistry
 from services.auth_service import AuthService
 from services.inventory_service import InventoryService
 from services.menu_service import MenuService
+from services.order_service import OrderService
 from services.realtime_service import RealtimeService
 from services.table_service import TableService
 from services.user_service import UserService
@@ -85,6 +86,11 @@ class Container(containers.DeclarativeContainer):
 
     table_service = providers.Factory(
         TableService,
+        logger=logging,
+    )
+
+    order_service = providers.Factory(
+        OrderService,
         logger=logging,
     )
 

@@ -20,9 +20,17 @@ from services.table_service import TableService
 
 router = APIRouter(prefix="/api/tables", tags=["tables"])
 
-# Table management is Admin-only (FR-24), same shape as MenuDep, not
-# InventoryWriteDep's two-Role form.
+# Table management (create/edit) is Admin-only (FR-24), same shape as MenuDep,
+# not InventoryWriteDep's two-Role form.
 TablesDep = Annotated[User, Depends(require_role(UserRole.admin))]
+
+# Reads permit a Waiter too (Story 3.1, FR-4): a Waiter needs to see every
+# Table's status to open one into a new Order. Mirrors MenuReadDep/
+# InventoryReadDep's established split between a read-only dependency and a
+# write-only one. This closes a gap project-context.md's own Domain rules
+# section flagged as a deliberate Story 2.4 scoping choice earmarked for
+# Epic 3 to widen.
+TablesReadDep = Annotated[User, Depends(require_role(UserRole.admin, UserRole.waiter))]
 
 # Path ids need the same int4 upper bound their request-body counterparts carry
 # (trap 16, applied proactively here per Story 2.3's review finding).
@@ -30,7 +38,7 @@ TableIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
 
 _ERROR_DESCRIPTIONS = {
     401: "No valid session cookie was supplied",
-    403: "Authenticated, but the caller's Role is not admin",
+    403: "Authenticated, but the caller's Role is not permitted for this action",
     404: "No matching Table was found",
     409: "The request conflicts with existing state (a duplicate table number, or "
     "the table is not available)",
@@ -44,14 +52,14 @@ _ERROR_DESCRIPTIONS = {
 )
 @inject
 async def list_tables(
-    actor: TablesDep,
+    actor: TablesReadDep,
     db: SessionDep,
     table_service: TableService = Depends(Provide[Container.table_service]),
 ) -> list[RestaurantTable]:
     """List every Restaurant Table.
 
     Args:
-        actor: The authenticated Admin making the request.
+        actor: The authenticated Admin or Waiter making the request.
         db: The active database session.
         table_service: Injected service handling the read.
 

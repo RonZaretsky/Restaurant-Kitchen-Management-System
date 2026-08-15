@@ -34,6 +34,7 @@ from .order import (
     Order,
     OrderItem,
     OrderItemStatus,
+    OrderResponse,
     OrderStatus,
     RestaurantTable,
     TableResponse,
@@ -53,7 +54,7 @@ __all__ = [
     "Ingredient", "RecipeIngredient", "Unit", "CreateIngredientRequest", "IngredientResponse",
     "CreateRecipeIngredientRequest", "UpdateRecipeIngredientRequest", "RecipeIngredientResponse",
     "RestaurantTable", "Order", "OrderItem", "TableStatus", "OrderStatus", "OrderItemStatus",
-    "CreateTableRequest", "UpdateTableRequest", "TableResponse",
+    "CreateTableRequest", "UpdateTableRequest", "TableResponse", "OrderResponse",
     "StockMovement", "MovementType",
     "AIRecipeSuggestion", "AIChatSession", "AIChatMessage", "ChatRole",
 ]
