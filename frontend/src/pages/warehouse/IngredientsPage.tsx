@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useNavigate } from "react-router";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -62,13 +63,17 @@ function parseNonNegativeAmount(raw: string): string | null {
  *
  * An always-visible "Add ingredient" form and a dense-row list (Name / Unit /
  * Current stock / Threshold) of every Ingredient (AC4). Deliberately does not
- * add shortage sorting, highlighting, a Status column, or click-to-detail:
- * those need the below-threshold comparison logic Epic 4's Story 4.3 owns.
- * This screen only proves creation worked.
+ * add shortage sorting, highlighting, or a Status column: those need the
+ * below-threshold comparison logic Epic 4's Story 4.3 owns. Story 4.1 added
+ * row click-through to the Ingredient detail page, since that is plain
+ * navigation and needs no comparison logic (unlike sorting/highlighting), and
+ * without it Story 4.1's own detail page (stat cards, log-movement form,
+ * movement history) had no discoverable entry point from this screen.
  *
  * @returns The Ingredients page.
  */
 export function IngredientsPage() {
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [unit, setUnit] = useState<Unit | "">("");
   const [threshold, setThreshold] = useState("");
@@ -218,7 +223,12 @@ export function IngredientsPage() {
           </TableHead>
           <TableBody>
             {ingredients.map((ingredient) => (
-              <TableRow key={ingredient.id}>
+              <TableRow
+                key={ingredient.id}
+                hover
+                onClick={() => navigate(`/warehouse/ingredients/${ingredient.id}`)}
+                sx={{ cursor: "pointer" }}
+              >
                 <TableCell>{ingredient.name}</TableCell>
                 <TableCell>{ingredient.unit}</TableCell>
                 <TableCell>{ingredient.current_stock}</TableCell>

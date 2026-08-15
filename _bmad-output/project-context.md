@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is under way: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design).**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is under way: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column.**
 
 ```
 backend/
@@ -73,7 +73,16 @@ backend/
                      than one Role (admin, warehouse_manager). Story 2.3 added GET on the same two
                      Roles (InventoryReadDep); Story 2.5 widened InventoryReadDep to admin,
                      warehouse_manager, cook (a Cook needs Ingredient names to render a Dish's
-                     recipe); Story 4.3 should extend it further, not duplicate it
+                     recipe); Story 4.3 should extend it further, not duplicate it. Story 4.1 added
+                     GET /ingredients/{id}, GET /ingredients/{id}/movements, and POST
+                     /ingredients/{id}/movements, all reusing InventoryReadDep/InventoryWriteDep
+                     unchanged, no new Role scoping needed. A module-level IngredientIdPath
+                     (Path(gt=0, le=_INT4_MAX), _INT4_MAX imported from data_models.menu) bounds
+                     the new path ids the same way trap 16 already requires of request bodies,
+                     matching api/orders.py's TableIdPath/OrderIdPath/ItemIdPath shape; api/menu.py
+                     already declares its own same-named IngredientIdPath independently for its
+                     recipe-ingredient routes, the two are unrelated module-level constants that
+                     happen to share a name, not one shared definition
   api/menu.py         Story 2.2: POST /categories, POST /dishes, PATCH /dishes/{id}, admin-only.
                      Story 2.3 added GET /categories, GET /dishes, and Recipe Ingredient CRUD at
                      /dishes/{dish_id}/recipe-ingredients (GET/POST/PATCH/DELETE). Story 2.5 split
@@ -109,14 +118,32 @@ backend/
   data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written.
                      recipe.py, menu.py and order.py also hold their own Pydantic request/response
                      schemas colocated with their ORM class, matching user.py's shape. menu.py owns
-                     _INT4_MAX; recipe.py and order.py import it from there rather than redeclaring
+                     _INT4_MAX; recipe.py and order.py import it from there rather than redeclaring.
+                     inventory.py was ORM-only (StockMovement, MovementType) until Story 4.1 added
+                     its first Pydantic schemas, CreateStockMovementRequest (a model_validator
+                     rejects consumption as a manual input and enforces AD-16's sign convention) and
+                     StockMovementResponse
   services/auth_service.py  login, token issuance/verification, password hashing
   services/user_service.py  Story 1.3's User CRUD, the last-admin lock guard, denial logging
   services/inventory_service.py  Story 2.1: Ingredient creation, case-insensitive duplicate check.
-                     Story 2.3 added list_ingredients
+                     Story 2.3 added list_ingredients. Story 4.1 added get_ingredient,
+                     list_movements, and record_movement (this service's first write to
+                     Ingredient.current_stock since Story 2.1 created the column), plus two private
+                     seams: _get_ingredient (plain read, no lock, used by the two read methods) and
+                     _lock_ingredient (SELECT ... FOR UPDATE, record_movement only) — the third
+                     instance of trap 9's "lock the one row every caller contends on" shape, after
+                     MenuService._lock_dish (AD-8) and UserService's AD-15 last-admin guard. Unlike
+                     those two, the lock here guards no reject-condition, it exists purely so two
+                     concurrent movements on the same Ingredient serialize instead of the later
+                     commit silently discarding the earlier delta (both StockMovement rows would
+                     still insert correctly either way). Sign convention (AD-16): purchase/waste
+                     submit a positive magnitude and the service applies +/-; adjustment submits the
+                     already-signed delta directly. current_stock is never floor-capped at zero,
+                     verified by tests asserting the exact negative resulting value
   services/menu_service.py  Story 2.2: Category/Dish creation and edits, AD-8's availability gate.
                      Story 2.3 added list_categories/list_dishes, Recipe Ingredient CRUD, AD-8's
-                     second half, a unit-mismatch guard, and _lock_dish (see trap 9)
+                     second half, a unit-mismatch guard, and _lock_dish (see trap 9, now joined by
+                     InventoryService._lock_ingredient, Story 4.1, as the pattern's third instance)
   services/table_service.py  Story 2.4: Table creation/listing and the guarded-UPDATE edit path
                      (see trap 18)
   services/order_service.py  Story 3.1: open_table, the second guarded-UPDATE application (AD-6),
@@ -164,7 +191,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and six real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, and the Waiter's Table/Order detail). The other 7 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and seven real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, and the Warehouse Ingredient detail page). The other 6 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -180,7 +207,10 @@ frontend/src/
                         MUI) + DENSE_ROW_HEIGHT
   types/user.ts           UserRole, CurrentUser (mirrors UserResponse's JSON shape, snake_case)
   types/menu.ts           Unit, Category, Dish, RecipeIngredient (Story 2.3)
-  types/inventory.ts      Ingredient (Story 2.3)
+  types/inventory.ts      Ingredient (Story 2.3). Story 4.1 added MovementType and StockMovement
+                        (quantity_change stays a string, mirroring current_stock's
+                        Decimal-as-string precedent, already signed by the backend, e.g. "-0.800"
+                        for a waste movement)
   types/table.ts          TableStatus, Table (Story 2.4)
   types/order.ts          OrderStatus, Order (Story 3.1); OrderItemStatus, OrderItem,
                         MAX_ORDER_ITEM_QUANTITY (Story 3.2, mirrors the backend's own cap by hand).
@@ -200,7 +230,12 @@ frontend/src/
                         it on a stale-dish 409, the same TABLES_QUERY_KEY cross-service export
                         tableService.ts already set the precedent for
   services/inventoryService.ts  Story 2.3: useIngredients; Story 2.6: useCreateIngredient
-                        (INGREDIENTS_QUERY_KEY promoted to a module constant)
+                        (INGREDIENTS_QUERY_KEY promoted to a module constant). Story 4.1 added
+                        useIngredient, useStockMovements, and useRecordStockMovement, the last of
+                        which invalidates three keys onSettled (the single-ingredient key, the
+                        movements-list key, and INGREDIENTS_QUERY_KEY), since a logged movement
+                        changes current_stock and IngredientsPage.tsx's own list must not show
+                        stale stock after a Warehouse Manager navigates back to it
   services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable. TABLES_QUERY_KEY
                         exported (Story 3.1) so orderService.ts's mutation can invalidate the same
                         cache key without a second copy of ["tables"]
@@ -226,6 +261,12 @@ frontend/src/
                         case for a value outside it (deferred, same call Story 3.1's review made
                         for TableTile.badgeColor). Story 3.4 added the 4th member: "Cancelled"
                         label, Cancel icon, "error" MUI color (COLORS' type widened to include it)
+  components/inventory/MovementTypeChip.tsx  Story 4.1: the Stock Movement type chip (AC3/UX-DR14),
+                        first file in a new components/inventory/ folder. A neutral-palette MUI Chip
+                        (primary/info/default/secondary), deliberately not reusing
+                        OrderItemStatusBadge's success/warning/error traffic-light trio: a movement
+                        type is a category, not an urgency signal, and reusing "error" for waste
+                        would collide with that trio's meaning
   components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
                         AppShell (app bar + nav + Outlet; Story 1.7 added a Sign Out IconButton
                         next to ThemeToggle, same icon-button-with-visible-aria-label shape,
@@ -239,8 +280,8 @@ frontend/src/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
                         so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
-  pages/{role}/           placeholder components for the 7 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Six are now real:
+  pages/{role}/           placeholder components for the 6 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Seven are now real:
                         admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
                         "+ New dish" form and an inline "+ New category" reveal on its Category
                         picker, no dialog), admin/TablesSetupPage.tsx (Story 2.4), cook/DishesPage.tsx
@@ -248,8 +289,22 @@ frontend/src/
                         Recipe Ingredient lines to names via useIngredients()),
                         warehouse/IngredientsPage.tsx (Story 2.6, replacing Story 1.4's placeholder:
                         an "Add ingredient" form plus a dense-row list, deliberately no shortage
-                        sorting/highlighting/detail-drill-down, that scope belongs to Epic 4's Story
-                        4.3), waiter/TablesPage.tsx (Story 3.1: the Tables grid, one tile per
+                        sorting/highlighting, that scope still belongs to Epic 4's Story 4.3; Story
+                        4.1 added row click-through to warehouse/IngredientDetailPage.tsx, found
+                        missing during Story 4.1's own manual testing, not by any of the three
+                        automated review layers, see trap 24: plain navigation needs none of the
+                        deferred comparison logic, only sorting/highlighting does),
+                        warehouse/IngredientDetailPage.tsx (Story 4.1, replacing Story 1.4's
+                        placeholder: stat cards for current stock and minimum threshold, a
+                        log-movement form restricted to Purchase/Waste/Adjustment (Consumption is
+                        never offered, it is Epic 5's automatic path), and a movement history table
+                        with MovementTypeChip per row; a 404 on the Ingredient lookup and an invalid
+                        route param both render the same "not found" message, mirroring
+                        TableOrderDetailPage.tsx's split-404-out-of-isError/parseRouteId
+                        conventions; the quantity cell's color is the bare token "error"/"success",
+                        not the dot-path "error.main"/"success.main" that shipped first and
+                        silently rendered no color at all, see trap 25), waiter/TablesPage.tsx
+                        (Story 3.1: the Tables grid, one tile per
                         Table with its status badge, only an `available` tile is clickable, opens
                         the Table into a new Order and navigates to its detail page; Story 3.3
                         subscribes to the live table.status_changed push and invalidates
@@ -613,6 +668,43 @@ These are the ones that cost hours because nothing errors:
     same check**: verify the provider it now references is declared earlier in the file, not just
     that it exists somewhere in it.
 
+24. **A page that exists, works, and is fully wired into the router is not necessarily reachable
+    from anywhere a user can click, and a diff-only review cannot see that it isn't.** Story 2.6
+    shipped `IngredientsPage.tsx` with a docstring deferring "click-to-detail" to Story 4.3, on the
+    stated reason that it "needs the below-threshold comparison logic." That reason was wrong the
+    moment it was written: plain row-click navigation needs zero comparison logic, only shortage
+    *sorting/highlighting* does. Nobody re-examined it when Story 4.1 built the actual destination
+    page (`IngredientDetailPage.tsx`), so the Ingredients list shipped a real, working screen with no
+    way to reach it short of typing the URL by hand. None of the three automated review layers
+    (Blind Hunter, Edge Case Hunter, Acceptance Auditor) caught it, since "no new code references
+    this route" is not a gap a diff review checks, a route with a fully working page behind it looks
+    identical, from a diff, to one nothing points at. Found only by manually clicking through the
+    live Docker stack. Fixed by adding `useNavigate()` plus an `onClick`/`hover`/`cursor: pointer`
+    `TableRow`, mirroring `TablesPage.tsx`'s own Story 3.1 tile-click-to-detail precedent. **Two
+    standing rules**: a comment recording *why* something was deliberately deferred can itself be
+    wrong, and the only way to catch that is to re-examine the stated reason at the moment the
+    "later" story actually ships, not to trust it at face value forever; and when a story's scope
+    note says "screen X stays unchanged," check first whether X is the only entry point to a page
+    that story is building, if so the navigation link itself is in scope even though nothing else on
+    X is.
+
+25. **MUI's `Typography` `color` prop silently drops a dot-path theme value; only `sx` resolves
+    one.** `"error.main"`/`"success.main"` are valid inside the `sx` prop, which resolves theme
+    palette paths, but `Typography`'s bare `color` prop only accepts the literal tokens
+    `TypographyPropsColorOverrides` declares (`"error"`, `"success"`, `"primary"`, etc.), never a
+    dotted path. Passing one does not throw, warn, or fail a type check in any way that is visible
+    without reading MUI's own types closely, it just matches none of MUI's internal
+    `MuiTypography-color*` classes, so the text renders with correct content and **no color applied
+    at all**. `IngredientDetailPage.tsx`'s movement-quantity cell shipped exactly this
+    (`color={negative ? "error.main" : "success.main"}`), invisible to a `getByText`-only assertion
+    and to all three code-review layers, since nothing in this codebase's test suite anywhere
+    asserts a MUI color prop or CSS class (confirmed by grepping for `toHaveClass`/color assertions
+    before writing this trap: zero hits, on any MUI component, in any test file). Fixed by switching
+    to the bare tokens `"error"`/`"success"`. **This class of bug sits outside what this project's
+    test suite can prove**: it is only ever going to be caught by a human looking at the running
+    app, not by `getByText`, `toHaveClass`, or `tsc -b`. Worth remembering the next time a component
+    passes a theme-path-shaped string to a prop that looks like it should accept one.
+
 ---
 
 ## Where code goes
@@ -760,7 +852,11 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
 - **AD-14** One recipe-suggestion generation in flight per Cook: reject, don't queue. Write only after
   success — no orphaned rows on failure.
 - **AD-15** Reject any User update that would leave zero active Admins.
-- **AD-16** `Ingredient.current_stock` is **never clamped at zero**, on either the automatic or manual path.
+- **AD-16** `Ingredient.current_stock` is **never clamped at zero**, on either the automatic or
+  manual path. **First real application: Story 4.1.** `InventoryService.record_movement` applies a
+  waste or negative-adjustment delta unconditionally, with tests asserting the exact negative
+  resulting value, not merely "no error". The automatic path (consumption, at an OrderItem's
+  transition to `in_preparation`) is still unbuilt, Epic 5's job.
 
 ---
 
@@ -834,6 +930,18 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   placeholder, no admin/* screen shows Order data) — this is not a parity gap, it's the same
   ahead-of-UI pattern `InventoryWriteDep` set for Admin between Stories 2.1 and 2.6; the Waiter's
   `TableOrderDetailPage` is the only frontend consumer this story wires up.
+- **Story 4.1 gave `InventoryService` its first write to `Ingredient.current_stock`** (AD-16), via
+  three new routes reusing `InventoryReadDep`/`InventoryWriteDep` unchanged: `GET
+  /ingredients/{id}`, `GET /ingredients/{id}/movements`, `POST /ingredients/{id}/movements`. Sign
+  convention (FR-15): `purchase`/`waste` submit a positive magnitude and the service applies
+  `+`/`-`; `adjustment` submits the already-signed delta directly; `consumption` is rejected at the
+  schema level (`CreateStockMovementRequest`'s `model_validator`), it is Epic 5's automatic path
+  only, never a manual input. `current_stock` is never floor-capped at zero on this path either, a
+  `waste` or negative `adjustment` can drive it negative. The movement history's "Recorded by"
+  column shows a raw `User #{id}`, never a resolved name, a conscious, reviewed decision: no
+  endpoint any non-Admin role can call resolves a user id to a name, matching
+  `OrderItemResponse.cook_id`'s existing no-join precedent (logged in `deferred-work.md`, not a
+  gap this story needed to close).
 - A Recipe Suggestion never writes to a live Dish — Admin confirmation is the only path to the menu.
 - A newly created Dish is **unconditionally unavailable**, regardless of anything a caller submits
   (`CreateDishRequest` has no `is_available` field at all). Menu Categories are **create-only** in
@@ -1385,5 +1493,54 @@ regression test pinning that `edit_item`/`cancel_item` never broadcast; no posit
 cancel test; three near-identical role-cancel tests not collapsed into one parametrized test;
 `UpdateOrderItemRequest.notes` doesn't normalize an explicit `""` to `None` server-side. Suites are
 now **270 backend and 142 frontend tests**.
+
+**2026-08-15 patch (Story 4.1, Record Manual Stock Movements, plus its code review and manual
+testing pass):** Epic 4 opens. First write to `Ingredient.current_stock` since Story 2.1 created
+the column. `backend/data_models/inventory.py` gained its first Pydantic schemas
+(`CreateStockMovementRequest`, whose `model_validator` rejects `consumption` as a manual input and
+enforces AD-16's sign convention; `StockMovementResponse`), previously ORM-only.
+`InventoryService` gained `get_ingredient`, `list_movements`, `record_movement`, plus two private
+seams: `_get_ingredient` (plain read, no lock) and `_lock_ingredient` (`SELECT ... FOR UPDATE`,
+`record_movement` only) — a code-review-driven fix. The first implementation pass did a plain
+`db.get()` read-modify-write on `current_stock` with no lock, a genuine lost-update race (two
+concurrent movements on the same Ingredient could silently overwrite each other's effect on
+`current_stock`, even though both `StockMovement` audit rows would still insert correctly).
+`_lock_ingredient` is the **third instance** of trap 9's "lock the one row every caller contends
+on" shape, after `MenuService._lock_dish` (AD-8) and `UserService`'s AD-15 last-admin guard, and the
+current-state tree's mention of `_lock_dish` now cross-references it. `api/inventory.py` gained
+`GET /ingredients/{id}`, `GET /ingredients/{id}/movements`, `POST /ingredients/{id}/movements`, all
+reusing `InventoryReadDep`/`InventoryWriteDep` unchanged, no new Role scoping needed. No Alembic
+migration: `StockMovement`/`MovementType` already existed in the Story 1.0 baseline. 26 new backend
+tests.
+
+Frontend: `IngredientDetailPage.tsx` replaces its Story 1.4 placeholder, the seventh real domain
+screen (6 IA surfaces remain placeholders) — stat cards, a log-movement form (Purchase/Waste/
+Adjustment only, Consumption never offered), and a movement history table using the new
+`components/inventory/MovementTypeChip.tsx` (first file in that folder, a neutral-palette Chip
+deliberately not reusing `OrderItemStatusBadge`'s traffic-light trio, AC3/UX-DR14). `inventoryService.ts`
+gained `useIngredient`/`useStockMovements`/`useRecordStockMovement`; the last invalidates the
+single-ingredient key, the movements key, and `INGREDIENTS_QUERY_KEY` together on settle.
+
+Code review (3 patches, both named above; the rest were deferred test-coverage gaps, see
+`deferred-work.md`): the `_lock_ingredient` race; a duplicated "fetch ingredient or 404" check
+across three service methods, consolidated into `_get_ingredient`; a missing secondary sort key on
+movement-history ordering (`.order_by(timestamp.desc(), id.desc())`, ties by DB-clock timestamp
+otherwise sort undefined).
+
+**Two bugs found only by manually testing the live Docker stack, after the automated review had
+already closed the story, neither caught by any of the three review layers or the test suite:**
+**Trap 24 added** — `IngredientsPage.tsx` had no click-through to the destination page this story
+just built; its Story 2.6 docstring had deferred that link to Story 4.3 on a reason (needs
+comparison logic) that was wrong for plain navigation from the start, and nobody re-examined it
+when the destination page actually shipped. Fixed with `useNavigate()` on the row, mirroring
+`TablesPage.tsx`'s tile-click precedent. **Trap 25 added** — the movement-history quantity
+`Typography` used `color="error.main"`/`"success.main"`, a dot-path that `sx` resolves but the bare
+`color` prop silently ignores, so the text rendered with no color at all; fixed with the bare tokens
+`"error"`/`"success"`. Neither bug is the kind an automated diff review or this codebase's own test
+conventions (no test anywhere asserts a MUI color prop) can catch; both are recorded as durable
+lessons about the limits of what "green tests, clean review" actually proves. Domain rules gained a
+note on the sign convention and the deliberate "Recorded by" no-join gap (also logged in
+`deferred-work.md`). AD-16 marked with its first real application. Suites are now **296 backend and
+153 frontend tests**.
 
 Last Updated: 2026-08-15

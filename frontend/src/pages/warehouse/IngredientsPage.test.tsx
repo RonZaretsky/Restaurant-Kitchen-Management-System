@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,6 +9,14 @@ import { IngredientsPage } from "./IngredientsPage";
 // Mocks only fetch, driving the real inventoryService hooks, matching
 // TablesSetupPage.test.tsx's pattern: mocking the service itself would hide
 // the invalidate-and-refetch wiring between the create mutation and the list.
+
+// Rows now navigate to the Ingredient detail page (Story 4.1), so useNavigate
+// needs a mock, matching TablesPage.test.tsx's own precedent for the same shape.
+const navigateMock = vi.fn();
+vi.mock("react-router", async () => {
+  const actual = await vi.importActual<typeof import("react-router")>("react-router");
+  return { ...actual, useNavigate: () => navigateMock };
+});
 
 const FLOUR = {
   id: 1,
@@ -36,7 +45,9 @@ function renderPage() {
   return {
     ...render(
       <QueryClientProvider client={queryClient}>
-        <IngredientsPage />
+        <MemoryRouter>
+          <IngredientsPage />
+        </MemoryRouter>
       </QueryClientProvider>,
     ),
     queryClient,
@@ -46,6 +57,7 @@ function renderPage() {
 describe("IngredientsPage", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    navigateMock.mockClear();
   });
 
   it("renders the ingredient list from the backend", async () => {
@@ -66,6 +78,25 @@ describe("IngredientsPage", () => {
     expect(screen.getByText("kg")).toBeInTheDocument();
     expect(screen.getByText("10.000")).toBeInTheDocument();
     expect(screen.getByText("1.000")).toBeInTheDocument();
+  });
+
+  it("navigates to the Ingredient detail page when a row is clicked", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [FLOUR]));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByText("Flour"));
+
+    // Assert
+    expect(navigateMock).toHaveBeenCalledWith("/warehouse/ingredients/1");
   });
 
   it("shows the empty state instead of the old placeholder", async () => {
