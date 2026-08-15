@@ -519,3 +519,51 @@
   render guards now fall back to read-only once `item.status` changes, fixed during this review),
   but not exercised by an automated test. **Action:** add a frontend test for this sequence if this
   page ever gains live WebSocket-driven refetching (it doesn't yet — no AC asks for it).
+
+## Deferred from: code review of story-4-1 (2026-08-15)
+
+- **Movement history's "Recorded by" column shows a raw user id (`User #10`), never a resolved
+  name**, unlike the UX mockup's "Noa (Warehouse Manager)" (`frontend/src/pages/warehouse/IngredientDetailPage.tsx`,
+  `StockMovementResponse.performed_by`). Deliberate, documented in the story's own Dev Notes at
+  build time: matches `OrderItemResponse.cook_id`'s existing no-join precedent, but unlike `cook_id`
+  (resolvable client-side via `useDishes()`, a menu-read endpoint every relevant role can already
+  call), there is no endpoint any non-Admin role can call to resolve a *user* id to a name —
+  `GET /api/admin/users` is Admin-only, and neither Warehouse Manager nor Cook has another path to
+  it. Confirmed during manual testing (2026-08-15) and explicitly left deferred rather than fixed:
+  no AC requires it, and building a new read endpoint open to more roles (or denormalizing the name
+  onto `StockMovementResponse` at write time) is new scope beyond this story. **Action:** if a later
+  story (4.2/4.3, or a polish pass) wants name resolution here, the two live options are a
+  lightweight "resolve ids to names" endpoint open to Warehouse Manager/Cook, or denormalizing
+  `performed_by`'s name onto the `StockMovement` row at insert time.
+
+- **`current_stock + delta` is not bounded against `Ingredient.current_stock`'s own `Numeric(10,3)`
+  ceiling** (`backend/services/inventory_service.py`, `record_movement`). A value that pushes an
+  already-near-ceiling `current_stock` over it raises a raw `asyncpg.NumericValueOutOfRangeError`
+  (unhandled 500) instead of a clean 422. Already flagged and consciously accepted in Story 4.1's
+  own Dev Notes as matching `CreateIngredientRequest.current_stock`'s identical existing gap; no AC
+  requires a fix. **Action:** if this ever bites a real warehouse manager, add a bound check before
+  the write (or a `CHECK` constraint) and translate the overflow into a 422, applied to both this
+  method and `create_ingredient` together rather than piecemeal.
+- **Backend test coverage gaps on Story 4.1's new endpoints** (`backend/tests/test_inventory.py`):
+  no test for a decimal-places-only precision overflow (valid digit count, too many decimal
+  places, distinct from the total-digit-count overflow case that is tested); `StockMovementResponse.ingredient_id`/`reference_id`
+  are never asserted against the URL param / expected `null`; Admin is never explicitly tested
+  against the two new GET endpoints (only Warehouse Manager/Cook/Waiter are). **Action:** low
+  priority, add opportunistically if this file is touched again by Story 4.2/4.3.
+- **Frontend test coverage gaps on `IngredientDetailPage`** (`frontend/src/pages/warehouse/IngredientDetailPage.test.tsx`):
+  no test simulates a non-404 failure (500/network) to exercise the "Could not load... Retry"
+  path (code inspection shows the branch is correctly implemented); the "preserves typed form
+  values" test checks only the quantity field, not movement-type or notes; the generic
+  non-`ApiError` fallback message is never exercised. **Action:** low priority, same file Story
+  4.2/4.3 will likely touch next.
+- **No client-side precision guard on the quantity field** (`frontend/src/pages/warehouse/IngredientDetailPage.tsx`,
+  `parsePositiveAmount`/`parseAdjustmentAmount`) — an over-precision value passes the client-side
+  regex and only fails server-side with a 422, shown inline with form values preserved, so this is
+  a wasted round trip rather than a silent failure. Same class as the parser gap Story 2.6's review
+  already recorded for `MenuManagementPage.tsx`/`IngredientsPage.tsx`'s own numeric parsers.
+  **Action:** tighten alongside those if a future pass unifies the numeric-parser helpers.
+- **`isQuantityInvalid` shows no visible reason when quantity is typed before a movement type is
+  selected** (`frontend/src/pages/warehouse/IngredientDetailPage.tsx`) — Submit stays disabled with
+  no inline text explaining why until a type is also chosen. Minor; the form's own layout makes the
+  missing selection fairly self-evident. **Action:** add a helper text or select-level error state
+  if this proves confusing in manual testing.

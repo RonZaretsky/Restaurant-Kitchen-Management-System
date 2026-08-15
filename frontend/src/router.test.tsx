@@ -219,19 +219,25 @@ describe("route guard and per-role navigation", () => {
 
     // Assert
     expect(await screen.findByRole("heading", { name: "Menu Management" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Ingredient detail" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Ingredient" })).not.toBeInTheDocument();
   });
 
   it("keeps a Role's own prefix granting its detail routes", async () => {
     // Arrange: the prefix clause must stay a subtree grant even though the nav
     // clause is exact, or every detail route would need its own nav entry.
+    // Story 4.1 replaced IngredientDetailPage's static "Ingredient detail"
+    // placeholder with real content; this test does not stub fetch, so the
+    // page's data never resolves and its heading stays on its "Ingredient"
+    // fallback (rendered unconditionally, ahead of the loading/error/data
+    // states), which is enough to prove the route itself was reached rather
+    // than the visitor being bounced elsewhere.
     mockAuthenticated("warehouse_manager");
 
     // Act
     renderAt("/warehouse/ingredients/1");
 
     // Assert: reached the surface rather than being bounced home.
-    expect(await screen.findByRole("heading", { name: "Ingredient detail" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Ingredient" })).toBeInTheDocument();
   });
 
   it("keeps tab order aligned with the app bar's left-to-right visual order (AC8)", async () => {
