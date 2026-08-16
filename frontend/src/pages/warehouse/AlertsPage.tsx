@@ -1,11 +1,13 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
+import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Typography from "@mui/material/Typography";
 
@@ -34,11 +36,19 @@ function errorMessage(error: Error): string {
  * The Alerts surface (Story 4.2, replacing Story 4.1's placeholder).
  *
  * One row per Ingredient currently in shortage (FR-14), reading exactly
- * `"Stock low: {name} ({current stock}{unit} left)"` (UX-DR10). No dismiss
- * control anywhere: a row drops off only when a Stock Movement brings that
- * Ingredient back at or above threshold, never a manual action here.
- * Clicking a row opens that Ingredient's detail page to log the resolving
- * movement. Subscribes to the live `inventory.alerts_changed` push
+ * `"Stock low: {name} ({current stock}{unit} left)"` (UX-DR10). Styled per
+ * DESIGN.md's `alert-row` token: the same red as a cancelled OrderItem/
+ * in-shortage Ingredient row, plus a WarningAmberIcon — previously missing
+ * here (rows rendered as plain unstyled text), fixed after manual testing
+ * found the row's clickability had no visible affordance at all. A
+ * standing border plus a subtle shadow give the row a card-like, clearly
+ * interactive look at rest (not just on hover), each tuned separately for
+ * light/dark since a flat "error.light" border reads too faint on a dark
+ * background. No dismiss control anywhere: a row drops off only when a
+ * Stock Movement brings that Ingredient back at or above threshold, never
+ * a manual action here. Clicking a row opens that Ingredient's detail page
+ * to log the resolving movement. Subscribes to the live
+ * `inventory.alerts_changed` push
  * (Story 4.2, Observer/Pub-Sub) so a shortage appearing or clearing updates
  * this screen without a manual refresh, independently of the same-named
  * subscription AppShell.tsx owns for the nav badge.
@@ -83,12 +93,30 @@ export function AlertsPage() {
       )}
 
       {!isLoading && !isError && alerts && alerts.length > 0 && (
-        <List>
+        <List sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {alerts.map((ingredient) => (
             <ListItemButton
               key={ingredient.id}
               onClick={() => navigate(`/warehouse/ingredients/${ingredient.id}`)}
+              sx={{
+                color: "error.main",
+                border: "1px solid",
+                borderColor: (theme) => (theme.palette.mode === "dark" ? "rgba(244, 67, 54, 0.5)" : "error.light"),
+                borderRadius: 1,
+                boxShadow: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? "0 1px 3px rgba(0, 0, 0, 0.5)"
+                    : "0 1px 3px rgba(211, 47, 47, 0.15)",
+                "&:hover": {
+                  backgroundColor: (theme) =>
+                    theme.palette.mode === "dark" ? "rgba(244, 67, 54, 0.16)" : "rgba(211, 47, 47, 0.08)",
+                  borderColor: "error.main",
+                },
+              }}
             >
+              <ListItemIcon sx={{ minWidth: 36, color: "error.main" }}>
+                <WarningAmberIcon />
+              </ListItemIcon>
               <ListItemText
                 primary={`Stock low: ${ingredient.name} (${ingredient.current_stock}${ingredient.unit} left)`}
               />
