@@ -12,6 +12,7 @@ from data_models import (
     OrderItemResponse,
     OrderItemStatus,
     OrderStatus,
+    RecipeIngredient,
     RestaurantTable,
     TableStatus,
     UpdateOrderItemRequest,
@@ -21,38 +22,49 @@ from data_models import (
 from exceptions import (
     DishNotAvailableError,
     DishNotFoundError,
+    IngredientNotFoundError,
     OrderItemNotCancellableError,
     OrderItemNotFoundError,
+    OrderItemNotInPreparationError,
     OrderItemNotPendingError,
     OrderNotFoundError,
     TableNotAvailableError,
     TableNotFoundError,
 )
+from services.inventory_service import InventoryService
 from services.realtime_service import RealtimeService
 
 
 class OrderService:
     """Opens Tables into new Orders.
 
-    Config-free aside from the realtime_service collaborator, so it is
-    registered as a container-level Factory with the logger and
-    realtime_service injected, matching TableService's shape plus the push
-    seam Story 3.3 adds. That seam is an Observer/Pub-Sub pattern: this
-    service publishes table.status_changed/order.item_added events without
-    knowing who, if anyone, is listening, and RealtimeService/ConnectionRegistry
-    fan them out to every subscribed frontend client (AD-2).
+    Config-free aside from the realtime_service/inventory_service collaborators, so it is
+    registered as a container-level Factory with the logger, realtime_service, and
+    inventory_service injected, matching TableService's shape plus the push seam Story 3.3 adds
+    and the stock-deduction seam Story 5.2 adds. The realtime_service seam is an Observer/Pub-Sub
+    pattern: this service publishes table.status_changed/order.item_added/
+    order.item_status_changed events without knowing who, if anyone, is listening, and
+    RealtimeService/ConnectionRegistry fan them out to every subscribed frontend client (AD-2).
+    inventory_service is used by pick_up_item to atomically deduct Recipe-driven stock
+    consumption in the same transaction as the OrderItem status transition (AD-6, NFR-3),
+    reusing InventoryService.apply_consumption rather than duplicating its row-lock/
+    threshold-crossing logic here.
     """
 
-    def __init__(self, logger: Any, realtime_service: RealtimeService) -> None:
+    def __init__(self, logger: Any, realtime_service: RealtimeService, inventory_service: InventoryService) -> None:
         """Initialize the service.
 
         Args:
             logger: The loguru logger injected from the container.
             realtime_service: Injected service used to push live updates to
-                connected Waiter terminals (AD-2, Story 3.3).
+                connected Waiter/Cook terminals (AD-2, Story 3.3/5.2).
+            inventory_service: Injected service used to atomically deduct
+                Recipe-driven stock consumption when an Order Item is picked
+                up (FR-13, Story 5.2).
         """
         self._logger = logger
         self._realtime_service = realtime_service
+        self._inventory_service = inventory_service
 
     async def open_table(self, db: AsyncSession, actor: User, table_id: int) -> Order:
         """Mark an available Table occupied and start a new Order on it (AC1).
@@ -362,6 +374,176 @@ class OrderService:
             actor.id,
             order_id,
             item_id,
+        )
+        return item
+
+    async def pick_up_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
+        """Pick up a pending Order Item, deducting its Recipe's stock atomically (AC1, AC2, AC4, AC7, AC8).
+
+        A single guarded UPDATE (AD-6, trap 18) moves the item from pending to in_preparation and
+        records the acting Cook, in the same transaction as every Recipe Ingredient's stock
+        deduction and StockMovement insert (InventoryService.apply_consumption, trap 9's row lock,
+        composed here rather than duplicated). Guarding on status == pending is also what rejects
+        a re-trigger on an already in_preparation/ready/cancelled item (AC2/AC5): the precondition
+        simply no longer holds, regardless of what the current status actually is. Deduction never
+        floor-caps at zero (AD-16, AC7) — a Recipe requiring more than is currently in stock still
+        deducts in full, and Epic 4's existing low-stock crossing check still fires for it (AC7),
+        broadcast only after this transaction's own commit succeeds.
+
+        Args:
+            db: The active database session.
+            actor: The Cook picking up the item.
+            order_id: The id of the Order the item belongs to.
+            item_id: The id of the Order Item to pick up.
+
+        Returns:
+            The now in_preparation Order Item.
+
+        Raises:
+            OrderItemNotFoundError: If no Order Item matches item_id on order_id.
+            OrderItemNotPendingError: If the item's status is not pending at the moment of the write.
+        """
+        item = await self._get_item(db, actor, order_id, item_id)
+
+        result = await db.execute(
+            update(OrderItem)
+            .where(OrderItem.id == item_id, OrderItem.status == OrderItemStatus.pending)
+            .values(status=OrderItemStatus.in_preparation, cook_id=actor.id)
+        )
+        if result.rowcount == 0:
+            self._logger.warning(
+                "Order item pick-up rejected for user_id={}: order_id={} item_id={} is not pending",
+                actor.id,
+                order_id,
+                item_id,
+            )
+            await db.rollback()
+            raise OrderItemNotPendingError()
+
+        # Refreshed here, not just relied on from _get_item's earlier read: the guarded UPDATE
+        # above only just succeeded, meaning the item was still pending an instant ago and a
+        # concurrent edit_item (also guarded on status == pending) could have committed a new
+        # quantity in the narrow window between _get_item's read and this UPDATE. Now that our own
+        # UPDATE has moved status to in_preparation, no further edit_item call can land (its own
+        # guard requires status == pending), so this refresh is the last point a quantity change
+        # could still be pending, and the one this deduction must use (review finding, Story 5.2).
+        await db.refresh(item)
+
+        recipe_result = await db.execute(
+            select(RecipeIngredient)
+            .where(RecipeIngredient.dish_id == item.dish_id)
+            .order_by(RecipeIngredient.ingredient_id)
+        )
+        recipe_ingredients = recipe_result.scalars().all()
+
+        crossed_ingredient_ids: list[int] = []
+        try:
+            for recipe_ingredient in recipe_ingredients:
+                crossed = await self._inventory_service.apply_consumption(
+                    db,
+                    recipe_ingredient.ingredient_id,
+                    recipe_ingredient.quantity * item.quantity,
+                    actor.id,
+                    order_id,
+                )
+                if crossed:
+                    crossed_ingredient_ids.append(recipe_ingredient.ingredient_id)
+        except IngredientNotFoundError:
+            # Explicit rollback, matching every other rejection branch in this file (trap 20):
+            # the guarded status UPDATE above already ran on this session but was never committed,
+            # so this discards it rather than relying on the session's own close-time behavior.
+            self._logger.error(
+                "Order item pick-up failed for user_id={}: order_id={} item_id={} references a"
+                " missing ingredient",
+                actor.id,
+                order_id,
+                item_id,
+            )
+            await db.rollback()
+            raise
+
+        await db.commit()
+        await db.refresh(item)
+        self._logger.info(
+            "Order item picked up by user_id={}: order_id={} item_id={} dish_id={} ingredients_deducted={}",
+            actor.id,
+            order_id,
+            item_id,
+            item.dish_id,
+            len(recipe_ingredients),
+        )
+        await self._realtime_service.broadcast(
+            [UserRole.waiter, UserRole.cook],
+            "order.item_status_changed",
+            OrderItemResponse.model_validate(item).model_dump(mode="json"),
+        )
+        for ingredient_id in crossed_ingredient_ids:
+            self._logger.info(
+                "Low-stock alert triggered by consumption: ingredient_id={} order_id={} item_id={}",
+                ingredient_id,
+                order_id,
+                item_id,
+            )
+            await self._realtime_service.broadcast(
+                [UserRole.warehouse_manager],
+                "inventory.alerts_changed",
+                {"ingredient_id": ingredient_id},
+            )
+        return item
+
+    async def mark_item_ready(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
+        """Mark an in_preparation Order Item ready, a pure status change (AC3, AC5, AC6, AC8).
+
+        Guarded on status == in_preparation (AD-6, trap 18): rejects a pending item skipping ahead
+        (AC4), an already-ready item re-triggering the transition, and any reverse transition
+        (AC5). Does not reassign cook_id — the Cook recorded is whoever picked the item up, marking
+        it ready never overwrites that attribution, since it is for audit only, not an access lock
+        (AC6): any active Cook may call this regardless of whose cook_id is already set, including
+        finishing an item a since-deactivated Cook picked up. No stock movement of any kind (AC3).
+
+        Args:
+            db: The active database session.
+            actor: The Cook marking the item ready (may differ from the Cook who picked it up).
+            order_id: The id of the Order the item belongs to.
+            item_id: The id of the Order Item to mark ready.
+
+        Returns:
+            The now ready Order Item.
+
+        Raises:
+            OrderItemNotFoundError: If no Order Item matches item_id on order_id.
+            OrderItemNotInPreparationError: If the item's status is not in_preparation at the
+                moment of the write.
+        """
+        item = await self._get_item(db, actor, order_id, item_id)
+
+        result = await db.execute(
+            update(OrderItem)
+            .where(OrderItem.id == item_id, OrderItem.status == OrderItemStatus.in_preparation)
+            .values(status=OrderItemStatus.ready)
+        )
+        if result.rowcount == 0:
+            self._logger.warning(
+                "Order item mark-ready rejected for user_id={}: order_id={} item_id={} is not in_preparation",
+                actor.id,
+                order_id,
+                item_id,
+            )
+            await db.rollback()
+            raise OrderItemNotInPreparationError()
+
+        await db.commit()
+        await db.refresh(item)
+        self._logger.info(
+            "Order item marked ready by user_id={}: order_id={} item_id={}",
+            actor.id,
+            order_id,
+            item_id,
+        )
+        await self._realtime_service.broadcast(
+            [UserRole.waiter, UserRole.cook],
+            "order.item_status_changed",
+            OrderItemResponse.model_validate(item).model_dump(mode="json"),
         )
         return item
 

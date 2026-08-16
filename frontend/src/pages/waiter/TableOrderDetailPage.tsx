@@ -342,13 +342,25 @@ export function TableOrderDetailPage() {
   // would target a key nothing reads, silently missing a live update that
   // arrives in the narrow window before this page's own Order lookup
   // settles.
+  // Story 5.2: order.item_status_changed is a second, distinct event (a Cook's
+  // pick-up/mark-ready transition, not a new item), subscribed to alongside
+  // order.item_added rather than folded into one subscribe() call, since
+  // useRealtime()'s subscribe is per-event-name. Both invalidate the same
+  // key: this page never inspects the payload directly, only refetches.
   useEffect(() => {
     if (order?.id === undefined) {
       return undefined;
     }
-    return subscribe("order.item_added", () => {
+    const unsubscribeItemAdded = subscribe("order.item_added", () => {
       void queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(order.id) });
     });
+    const unsubscribeItemStatusChanged = subscribe("order.item_status_changed", () => {
+      void queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(order.id) });
+    });
+    return () => {
+      unsubscribeItemAdded();
+      unsubscribeItemStatusChanged();
+    };
   }, [subscribe, queryClient, order?.id]);
   const dishesQuery = useDishes();
   const { data: dishes } = dishesQuery;

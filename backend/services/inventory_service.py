@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
@@ -257,6 +258,61 @@ class InventoryService:
             )
 
         return movement
+
+    async def apply_consumption(
+        self, db: AsyncSession, ingredient_id: int, quantity: Decimal, actor_id: int, order_id: int
+    ) -> bool:
+        """Deduct a Recipe-driven consumption amount from an Ingredient (FR-13, Story 5.2).
+
+        Reuses record_movement's own row-lock (trap 9) and threshold-crossing shape, but is a
+        distinct method rather than a call to record_movement, for two reasons: (1)
+        CreateStockMovementRequest explicitly rejects movement_type=consumption as manually
+        submittable, so record_movement's payload contract cannot represent this call at all; (2)
+        this deduction must be atomic with OrderService.pick_up_item's own OrderItem status UPDATE
+        (AD-6, NFR-3) — record_movement commits its own transaction, which would let the stock
+        deduction land even if the status UPDATE's guard later failed, or vice versa. So this
+        method locks the Ingredient row and stages both the current_stock decrement and the
+        StockMovement insert on the given session, but deliberately does not call db.commit() or
+        broadcast anything — pick_up_item's own single commit is what makes the OrderItem
+        transition and every Ingredient it touches atomic together, and a low-stock broadcast
+        fired before that commit would tell a Warehouse Manager's browser to refetch data that
+        was never actually committed.
+
+        Args:
+            db: The active database session, part of the caller's own transaction.
+            ingredient_id: The id of the Ingredient being consumed.
+            quantity: The amount to deduct (RecipeIngredient.quantity * OrderItem.quantity),
+                always applied as a subtraction, never floor-capped at zero (AD-16) — a Recipe
+                requiring more than is currently in stock still deducts in full.
+            actor_id: The id of the Cook performing the triggering pick-up, recorded as the
+                StockMovement's performed_by.
+            order_id: The id of the Order whose item triggered this consumption, recorded as the
+                StockMovement's reference_id (FR-13's "referencing the Order").
+
+        Returns:
+            True if this deduction crosses the Ingredient's shortage threshold in either
+            direction (was_low != is_low), signaling the caller should broadcast
+            inventory.alerts_changed after its own commit succeeds; False otherwise.
+
+        Raises:
+            IngredientNotFoundError: If no Ingredient matches ingredient_id.
+        """
+        ingredient = await self._lock_ingredient(db, ingredient_id)
+
+        was_low = ingredient.current_stock < ingredient.min_stock_threshold
+        ingredient.current_stock = ingredient.current_stock - quantity
+
+        movement = StockMovement(
+            ingredient_id=ingredient_id,
+            movement_type=MovementType.consumption,
+            quantity_change=-quantity,
+            reference_id=order_id,
+            performed_by=actor_id,
+        )
+        db.add(movement)
+
+        is_low = ingredient.current_stock < ingredient.min_stock_threshold
+        return was_low != is_low
 
     async def _get_ingredient(self, db: AsyncSession, ingredient_id: int) -> Ingredient:
         """Fetch an Ingredient by id with no row lock, for read-only callers.
