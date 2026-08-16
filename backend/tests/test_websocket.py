@@ -14,7 +14,7 @@ from websockets.exceptions import ConnectionClosed
 
 import api.websocket as websocket_module
 from constants import SETTINGS
-from data_models import Category, Dish, Ingredient, RestaurantTable, TableStatus, Unit, User, UserRole
+from data_models import Category, Dish, Ingredient, RecipeIngredient, RestaurantTable, TableStatus, Unit, User, UserRole
 from main import app, container
 from services.auth_service import COOKIE_NAME, AuthService
 from utils import load_config
@@ -375,10 +375,12 @@ async def test_adding_an_order_item_broadcasts_order_item_added(db_session) -> N
     await db_session.refresh(dish)
     await _create_user(db_session, "ws_item_added", role=UserRole.waiter)
     await _create_user(db_session, "ws_item_added_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_item_added_wm", role=UserRole.warehouse_manager)
 
     async with _running_server() as port:
         token = await _login_over_http(port, "ws_item_added")
         cook_token = await _login_over_http(port, "ws_item_added_cook")
+        wm_token = await _login_over_http(port, "ws_item_added_wm")
 
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
             http_client.cookies.set(COOKIE_NAME, token)
@@ -388,28 +390,295 @@ async def test_adding_an_order_item_broadcasts_order_item_added(db_session) -> N
 
             async with await _connect(port, token) as ws:
                 async with await _connect(port, cook_token) as cook_ws:
-                    # Act
-                    add_response = await http_client.post(
-                        f"/api/orders/{order_id}/items",
-                        json={"dish_id": dish.id, "quantity": 2, "notes": "no onions"},
-                    )
-                    assert add_response.status_code == 201
-                    item = add_response.json()
+                    async with await _connect(port, wm_token) as wm_ws:
+                        # Act
+                        add_response = await http_client.post(
+                            f"/api/orders/{order_id}/items",
+                            json={"dish_id": dish.id, "quantity": 2, "notes": "no onions"},
+                        )
+                        assert add_response.status_code == 201
+                        item = add_response.json()
 
-                    # Assert
-                    message = await asyncio.wait_for(ws.recv(), timeout=2)
-                    parsed = json.loads(message)
-                    assert parsed["event"] == "order.item_added"
-                    assert parsed["payload"]["id"] == item["id"]
-                    assert parsed["payload"]["order_id"] == order_id
-                    assert parsed["payload"]["dish_id"] == dish.id
-                    assert parsed["payload"]["quantity"] == 2
-                    assert parsed["payload"]["notes"] == "no onions"
-                    assert parsed["payload"]["price_at_add"] == "12.50"
+                        # Assert
+                        message = await asyncio.wait_for(ws.recv(), timeout=2)
+                        parsed = json.loads(message)
+                        assert parsed["event"] == "order.item_added"
+                        assert parsed["payload"]["id"] == item["id"]
+                        assert parsed["payload"]["order_id"] == order_id
+                        assert parsed["payload"]["dish_id"] == dish.id
+                        assert parsed["payload"]["quantity"] == 2
+                        assert parsed["payload"]["notes"] == "no onions"
+                        assert parsed["payload"]["price_at_add"] == "12.50"
 
-                    # Assert: the event is Waiter-scoped, a Cook receives nothing.
-                    with pytest.raises(asyncio.TimeoutError):
-                        await asyncio.wait_for(cook_ws.recv(), timeout=0.5)
+                        # Assert: Story 5.1 widened this event to also reach the Kitchen
+                        # Display, so a connected Cook now receives the identical payload,
+                        # not nothing.
+                        cook_message = await asyncio.wait_for(cook_ws.recv(), timeout=2)
+                        assert json.loads(cook_message) == parsed
+
+                        # Assert: still Role-scoped, not a blanket broadcast — a
+                        # connected warehouse_manager receives nothing.
+                        with pytest.raises(asyncio.TimeoutError):
+                            await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_picking_up_an_order_item_broadcasts_order_item_status_changed(db_session) -> None:
+    # Arrange
+    table = RestaurantTable(table_number=3, capacity=4, status=TableStatus.available)
+    category = Category(name="Mains")
+    db_session.add_all([table, category])
+    await db_session.commit()
+    await db_session.refresh(table)
+    await db_session.refresh(category)
+    dish = Dish(
+        name="Margherita",
+        price="12.50",
+        category_id=category.id,
+        prep_time_minutes=15,
+        is_available=True,
+    )
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    ingredient = Ingredient(name="Dough", unit=Unit.kg, current_stock="10.000", min_stock_threshold="1.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    db_session.add(RecipeIngredient(dish_id=dish.id, ingredient_id=ingredient.id, unit=Unit.kg, quantity="0.500"))
+    await db_session.commit()
+    await _create_user(db_session, "ws_pickup_waiter", role=UserRole.waiter)
+    await _create_user(db_session, "ws_pickup_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_pickup_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_pickup_waiter")
+        cook_token = await _login_over_http(port, "ws_pickup_cook")
+        wm_token = await _login_over_http(port, "ws_pickup_wm")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            add_response = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert add_response.status_code == 201
+            item_id = add_response.json()["id"]
+
+            async with await _connect(port, waiter_token) as waiter_ws:
+                async with await _connect(port, cook_token) as cook_ws:
+                    async with await _connect(port, wm_token) as wm_ws:
+                        # Act
+                        http_client.cookies.set(COOKIE_NAME, cook_token)
+                        pick_up_response = await http_client.post(
+                            f"/api/orders/{order_id}/items/{item_id}/pick-up"
+                        )
+                        assert pick_up_response.status_code == 200
+
+                        # Assert: both Waiter and Cook receive the status change.
+                        waiter_message = await asyncio.wait_for(waiter_ws.recv(), timeout=2)
+                        parsed = json.loads(waiter_message)
+                        assert parsed["event"] == "order.item_status_changed"
+                        assert parsed["payload"]["id"] == item_id
+                        assert parsed["payload"]["status"] == "in_preparation"
+
+                        cook_message = await asyncio.wait_for(cook_ws.recv(), timeout=2)
+                        assert json.loads(cook_message) == parsed
+
+                        # Assert: not crossing threshold (10.000 - 0.500 stays above 1.000),
+                        # so warehouse_manager receives nothing.
+                        with pytest.raises(asyncio.TimeoutError):
+                            await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_picking_up_an_order_item_that_crosses_threshold_also_broadcasts_alerts_changed(
+    db_session,
+) -> None:
+    # Arrange: stock only just above threshold, so a single pick-up crosses it.
+    table = RestaurantTable(table_number=4, capacity=4, status=TableStatus.available)
+    category = Category(name="Mains")
+    db_session.add_all([table, category])
+    await db_session.commit()
+    await db_session.refresh(table)
+    await db_session.refresh(category)
+    dish = Dish(
+        name="Truffle Risotto",
+        price="22.00",
+        category_id=category.id,
+        prep_time_minutes=20,
+        is_available=True,
+    )
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    ingredient = Ingredient(name="Truffle", unit=Unit.kg, current_stock="1.200", min_stock_threshold="1.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    db_session.add(RecipeIngredient(dish_id=dish.id, ingredient_id=ingredient.id, unit=Unit.kg, quantity="0.500"))
+    await db_session.commit()
+    await _create_user(db_session, "ws_cross_waiter", role=UserRole.waiter)
+    await _create_user(db_session, "ws_cross_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_cross_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_cross_waiter")
+        cook_token = await _login_over_http(port, "ws_cross_cook")
+        wm_token = await _login_over_http(port, "ws_cross_wm")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            add_response = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert add_response.status_code == 201
+            item_id = add_response.json()["id"]
+
+            async with await _connect(port, wm_token) as wm_ws:
+                # Act
+                http_client.cookies.set(COOKIE_NAME, cook_token)
+                pick_up_response = await http_client.post(f"/api/orders/{order_id}/items/{item_id}/pick-up")
+                assert pick_up_response.status_code == 200
+
+                # Assert: 1.200 - 0.500 = 0.700, now below 1.000, threshold crossed.
+                message = await asyncio.wait_for(wm_ws.recv(), timeout=2)
+                assert json.loads(message) == {
+                    "event": "inventory.alerts_changed",
+                    "payload": {"ingredient_id": ingredient.id},
+                }
+
+
+@pytest.mark.asyncio
+async def test_picking_up_an_order_item_already_below_threshold_broadcasts_nothing(db_session) -> None:
+    # Arrange: stock already below threshold before the pick-up, and stays
+    # below after — was_low == is_low == True, no crossing (review finding,
+    # Story 5.2: Task 7's own text requires both non-crossing cases tested,
+    # not just "stays comfortably above").
+    table = RestaurantTable(table_number=6, capacity=4, status=TableStatus.available)
+    category = Category(name="Mains")
+    db_session.add_all([table, category])
+    await db_session.commit()
+    await db_session.refresh(table)
+    await db_session.refresh(category)
+    dish = Dish(
+        name="Already Low Dish",
+        price="15.00",
+        category_id=category.id,
+        prep_time_minutes=10,
+        is_available=True,
+    )
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    ingredient = Ingredient(name="Saffron", unit=Unit.kg, current_stock="0.800", min_stock_threshold="1.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    db_session.add(RecipeIngredient(dish_id=dish.id, ingredient_id=ingredient.id, unit=Unit.kg, quantity="0.100"))
+    await db_session.commit()
+    await _create_user(db_session, "ws_already_low_waiter", role=UserRole.waiter)
+    await _create_user(db_session, "ws_already_low_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_already_low_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_already_low_waiter")
+        cook_token = await _login_over_http(port, "ws_already_low_cook")
+        wm_token = await _login_over_http(port, "ws_already_low_wm")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            add_response = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert add_response.status_code == 201
+            item_id = add_response.json()["id"]
+
+            async with await _connect(port, wm_token) as wm_ws:
+                # Act
+                http_client.cookies.set(COOKIE_NAME, cook_token)
+                pick_up_response = await http_client.post(f"/api/orders/{order_id}/items/{item_id}/pick-up")
+                assert pick_up_response.status_code == 200
+
+                # Assert: 0.800 - 0.100 = 0.700, still below 1.000 — no crossing, nothing broadcast.
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_marking_an_item_ready_broadcasts_order_item_status_changed_with_no_alert(
+    db_session,
+) -> None:
+    # Arrange
+    table = RestaurantTable(table_number=5, capacity=4, status=TableStatus.available)
+    category = Category(name="Mains")
+    db_session.add_all([table, category])
+    await db_session.commit()
+    await db_session.refresh(table)
+    await db_session.refresh(category)
+    dish = Dish(
+        name="Caesar Salad",
+        price="9.00",
+        category_id=category.id,
+        prep_time_minutes=10,
+        is_available=True,
+    )
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    await _create_user(db_session, "ws_ready_waiter", role=UserRole.waiter)
+    await _create_user(db_session, "ws_ready_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_ready_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_ready_waiter")
+        cook_token = await _login_over_http(port, "ws_ready_cook")
+        wm_token = await _login_over_http(port, "ws_ready_wm")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            add_response = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert add_response.status_code == 201
+            item_id = add_response.json()["id"]
+
+            http_client.cookies.set(COOKIE_NAME, cook_token)
+            pick_up_response = await http_client.post(f"/api/orders/{order_id}/items/{item_id}/pick-up")
+            assert pick_up_response.status_code == 200
+
+            async with await _connect(port, waiter_token) as waiter_ws:
+                async with await _connect(port, cook_token) as cook_ws:
+                    async with await _connect(port, wm_token) as wm_ws:
+                        # Act
+                        ready_response = await http_client.post(
+                            f"/api/orders/{order_id}/items/{item_id}/mark-ready"
+                        )
+                        assert ready_response.status_code == 200
+
+                        # Assert
+                        waiter_message = await asyncio.wait_for(waiter_ws.recv(), timeout=2)
+                        parsed = json.loads(waiter_message)
+                        assert parsed["event"] == "order.item_status_changed"
+                        assert parsed["payload"]["status"] == "ready"
+
+                        cook_message = await asyncio.wait_for(cook_ws.recv(), timeout=2)
+                        assert json.loads(cook_message) == parsed
+
+                        # Assert: mark-ready never touches stock, no alert broadcast.
+                        with pytest.raises(asyncio.TimeoutError):
+                            await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
 
 
 @pytest.mark.asyncio
