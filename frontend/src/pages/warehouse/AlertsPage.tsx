@@ -1,11 +1,13 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
+import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Typography from "@mui/material/Typography";
 
@@ -34,7 +36,11 @@ function errorMessage(error: Error): string {
  * The Alerts surface (Story 4.2, replacing Story 4.1's placeholder).
  *
  * One row per Ingredient currently in shortage (FR-14), reading exactly
- * `"Stock low: {name} ({current stock}{unit} left)"` (UX-DR10). No dismiss
+ * `"Stock low: {name} ({current stock}{unit} left)"` (UX-DR10). Styled per
+ * DESIGN.md's `alert-row` token: the same red as a cancelled OrderItem/
+ * in-shortage Ingredient row, plus a WarningAmberIcon — previously missing
+ * here (rows rendered as plain unstyled text), fixed after manual testing
+ * found the row's clickability had no visible affordance at all. No dismiss
  * control anywhere: a row drops off only when a Stock Movement brings that
  * Ingredient back at or above threshold, never a manual action here.
  * Clicking a row opens that Ingredient's detail page to log the resolving
@@ -88,7 +94,17 @@ export function AlertsPage() {
             <ListItemButton
               key={ingredient.id}
               onClick={() => navigate(`/warehouse/ingredients/${ingredient.id}`)}
+              sx={{
+                color: "error.main",
+                "&:hover": {
+                  backgroundColor: (theme) =>
+                    theme.palette.mode === "dark" ? "rgba(244, 67, 54, 0.16)" : "rgba(211, 47, 47, 0.08)",
+                },
+              }}
             >
+              <ListItemIcon sx={{ minWidth: 36, color: "error.main" }}>
+                <WarningAmberIcon />
+              </ListItemIcon>
               <ListItemText
                 primary={`Stock low: ${ingredient.name} (${ingredient.current_stock}${ingredient.unit} left)`}
               />

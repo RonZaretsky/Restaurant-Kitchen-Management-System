@@ -109,6 +109,21 @@ describe("AlertsPage", () => {
     expect(await screen.findByText("Stock low: Basil (0.500kg left)")).toBeInTheDocument();
   });
 
+  it("visibly marks the row as clickable with the shortage warning icon and red styling", async () => {
+    // Arrange: a row that only looks like plain text has no visible affordance
+    // that it's clickable — this was reported after manual testing.
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse(200, [LOW_INGREDIENT]))));
+
+    // Act
+    renderPage();
+    const row = await screen.findByText("Stock low: Basil (0.500kg left)");
+    const button = row.closest('[role="button"]') ?? row.closest("a") ?? row.parentElement;
+
+    // Assert
+    expect(button?.querySelector('[data-testid="WarningAmberIcon"]')).toBeInTheDocument();
+    expect(row).toHaveStyle({ color: "rgb(211, 47, 47)" });
+  });
+
   it("navigates to the ingredient's detail page when a row is clicked", async () => {
     // Arrange
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse(200, [LOW_INGREDIENT]))));
