@@ -619,3 +619,27 @@
   `ApiError`/`GENERIC_ERROR_MESSAGE` shape today — but it silently drops whichever message wasn't
   chosen. **Action:** concatenate both messages if this ever causes real diagnostic confusion in
   practice; not worth the complexity preemptively.
+
+## Deferred from: code review of story-5-1 (2026-08-16)
+
+- **`KitchenService.list_active_items` has no pagination or bound** — every non-cancelled
+  `OrderItem` in the entire restaurant is returned in one response, with no `LIMIT` and (as
+  already documented in the story/service docstring) no `Order.status` filter to retire
+  served/closed orders once Stories 5.3/5.4 exist. Fine at this project's stated demo/NFR-5 scale;
+  in a long-running deployment this becomes an ever-growing, unbounded query well before 5.3/5.4
+  close the correctness gap. **Action:** revisit once Stories 5.3/5.4 add the `Order.status`
+  filter — at that point the result set is naturally bounded to genuinely active orders again, so
+  this may resolve itself as a side effect rather than needing separate pagination work.
+- **`KitchenItemResponse` carries `price_at_add` and `order_id` to a read-only Kitchen Display that
+  never renders either** — the story mandated "OrderItemResponse's exact field set plus table_id"
+  verbatim, a deliberate reuse-over-narrowing choice, consistent with this codebase's Role-level-
+  only permissions model (no per-field filtering exists anywhere). Not a security bug, just an
+  unweighed least-privilege tradeoff. **Action:** define a narrower response shape only if a future
+  story's requirements make the unused fields actually matter (e.g. an audit concern), not
+  speculatively.
+- **No tripwire (TODO/xfail marker) forces `test_kitchen.py` to be revisited once Stories 5.3/5.4
+  add the `Order.status` filter this story's own docstring already predicts will be needed** — the
+  gap is well-documented in three places (story Scope note, Dev Agent Record, service docstring),
+  but nothing in the test suite itself would fail or flag once the filter should have been added.
+  **Action:** whichever of 5.3/5.4 lands first should extend `test_kitchen.py` with a served/closed-
+  order exclusion test at that point; no action needed before then.

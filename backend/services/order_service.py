@@ -248,7 +248,7 @@ class OrderService:
             item.quantity,
         )
         await self._realtime_service.broadcast(
-            [UserRole.waiter],
+            [UserRole.waiter, UserRole.cook],
             "order.item_added",
             OrderItemResponse.model_validate(item).model_dump(mode="json"),
         )

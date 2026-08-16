@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is under way: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook.**
 
 ```
 backend/
@@ -98,7 +98,13 @@ backend/
                      admin-only. Note the collection paths have NO trailing slash, matching the
                      sibling routers; a trailing slash shipped first and was corrected in review.
                      Story 3.1 split GET onto a new TablesReadDep (admin, waiter); POST/PATCH stay
-                     on the original admin-only TablesDep, unchanged
+                     on the original admin-only TablesDep, unchanged. Story 5.1 widened
+                     TablesReadDep again to admin/waiter/cook, so the Kitchen Display can resolve
+                     table_number client-side (same incremental-widening pattern as
+                     InventoryReadDep/DishCatalogReadDep/MenuReadDep)
+  api/kitchen.py      Story 5.1 (new domain): GET /api/kitchen/items, KitchenReadDep = cook +
+                     admin (mirrors every other read-dep's "primary Role + admin" shape). Read-only
+                     — no pick-up/mark-ready routes yet, that's Story 5.2
   api/orders.py       Story 3.1: POST /api/orders/tables/{table_id}/open, waiter-only (the first
                      route in the project gated to exactly one non-admin Role, no admin fallback).
                      Story 3.2 added GET /api/orders/tables/{table_id} (resolves table_id -> its
@@ -169,7 +175,10 @@ backend/
                      a state transfer) and add_item broadcasts order.item_added
                      (OrderItemResponse.model_validate(item).model_dump(mode="json"), so the pushed
                      shape can never drift from the REST response shape), both to UserRole.waiter
-                     only, both only after their db.commit() succeeds. Story 3.4 added edit_item
+                     only, both only after their db.commit() succeeds. Story 5.1 widened
+                     add_item's order.item_added broadcast to [UserRole.waiter, UserRole.cook], so
+                     the Kitchen Display also receives it live; table.status_changed stays
+                     waiter-only, unaffected. Story 3.4 added edit_item
                      (guarded UPDATE, WHERE status == pending) and cancel_item (guarded UPDATE,
                      WHERE status IN (pending, in_preparation)), the 5th/6th guarded-UPDATE
                      application; a private _get_item seam (mirrors _get_order/_get_table) is the
@@ -178,6 +187,14 @@ backend/
                      StockMovement on cancel (AD-11 is a prohibition, not a feature), and no
                      realtime_service.broadcast() call from either method (no AC asks for live
                      here, unlike 3.3's two producers)
+  services/kitchen_service.py  Story 5.1 (new): list_active_items — the FIRST genuine join in
+                     backend/services/ (every prior story returned raw ids and resolved names
+                     client-side instead). Joins OrderItem to Order to resolve table_id, since
+                     OrderItem has no table_id of its own, only order_id. Filter:
+                     OrderItem.status != cancelled only; no filter on the owning Order's own
+                     status yet, since nothing can move an Order to served/closed until Stories
+                     5.3/5.4 — flagged explicitly in the method's own docstring as a
+                     forward-compatibility gap for whichever of those ships next
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
                      calls into services/ (AD-1); broadcast(roles, event, payload).
                      **RESOLVED by Story 3.3**: OrderService is now its first producer (see above).
@@ -204,7 +221,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and eight real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, the Warehouse Ingredient detail page, and the Warehouse Alerts page). The other 5 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and nine real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, the Warehouse Ingredient detail page, the Warehouse Alerts page, and the Cook's Kitchen Display). The other 4 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -309,8 +326,8 @@ frontend/src/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
                         so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
-  pages/{role}/           placeholder components for the 5 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Eight are now real:
+  pages/{role}/           placeholder components for the 4 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Nine are now real:
                         admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
                         "+ New dish" form and an inline "+ New category" reveal on its Category
                         picker, no dialog), admin/TablesSetupPage.tsx (Story 2.4), cook/DishesPage.tsx
@@ -384,7 +401,21 @@ frontend/src/
                         row click navigates to that Ingredient's own detail page; subscribes to the
                         live inventory.alerts_changed push independently of AppShell.tsx's own
                         subscription for the nav badge, both invalidating the same
-                        ALERTS_QUERY_KEY)
+                        ALERTS_QUERY_KEY), and
+                        cook/KitchenDisplayPage.tsx (Story 5.1, replacing Epic 1's placeholder:
+                        read-only, one MUI Card per Table grouping that Table's active
+                        (non-cancelled) Order Items, each row showing dish name/quantity/note/
+                        OrderItemStatusBadge, no action controls (Story 5.2's job). Combines
+                        loading/error across three independent queries for the first time in this
+                        codebase (kitchen items, tables, dishes). Subscribes to the widened
+                        order.item_added push and invalidates KITCHEN_ITEMS_QUERY_KEY,
+                        TABLES_QUERY_KEY, and DISHES_QUERY_KEY together on receipt (review fix:
+                        originally only invalidated the kitchen items key, leaving a newly-created
+                        Table/Dish unresolved — client-side table/dish name resolution falls back
+                        to "?"/"Unknown dish", never a raw id, matching TableOrderDetailPage.tsx's
+                        convention). Dark-theme-on-Cook-login (UX-DR7) and the "Reconnecting..."
+                        banner (UX-DR16) needed zero new code, both already built ahead of this
+                        story (ThemeModeProvider.tsx/ReconnectingBanner, Stories 1.4/1.5))
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
@@ -1689,5 +1720,51 @@ matches its actual design spec. One item deferred as non-blocking, out of this s
 initial load but no live re-highlighting while parked on the page, since the backend only ever
 broadcasts `inventory.alerts_changed` to `warehouse_manager` — no AC anywhere asks for Admin live
 updates. Suites are now **311 backend and 167 frontend tests**.
+
+**2026-08-16 patch (Story 5.1, View Incoming Orders in Real Time — Kitchen Display, plus its code
+review):** Epic 5 opens, read-only. New `kitchen` domain end to end: `KitchenItemResponse`
+(`data_models/order.py`), `KitchenService.list_active_items` — **the first genuine join in
+`backend/services/`** (every prior story returned raw ids and resolved names client-side instead;
+this one joins `OrderItem` to `Order` to resolve `table_id`, since `OrderItem` has no `table_id` of
+its own and the Kitchen Display's whole point is grouping by Table). `GET /api/kitchen/items`
+(`api/kitchen.py`, `KitchenReadDep` = cook + admin), wired into `container.py`, `api/router.py`,
+and `main.py`'s `container.wire(modules=[...])` list (AC5's own explicit requirement, `"api.kitchen"`
+appended at the physical end of the list, not just inserted anywhere in it, after a code-review
+finding that the first pass inserted it mid-list).
+
+Widened two existing grants rather than duplicating them: `OrderService.add_item`'s
+`order.item_added` broadcast now targets `[UserRole.waiter, UserRole.cook]` (was waiter-only);
+`TablesReadDep` now permits `admin, waiter, cook` (was admin/waiter-only), so the Kitchen Display
+can resolve `table_number` client-side the same way `TableOrderDetailPage.tsx` already does.
+**Widening `TablesReadDep` broke two separate pre-existing tests, both literally named
+`test_cook_cannot_list_tables`** (one in `test_tables.py`, one in `test_orders.py`) — the first was
+caught on a task-scoped test run, the second only surfaced on the full-suite rerun. Both flipped to
+`test_cook_can_list_tables` (asserting 200), with a new `test_cook_cannot_create_a_table` added
+alongside the fix to keep write-access-stays-admin-only coverage from silently disappearing. A
+repo-wide grep after the fact confirmed zero remaining instances of the old name/assertion.
+
+Frontend: `KitchenDisplayPage.tsx` replaces its Epic-1 placeholder — one Card per Table, combining
+loading/error across **three** independent queries for the first time in this codebase (kitchen
+items, tables, dishes; prior multi-query pages combined two). Dark-theme-on-Cook-login (UX-DR7) and
+the "Reconnecting..." banner (UX-DR16) needed zero new code, both already built ahead of this story
+(confirmed by direct read, not assumed).
+
+Code review (three parallel agents): fixed a real gap — the live `order.item_added` handler only
+invalidated the kitchen-items cache, so a Table or Dish created after the page's initial load would
+never resolve while the (deliberately long-lived, always-foregrounded) page stayed mounted, and the
+unresolved-`table_id` fallback echoed the raw internal id with no visual distinction from a genuine
+`table_number` — violating this codebase's own "never show a raw id" convention. Fixed: the handler
+now also invalidates `TABLES_QUERY_KEY`/`DISHES_QUERY_KEY` (harmless over-invalidation the rest of
+the time), and the fallbacks now render `"?"`/`"Unknown dish"` instead of the raw id. Also fixed:
+`kitchen_service`'s container placement (moved next to `order_service`, matching the story's own
+stated intent) and the mid-list-vs-appended wiring nitpick above. Verified as safe, not just
+assumed: the widened broadcast's payload is identical for every recipient regardless of Role, and
+this codebase's Role-level-only permission model means there's no per-order Cook scoping that could
+have been skipped. Deferred (see `deferred-work.md`): `list_active_items` has no pagination/bound;
+`KitchenItemResponse` carries `price_at_add`/`order_id` the frontend never renders; no automated
+tripwire forces revisiting the already-documented `Order.status` filter gap once Stories 5.3/5.4
+ship (today's filter is `OrderItem.status != cancelled` only — correct today since nothing can move
+an Order to `served`/`closed` yet, but a served Order's `ready` items would otherwise leak onto this
+board forever once that changes). Suites are now **321 backend and 173 frontend tests**.
 
 Last Updated: 2026-08-16

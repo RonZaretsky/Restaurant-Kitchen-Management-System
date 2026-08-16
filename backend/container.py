@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from clients.websocket import ConnectionRegistry
 from services.auth_service import AuthService
 from services.inventory_service import InventoryService
+from services.kitchen_service import KitchenService
 from services.menu_service import MenuService
 from services.order_service import OrderService
 from services.realtime_service import RealtimeService
@@ -101,6 +102,14 @@ class Container(containers.DeclarativeContainer):
         OrderService,
         logger=logging,
         realtime_service=realtime_service,
+    )
+
+    # No trap-23 ordering constraint: kitchen_service takes no realtime_service (or any other
+    # provider) dependency, it only reads. Grouped here, next to order_service, since both are
+    # the orders/kitchen domain rather than for any ordering requirement.
+    kitchen_service = providers.Factory(
+        KitchenService,
+        logger=logging,
     )
 
     inventory_service = providers.Factory(

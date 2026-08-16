@@ -297,8 +297,9 @@ async def test_waiter_can_list_tables(client: AsyncClient, db_session: AsyncSess
 
 
 @pytest.mark.asyncio
-async def test_cook_cannot_list_tables(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
+async def test_cook_can_list_tables(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: Story 5.1 widened TablesReadDep so the Kitchen Display can
+    # resolve table_number client-side, mirroring the Waiter's own precedent.
     await _create_user(db_session, "cook2", UserRole.cook)
     await _login(client, "cook2")
 
@@ -306,7 +307,7 @@ async def test_cook_cannot_list_tables(client: AsyncClient, db_session: AsyncSes
     response = await client.get("/api/tables")
 
     # Assert
-    assert response.status_code == 403
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

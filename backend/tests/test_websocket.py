@@ -375,10 +375,12 @@ async def test_adding_an_order_item_broadcasts_order_item_added(db_session) -> N
     await db_session.refresh(dish)
     await _create_user(db_session, "ws_item_added", role=UserRole.waiter)
     await _create_user(db_session, "ws_item_added_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_item_added_wm", role=UserRole.warehouse_manager)
 
     async with _running_server() as port:
         token = await _login_over_http(port, "ws_item_added")
         cook_token = await _login_over_http(port, "ws_item_added_cook")
+        wm_token = await _login_over_http(port, "ws_item_added_wm")
 
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
             http_client.cookies.set(COOKIE_NAME, token)
@@ -388,28 +390,36 @@ async def test_adding_an_order_item_broadcasts_order_item_added(db_session) -> N
 
             async with await _connect(port, token) as ws:
                 async with await _connect(port, cook_token) as cook_ws:
-                    # Act
-                    add_response = await http_client.post(
-                        f"/api/orders/{order_id}/items",
-                        json={"dish_id": dish.id, "quantity": 2, "notes": "no onions"},
-                    )
-                    assert add_response.status_code == 201
-                    item = add_response.json()
+                    async with await _connect(port, wm_token) as wm_ws:
+                        # Act
+                        add_response = await http_client.post(
+                            f"/api/orders/{order_id}/items",
+                            json={"dish_id": dish.id, "quantity": 2, "notes": "no onions"},
+                        )
+                        assert add_response.status_code == 201
+                        item = add_response.json()
 
-                    # Assert
-                    message = await asyncio.wait_for(ws.recv(), timeout=2)
-                    parsed = json.loads(message)
-                    assert parsed["event"] == "order.item_added"
-                    assert parsed["payload"]["id"] == item["id"]
-                    assert parsed["payload"]["order_id"] == order_id
-                    assert parsed["payload"]["dish_id"] == dish.id
-                    assert parsed["payload"]["quantity"] == 2
-                    assert parsed["payload"]["notes"] == "no onions"
-                    assert parsed["payload"]["price_at_add"] == "12.50"
+                        # Assert
+                        message = await asyncio.wait_for(ws.recv(), timeout=2)
+                        parsed = json.loads(message)
+                        assert parsed["event"] == "order.item_added"
+                        assert parsed["payload"]["id"] == item["id"]
+                        assert parsed["payload"]["order_id"] == order_id
+                        assert parsed["payload"]["dish_id"] == dish.id
+                        assert parsed["payload"]["quantity"] == 2
+                        assert parsed["payload"]["notes"] == "no onions"
+                        assert parsed["payload"]["price_at_add"] == "12.50"
 
-                    # Assert: the event is Waiter-scoped, a Cook receives nothing.
-                    with pytest.raises(asyncio.TimeoutError):
-                        await asyncio.wait_for(cook_ws.recv(), timeout=0.5)
+                        # Assert: Story 5.1 widened this event to also reach the Kitchen
+                        # Display, so a connected Cook now receives the identical payload,
+                        # not nothing.
+                        cook_message = await asyncio.wait_for(cook_ws.recv(), timeout=2)
+                        assert json.loads(cook_message) == parsed
+
+                        # Assert: still Role-scoped, not a blanket broadcast — a
+                        # connected warehouse_manager receives nothing.
+                        with pytest.raises(asyncio.TimeoutError):
+                            await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
 
 
 @pytest.mark.asyncio
