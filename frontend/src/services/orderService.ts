@@ -8,6 +8,7 @@ import {
 
 import type { Order, OrderItem } from "../types/order";
 import { apiRequest } from "./httpClient";
+import { KITCHEN_ITEMS_QUERY_KEY } from "./kitchenService";
 import { DISHES_QUERY_KEY } from "./menuService";
 import { TABLES_QUERY_KEY } from "./tableService";
 
@@ -173,5 +174,51 @@ export function useCancelOrderItem(
     mutationFn: (itemId: number) =>
       apiRequest<OrderItem>(`/api/orders/${orderId}/items/${itemId}/cancel`, { method: "POST" }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(orderId) }),
+  });
+}
+
+interface PickUpOrMarkReadyVariables {
+  orderId: number;
+  itemId: number;
+}
+
+/**
+ * Picks up a pending Order Item, triggering atomic stock deduction server-side (Story 5.2, AC1).
+ *
+ * Unlike `useEditOrderItem`/`useCancelOrderItem`, this hook is not bound to one fixed `orderId`
+ * at call time — its only caller, the Kitchen Display, renders items from many different Orders
+ * on the same screen (one card per Table), so `orderId` travels with each mutation call instead.
+ * Invalidates only `KITCHEN_ITEMS_QUERY_KEY` on settle, not `orderItemsQueryKey`: the Waiter's own
+ * Table Order Detail page for this Order refreshes from the live `order.item_status_changed`
+ * push instead (matching this codebase's "the live event is what refreshes other pages, not the
+ * mutating page's own success handler" precedent), not from this mutation reaching into a cache
+ * key it does not otherwise know or care about.
+ *
+ * @returns The TanStack Query mutation for picking up an Order Item.
+ */
+export function usePickUpItem(): UseMutationResult<OrderItem, Error, PickUpOrMarkReadyVariables> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ orderId, itemId }: PickUpOrMarkReadyVariables) =>
+      apiRequest<OrderItem>(`/api/orders/${orderId}/items/${itemId}/pick-up`, { method: "POST" }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY }),
+  });
+}
+
+/**
+ * Marks an in_preparation Order Item ready, a pure status change (Story 5.2, AC3).
+ *
+ * Same shape and invalidation reasoning as `usePickUpItem`.
+ *
+ * @returns The TanStack Query mutation for marking an Order Item ready.
+ */
+export function useMarkItemReady(): UseMutationResult<OrderItem, Error, PickUpOrMarkReadyVariables> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ orderId, itemId }: PickUpOrMarkReadyVariables) =>
+      apiRequest<OrderItem>(`/api/orders/${orderId}/items/${itemId}/mark-ready`, { method: "POST" }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY }),
   });
 }

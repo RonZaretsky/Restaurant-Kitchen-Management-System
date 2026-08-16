@@ -364,6 +364,29 @@ describe("TableOrderDetailPage", () => {
     expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
   });
 
+  it("updates a row's status badge when a live order.item_status_changed event arrives, with no button appearing", async () => {
+    // Arrange: a Cook picks up this item from the Kitchen Display elsewhere
+    // (Story 5.2); this page never renders pick-up/mark-ready controls
+    // itself, only reflects the badge change.
+    let items: unknown[] = [PENDING_ITEM];
+    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
+
+    // Act
+    renderPage();
+    await screen.findByText("Pending");
+    items = [{ ...PENDING_ITEM, status: "in_preparation", cook_id: 3 }];
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    socket.onmessage?.({
+      data: JSON.stringify({ event: "order.item_status_changed", payload: items[0] }),
+    });
+
+    // Assert
+    expect(await screen.findByText("In preparation")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pick up" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark ready" })).not.toBeInTheDocument();
+  });
+
   it("edits a pending item, always sending both quantity and note", async () => {
     // Arrange: the mock echoes the submitted body back, matching the add-item
     // test's own "never hardcode what the page sent" pattern, so a page that

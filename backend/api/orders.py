@@ -36,6 +36,11 @@ OrdersDep = Annotated[User, Depends(require_role(UserRole.waiter))]
 # change needed to it.
 OrderItemCancelDep = Annotated[User, Depends(require_role(UserRole.waiter, UserRole.cook, UserRole.admin))]
 
+# Pick-up and mark-ready are Cook-only (plus Admin), unlike every other route in this file
+# (Waiter-scoped, or Waiter/Cook/Admin for cancel): only a Cook progresses an Order Item through
+# the kitchen, matching KitchenReadDep's own (cook, admin) shape in api/kitchen.py.
+OrderItemProgressDep = Annotated[User, Depends(require_role(UserRole.cook, UserRole.admin))]
+
 # Path ids need the same int4 upper bound their request-body counterparts carry
 # (trap 16), matching api/tables.py's own TableIdPath.
 TableIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
@@ -76,6 +81,20 @@ _CANCEL_ITEM_ERROR_DESCRIPTIONS = {
     403: "Authenticated, but the caller's Role is not waiter, cook, or admin",
     404: "No matching Order or Order Item was found",
     409: "The item is not pending or in_preparation",
+}
+
+_PICK_UP_ITEM_ERROR_DESCRIPTIONS = {
+    401: _ERROR_DESCRIPTIONS[401],
+    403: "Authenticated, but the caller's Role is not cook or admin",
+    404: "No matching Order or Order Item was found",
+    409: "The item is not pending",
+}
+
+_MARK_READY_ITEM_ERROR_DESCRIPTIONS = {
+    401: _ERROR_DESCRIPTIONS[401],
+    403: "Authenticated, but the caller's Role is not cook or admin",
+    404: "No matching Order or Order Item was found",
+    409: "The item is not in_preparation",
 }
 
 
@@ -282,3 +301,73 @@ async def cancel_order_item(
             in_preparation at the moment of the write.
     """
     return await order_service.cancel_item(db, actor, order_id, item_id)
+
+
+@router.post(
+    "/{order_id}/items/{item_id}/pick-up",
+    response_model=OrderItemResponse,
+    responses=error_responses(_PICK_UP_ITEM_ERROR_DESCRIPTIONS, 401, 403, 404, 409),
+)
+@inject
+async def pick_up_order_item(
+    order_id: OrderIdPath,
+    item_id: ItemIdPath,
+    actor: OrderItemProgressDep,
+    db: SessionDep,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+) -> OrderItem:
+    """Pick up a pending Order Item, deducting its Recipe's stock atomically (AC1, AC2, AC4, AC7, AC8).
+
+    Args:
+        order_id: The id of the Order the item belongs to.
+        item_id: The id of the Order Item to pick up.
+        actor: The authenticated Cook or Admin making the request.
+        db: The active database session.
+        order_service: Injected service handling the pick-up.
+
+    Returns:
+        The now in_preparation Order Item.
+
+    Raises:
+        OrderItemNotFoundError: Propagated from order_service, handled
+            globally as a 404, if no Order Item matches item_id on order_id.
+        OrderItemNotPendingError: Propagated from order_service, handled
+            globally as a 409, if the item's status is not pending at the
+            moment of the write.
+    """
+    return await order_service.pick_up_item(db, actor, order_id, item_id)
+
+
+@router.post(
+    "/{order_id}/items/{item_id}/mark-ready",
+    response_model=OrderItemResponse,
+    responses=error_responses(_MARK_READY_ITEM_ERROR_DESCRIPTIONS, 401, 403, 404, 409),
+)
+@inject
+async def mark_order_item_ready(
+    order_id: OrderIdPath,
+    item_id: ItemIdPath,
+    actor: OrderItemProgressDep,
+    db: SessionDep,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+) -> OrderItem:
+    """Mark an in_preparation Order Item ready, a pure status change (AC3, AC5, AC6, AC8).
+
+    Args:
+        order_id: The id of the Order the item belongs to.
+        item_id: The id of the Order Item to mark ready.
+        actor: The authenticated Cook or Admin making the request.
+        db: The active database session.
+        order_service: Injected service handling the mark-ready.
+
+    Returns:
+        The now ready Order Item.
+
+    Raises:
+        OrderItemNotFoundError: Propagated from order_service, handled
+            globally as a 404, if no Order Item matches item_id on order_id.
+        OrderItemNotInPreparationError: Propagated from order_service,
+            handled globally as a 409, if the item's status is not
+            in_preparation at the moment of the write.
+    """
+    return await order_service.mark_item_ready(db, actor, order_id, item_id)

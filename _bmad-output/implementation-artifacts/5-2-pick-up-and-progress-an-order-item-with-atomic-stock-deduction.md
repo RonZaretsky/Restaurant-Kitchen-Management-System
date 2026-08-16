@@ -6,7 +6,7 @@ story: 2
 
 # Story 5.2: Pick Up and Progress an Order Item, with Atomic Stock Deduction
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -98,13 +98,13 @@ endpoints.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Backend — new exception for the mark-ready guard**
-  - [ ] Add `OrderItemNotInPreparationError(ConflictError)` to `backend/exceptions/__init__.py`
+- [x] **Task 1: Backend — new exception for the mark-ready guard**
+  - [x] Add `OrderItemNotInPreparationError(ConflictError)` to `backend/exceptions/__init__.py`
     (mirrors `OrderItemNotPendingError`'s shape, wording adjusted: *"Order Item is not in
     preparation"*). `OrderItemNotPendingError` is reused as-is for the pick-up guard (AC4) — its
     existing wording already fits ("item is not pending"), no new class needed there.
-- [ ] **Task 2: Backend — `InventoryService.apply_consumption`** (AC1, AC2, AC7)
-  - [ ] `backend/services/inventory_service.py`: new method `async def apply_consumption(self, db:
+- [x] **Task 2: Backend — `InventoryService.apply_consumption`** (AC1, AC2, AC7)
+  - [x] `backend/services/inventory_service.py`: new method `async def apply_consumption(self, db:
     AsyncSession, ingredient_id: int, quantity: Decimal, actor_id: int, order_id: int) -> bool`.
     Reuses `self._lock_ingredient(db, ingredient_id)` (trap 9, same row lock `record_movement`
     already uses). Computes `was_low = ingredient.current_stock < ingredient.min_stock_threshold`
@@ -117,17 +117,17 @@ endpoints.
     not-yet-committed `ingredient.current_stock` (safe: this is the same object `_lock_ingredient`
     already returned, mutated in place, no extra read needed) so the caller can decide whether to
     broadcast after its own commit.
-  - [ ] `IngredientNotFoundError` propagates uncaught if `ingredient_id` doesn't exist — a
+  - [x] `IngredientNotFoundError` propagates uncaught if `ingredient_id` doesn't exist — a
     `RecipeIngredient` row pointing at a deleted `Ingredient` should not be possible today (no
     Ingredient-delete endpoint exists anywhere in this codebase), but the caller does not need to
     catch this defensively; let it surface as-is, consistent with every other `_get_*`-style helper
     in this codebase.
-- [ ] **Task 3: Backend — `OrderService.pick_up_item`** (AC1, AC2, AC4, AC7, AC8)
-  - [ ] `backend/services/order_service.py`: `OrderService.__init__` gains
+- [x] **Task 3: Backend — `OrderService.pick_up_item`** (AC1, AC2, AC4, AC7, AC8)
+  - [x] `backend/services/order_service.py`: `OrderService.__init__` gains
     `inventory_service: InventoryService` as a new constructor parameter, stored as
     `self._inventory_service`. Update its class docstring to mention the new collaborator (mirrors
     how the class docstring already documents `realtime_service`'s role).
-  - [ ] New method `async def pick_up_item(self, db: AsyncSession, actor: User, order_id: int,
+  - [x] New method `async def pick_up_item(self, db: AsyncSession, actor: User, order_id: int,
     item_id: int) -> OrderItem`:
     - `item = await self._get_item(db, actor, order_id, item_id)` (existing helper, unchanged).
     - Guarded UPDATE (AD-6, same shape as `edit_item`): `update(OrderItem).where(OrderItem.id ==
@@ -162,8 +162,8 @@ endpoints.
       wording). Loop, not a single call, since a multi-ingredient Dish's pick-up could cross the
       threshold for more than one Ingredient in the same transaction.
     - Return `item`.
-- [ ] **Task 4: Backend — `OrderService.mark_item_ready`** (AC3, AC5, AC6, AC8)
-  - [ ] New method `async def mark_item_ready(self, db: AsyncSession, actor: User, order_id: int,
+- [x] **Task 4: Backend — `OrderService.mark_item_ready`** (AC3, AC5, AC6, AC8)
+  - [x] New method `async def mark_item_ready(self, db: AsyncSession, actor: User, order_id: int,
     item_id: int) -> OrderItem`:
     - `item = await self._get_item(db, actor, order_id, item_id)`.
     - Guarded UPDATE: `update(OrderItem).where(OrderItem.id == item_id, OrderItem.status ==
@@ -181,8 +181,8 @@ endpoints.
     - Broadcast `order.item_status_changed` (same event/payload/recipients as Task 3) — **no**
       `inventory.alerts_changed` broadcast here, this transition never touches stock (AC3).
     - Return `item`.
-- [ ] **Task 5: Backend — routes** (AC1–AC8)
-  - [ ] `backend/api/orders.py`: two new routes alongside the existing `PATCH
+- [x] **Task 5: Backend — routes** (AC1–AC8)
+  - [x] `backend/api/orders.py`: two new routes alongside the existing `PATCH
     /{order_id}/items/{item_id}` (edit) and `DELETE /{order_id}/items/{item_id}` (cancel):
     - `POST /{order_id}/items/{item_id}/pick-up`, `response_model=OrderItemResponse`, calls
       `order_service.pick_up_item(db, actor, order_id, item_id)`.
@@ -195,67 +195,67 @@ endpoints.
       write-capable dependency name distinct from any existing `OrdersDep`/`OrdersReadDep` in this
       file — do not widen an existing Waiter-scoped dependency to include Cook just to avoid adding
       one.
-  - [ ] Router-level logging: request received/rejected at INFO/WARNING per CLAUDE.md's logging
+  - [x] Router-level logging: request received/rejected at INFO/WARNING per CLAUDE.md's logging
     convention, matching the existing edit/cancel routes' own log lines in this file.
-- [ ] **Task 6: Backend — container wiring** (AC1)
-  - [ ] `backend/container.py`: move `order_service`'s provider declaration to **below**
+- [x] **Task 6: Backend — container wiring** (AC1)
+  - [x] `backend/container.py`: move `order_service`'s provider declaration to **below**
     `inventory_service`'s (trap 23 — `order_service` now depends on `inventory_service`, so it must
     be declared after it, the same rule the file's own existing comment already states for
     `realtime_service`). Add `inventory_service=inventory_service` to `order_service`'s
     `providers.Factory(...)` call. Update the file's own ordering comment to mention this new
     dependency explicitly, not just describe the old `realtime_service`-only constraint.
-- [ ] **Task 7: Backend tests** (`backend/tests/test_orders.py`, extend existing file — this is
+- [x] **Task 7: Backend tests** (`backend/tests/test_orders.py`, extend existing file — this is
   still the `orders` domain, not a new test file)
-  - [ ] Pick-up (AC1): a `pending` item picked up by a Cook moves to `in_preparation`, `cook_id` is
+  - [x] Pick-up (AC1): a `pending` item picked up by a Cook moves to `in_preparation`, `cook_id` is
     set to the acting Cook, each Recipe Ingredient's `current_stock` decreases by `quantity ×
     item.quantity`, and a `consumption` StockMovement is recorded with `reference_id == order_id`.
-  - [ ] Pick-up, multi-ingredient Dish: a Dish with two+ Recipe Ingredients, picked up once, deducts
+  - [x] Pick-up, multi-ingredient Dish: a Dish with two+ Recipe Ingredients, picked up once, deducts
     from both Ingredients and inserts one StockMovement per Ingredient (not one combined row).
-  - [ ] No double-deduction (AC2): picking up the same item twice — second attempt is rejected
+  - [x] No double-deduction (AC2): picking up the same item twice — second attempt is rejected
     (409), `current_stock` reflects only one deduction, only one `consumption` StockMovement exists
     for that item/Ingredient pair.
-  - [ ] Mark-ready (AC3): an `in_preparation` item marked ready moves to `ready`, no new
+  - [x] Mark-ready (AC3): an `in_preparation` item marked ready moves to `ready`, no new
     StockMovement row is created, `current_stock` is unchanged by this call.
-  - [ ] Skip-ahead rejected (AC4): a `pending` item's mark-ready attempt is rejected 409, status
+  - [x] Skip-ahead rejected (AC4): a `pending` item's mark-ready attempt is rejected 409, status
     stays `pending`.
-  - [ ] Reverse transitions rejected (AC5): an `in_preparation` item's pick-up attempt (already past
+  - [x] Reverse transitions rejected (AC5): an `in_preparation` item's pick-up attempt (already past
     pending) is rejected 409; a `ready` item's mark-ready attempt is rejected 409; a `ready` item's
     pick-up attempt is rejected 409.
-  - [ ] Attribution not access lock (AC6): Cook A picks up an item (`cook_id == A`); Cook B (a
+  - [x] Attribution not access lock (AC6): Cook A picks up an item (`cook_id == A`); Cook B (a
     different active Cook) successfully marks it ready; `cook_id` remains `A` after the mark-ready
     call, not overwritten to `B`.
-  - [ ] Deactivated Cook's item (AC6): an item picked up by a Cook who is then deactivated (`user.
+  - [x] Deactivated Cook's item (AC6): an item picked up by a Cook who is then deactivated (`user.
     is_active = False`, matching however this codebase already models deactivation, check
     `UserService`) can still be marked ready by a different active Cook — the deactivated Cook's own
     session/token being rejected on other endpoints is out of scope here, only this specific
     transition's own guard matters.
-  - [ ] Below-stock pick-up still succeeds (AC7): an Ingredient with `current_stock` less than the
+  - [x] Below-stock pick-up still succeeds (AC7): an Ingredient with `current_stock` less than the
     Dish's Recipe requirement, picked up anyway, succeeds; resulting `current_stock` goes negative
     (or below zero-floor, whichever this Ingredient's starting value implies) and is not clamped.
-  - [ ] Low-stock alert crossing on pick-up (AC7): an Ingredient starting **above**
+  - [x] Low-stock alert crossing on pick-up (AC7): an Ingredient starting **above**
     `min_stock_threshold`, deducted below it by a pick-up, triggers `inventory.alerts_changed`
     broadcast to a connected `warehouse_manager` (mirror `test_inventory.py`'s existing crossing
     test for `record_movement`, same assertion shape, different trigger). A pick-up that does
     **not** cross the threshold (already low before, still low after, or stays comfortably above)
     broadcasts nothing — assert absence, not just presence, matching `record_movement`'s own
     non-crossing test.
-  - [ ] Role coverage: cook and admin can each call pick-up/mark-ready; waiter and warehouse_manager
+  - [x] Role coverage: cook and admin can each call pick-up/mark-ready; waiter and warehouse_manager
     are rejected 403 on both routes; unauthenticated is rejected 401.
-  - [ ] Not-found coverage: pick-up/mark-ready on a nonexistent `item_id`, or an `item_id` that
+  - [x] Not-found coverage: pick-up/mark-ready on a nonexistent `item_id`, or an `item_id` that
     exists but belongs to a different `order_id`, is rejected 404 (reuses `_get_item`'s existing
     behavior — a lower-cost test than exhaustively re-testing `_get_item` itself, just confirm
     these two new routes wire it in).
-  - [ ] `order.item_status_changed` broadcast (extend `test_websocket.py` or add here, matching
+  - [x] `order.item_status_changed` broadcast (extend `test_websocket.py` or add here, matching
     however `order.item_added`'s own test is organized): both a Waiter and a Cook socket receive
     the broadcast on pick-up and on mark-ready; a `warehouse_manager` socket does not receive
     `order.item_status_changed` (it's not in the recipient list).
-  - [ ] Concurrency guard (trap 18's "a real concurrency test must change the state *between* the
+  - [x] Concurrency guard (trap 18's "a real concurrency test must change the state *between* the
     service's read and its write"): two concurrent pick-up calls on the same `pending` item — only
     one succeeds, the other gets 409, `current_stock` reflects exactly one deduction (mirrors
     whatever pattern this codebase's existing race tests already use for `open_table`/`edit_item`,
     e.g. monkeypatching the read step to interleave a second write).
-- [ ] **Task 8: Frontend — types and service hooks** (AC1, AC3, AC8)
-  - [ ] `frontend/src/services/orderService.ts` (existing file — extend, do not create a new
+- [x] **Task 8: Frontend — types and service hooks** (AC1, AC3, AC8)
+  - [x] `frontend/src/services/orderService.ts` (existing file — extend, do not create a new
     service file for this): add `usePickUpItem(orderId: number): UseMutationResult<OrderItem, Error,
     number>` and `useMarkItemReady(orderId: number): UseMutationResult<OrderItem, Error, number>` (or
     a single parameterized hook if this file already has a precedent for that shape — check
@@ -268,22 +268,22 @@ endpoints.
     the live WebSocket invalidation (Task 9) rather than an aggressive multi-key `invalidateQueries`
     call from the mutation itself — the pattern this codebase uses elsewhere is "the live event is
     what refreshes other pages, not the mutating page's own success handler."
-- [ ] **Task 9: Frontend — `KitchenDisplayPage.tsx` action buttons** (AC8)
-  - [ ] Each `pending` row gets a "Pick up" button; each `in_preparation` row gets a "Mark ready"
+- [x] **Task 9: Frontend — `KitchenDisplayPage.tsx` action buttons** (AC8)
+  - [x] Each `pending` row gets a "Pick up" button; each `in_preparation` row gets a "Mark ready"
     button; `ready` rows get no button (matches the mockup, `mockups/key-kitchen-display.html`'s
     `.action-btn` labels). Button is a single large MUI `Button` (UX-DR19 — "single large click
     target sized for reading at a distance"), primary/accent variant per DESIGN.md's "MUI defaults
     plus one accent color" rule (the only place this codebase uses a non-stock `Button` variant).
-  - [ ] Wire each button to `usePickUpItem`/`useMarkItemReady`; disable the button (not hide it)
+  - [x] Wire each button to `usePickUpItem`/`useMarkItemReady`; disable the button (not hide it)
     while its own mutation is pending, matching whatever loading-state convention
     `TableOrderDetailPage.tsx`'s existing edit/cancel buttons already use.
-  - [ ] Subscribe to `order.item_status_changed` (new subscription, alongside the existing
+  - [x] Subscribe to `order.item_status_changed` (new subscription, alongside the existing
     `order.item_added` one) and invalidate `KITCHEN_ITEMS_QUERY_KEY` on receipt — same
     refetch-signal pattern as every other subscriber in this codebase, not a direct cache merge.
-  - [ ] Inline error on a failed pick-up/mark-ready call (UX-DR17's "inline, non-toast" convention)
+  - [x] Inline error on a failed pick-up/mark-ready call (UX-DR17's "inline, non-toast" convention)
     — do not add a toast/snackbar system that doesn't exist elsewhere in this codebase.
-- [ ] **Task 10: Frontend — `TableOrderDetailPage.tsx`** (AC8)
-  - [ ] This page must also reflect a Cook's pick-up/mark-ready action live, since AC8 requires
+- [x] **Task 10: Frontend — `TableOrderDetailPage.tsx`** (AC8)
+  - [x] This page must also reflect a Cook's pick-up/mark-ready action live, since AC8 requires
     "the status badge updates on both the Kitchen Display and the Waiter's screen via the same
     WebSocket push." Read this file's current `order.item_added`/other subscriptions first (it
     already listens for at least one event, per 5.1's Dev Notes reference to its own
@@ -293,20 +293,20 @@ endpoints.
     buttons itself (those are Cook-only, Kitchen-Display-only, per this story's own user statement
     "As a Cook") — read-only badge update here, same as how the Kitchen Display was read-only for
     everything in 5.1.
-- [ ] **Task 11: Frontend tests**
-  - [ ] `KitchenDisplayPage.test.tsx`: a `pending` row shows a "Pick up" button; clicking it calls
+- [x] **Task 11: Frontend tests**
+  - [x] `KitchenDisplayPage.test.tsx`: a `pending` row shows a "Pick up" button; clicking it calls
     the mutation and (via the subsequent live event or direct query invalidation, whichever Task 8
     implements) the row's badge updates to `in_preparation`, the button changes to "Mark ready".
     Clicking "Mark ready" on an `in_preparation` row updates it to `ready` with no button remaining.
     A failed pick-up call shows an inline error, does not silently do nothing. No button renders on
     a `ready` row.
-  - [ ] `TableOrderDetailPage.test.tsx`: a stubbed `order.item_status_changed` WebSocket message
+  - [x] `TableOrderDetailPage.test.tsx`: a stubbed `order.item_status_changed` WebSocket message
     updates that page's own status badge without a page reload, no button appears anywhere on this
     page as a result.
-- [ ] **Task 12: Full regression pass**
-  - [ ] `uv run pytest -q` (backend) — zero regressions.
-  - [ ] `pnpm test` (frontend) — zero regressions.
-  - [ ] `npx tsc -b` — clean.
+- [x] **Task 12: Full regression pass**
+  - [x] `uv run pytest -q` (backend) — zero regressions.
+  - [x] `pnpm test` (frontend) — zero regressions.
+  - [x] `npx tsc -b` — clean.
 
 ## Dev Notes
 
@@ -450,22 +450,93 @@ route is untouched by this story).
 
 ### Agent Model Used
 
-_To be filled by the dev agent._
+Claude Sonnet 5
 
 ### Debug Log References
 
-_To be filled by the dev agent._
+- `uv run pytest tests/test_orders.py -q` — 66 passed
+- `uv run pytest tests/test_websocket.py -q -k "pick_up or picking or marking_an_item_ready"` — 3 passed
+- `uv run pytest -q` (full backend suite) — 339 passed, no regressions (baseline 321 + 18 new)
+- `npx vitest run src/pages/cook/KitchenDisplayPage.test.tsx` — 9 passed
+- `npx vitest run src/pages/waiter/TableOrderDetailPage.test.tsx` — 22 passed
+- `npx vitest run` (full frontend suite) — 178 passed, no regressions (baseline 173 + 5 new)
+- `npx tsc -b` — clean
 
 ### Completion Notes List
 
-_To be filled by the dev agent._
+- Implemented both transitions on `OrderService` (not `KitchenService`, per the story's own Scope
+  note): `pick_up_item` (pending → in_preparation, guarded UPDATE + `cook_id` attribution, AD-6)
+  and `mark_item_ready` (in_preparation → ready, pure status change, no `cook_id` reassignment —
+  attribution is audit-only, not an access lock, AC6).
+- Added `InventoryService.apply_consumption`, reusing `_lock_ingredient`'s row lock (trap 9) and
+  `record_movement`'s `was_low`/`is_low` threshold-crossing shape, but deliberately not committing
+  or broadcasting itself — `pick_up_item` composes it inside its own single transaction so the
+  `OrderItem` status update, every `Ingredient` decrement, and every `StockMovement` insert commit
+  together (AD-6, NFR-3), then broadcasts `inventory.alerts_changed` only after that commit
+  succeeds, once per Ingredient that actually crossed threshold.
+- `OrderService` gained a new `inventory_service: InventoryService` constructor dependency. This
+  required moving `order_service`'s provider below `inventory_service`'s in `container.py` (trap
+  23, applied to `order_service` itself for the first time) — done, with the file's own ordering
+  comment updated to state the new rule explicitly.
+- New exception `OrderItemNotInPreparationError` (409) added for the mark-ready guard, distinct
+  from `OrderItemNotPendingError` (reused as-is for the pick-up guard, its existing wording already
+  fit).
+- Two new `POST` routes added to the existing `backend/api/orders.py` (not a new router file),
+  gated by a new `OrderItemProgressDep` (cook + admin, mirroring `KitchenReadDep`'s shape).
+- New `order.item_status_changed` event broadcast to `[UserRole.waiter, UserRole.cook]` from both
+  transitions — same recipients and payload shape as `order.item_added`, verified via three new
+  `test_websocket.py` end-to-end tests (pick-up delivers to Waiter+Cook, not warehouse_manager
+  unless threshold crosses; a crossing pick-up also delivers `inventory.alerts_changed`; mark-ready
+  delivers the status change with no alert).
+- Frontend: `KitchenDisplayPage.tsx` gained "Pick up"/"Mark ready" buttons (single large MUI
+  `Button`, UX-DR19), wired to two new hooks (`usePickUpItem`/`useMarkItemReady` in
+  `orderService.ts`) that are deliberately *not* bound to one fixed `orderId` the way
+  `useEditOrderItem`/`useCancelOrderItem` are — the Kitchen Display renders items from many
+  different Orders on one screen, so `orderId` travels with each mutation call instead. Per-row
+  inline error display (UX-DR17, no toast system exists in this codebase). New
+  `order.item_status_changed` subscription added alongside the existing `order.item_added` one,
+  invalidating `KITCHEN_ITEMS_QUERY_KEY`.
+- `TableOrderDetailPage.tsx` also subscribes to `order.item_status_changed` now (a Waiter's screen
+  must reflect a Cook's action live, AC8), but gets no new buttons — pick-up/mark-ready stay
+  Cook-only, Kitchen-Display-only, per the story's "As a Cook" user statement.
+- One pre-existing frontend test needed updating, not just new tests added: 5.1's
+  `KitchenDisplayPage.test.tsx::"renders no action controls anywhere on the board"` asserted zero
+  buttons ever render — genuinely true in 5.1 (read-only), genuinely false now that this story adds
+  pick-up/mark-ready. Replaced with a test asserting exactly one "Pick up" and one "Mark ready"
+  button render, scoped correctly to `pending`/`in_preparation` rows, none on a `ready` row.
+- Caught and fixed a `MissingGreenlet` bug in the test suite itself (not application code) while
+  writing Task 7's new backend tests: accessing an ORM object's attribute (e.g. `ingredient.id`)
+  *after* calling `db_session.expire_all()` triggers a synchronous lazy-load that an `AsyncSession`
+  cannot perform outside an explicit `await`. Every pre-existing test in this file avoids this by
+  only ever holding plain ids (e.g. `item["id"]` from a JSON response) across an `expire_all()`
+  call, never an ORM attribute access — the new `_create_available_dish_with_ingredient` helper was
+  changed to return a plain `int` ingredient id rather than the ORM `Ingredient` instance, matching
+  that existing convention, and every new test was audited for the same mistake.
+- The concurrency test (`test_race_between_two_pick_ups_only_one_succeeds_and_deducts_once`)
+  initially asserted the wrong post-race stock value — AD-6's guard runs *before* any deduction is
+  attempted, so a losing request's guarded UPDATE hits 0 rowcount and rolls back before touching
+  stock at all; the correct assertion is that stock is completely untouched (still at its starting
+  value, zero StockMovement rows), not that exactly one deduction landed. Caught and fixed by
+  running the test and reading its actual failure, not just reasoning about it in the abstract.
 
 ### File List
 
-_To be filled by the dev agent._
+- `backend/exceptions/__init__.py`
+- `backend/services/inventory_service.py`
+- `backend/services/order_service.py`
+- `backend/api/orders.py`
+- `backend/container.py`
+- `backend/tests/test_orders.py`
+- `backend/tests/test_websocket.py`
+- `frontend/src/services/orderService.ts`
+- `frontend/src/pages/cook/KitchenDisplayPage.tsx`
+- `frontend/src/pages/cook/KitchenDisplayPage.test.tsx`
+- `frontend/src/pages/waiter/TableOrderDetailPage.tsx`
+- `frontend/src/pages/waiter/TableOrderDetailPage.test.tsx`
 
 ## Change Log
 
 | Date | Change |
 |---|---|
 | 2026-08-16 | Story 5.2 created via bmad-create-story: pick-up/mark-ready transitions, atomic stock deduction via a new `InventoryService.apply_consumption` reused from `OrderService`, `order.item_status_changed` broadcast, container reordering (trap 23) required for `order_service`'s new `inventory_service` dependency. |
+| 2026-08-16 | Implemented Story 5.2: pick-up (pending → in_preparation, atomic stock deduction, cook attribution) and mark-ready (in_preparation → ready, pure status change) transitions, both on `OrderService`. New `InventoryService.apply_consumption` reused inside the same transaction, `order.item_status_changed` broadcast, container reordering for the new `order_service` → `inventory_service` dependency (trap 23). 18 new backend tests (339 total), 5 new frontend tests + 1 updated (178 total). |

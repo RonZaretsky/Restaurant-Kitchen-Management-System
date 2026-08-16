@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RealtimeProvider } from "../../components/shell/RealtimeProvider";
@@ -41,6 +42,18 @@ const ITEM_TABLE_9 = {
   dish_id: 7,
   quantity: 1,
   status: "in_preparation",
+  notes: null,
+  cook_id: 3,
+  price_at_add: "42.00",
+};
+
+const READY_ITEM = {
+  id: 3,
+  order_id: 12,
+  table_id: 1,
+  dish_id: 7,
+  quantity: 1,
+  status: "ready",
   notes: null,
   cook_id: 3,
   price_at_add: "42.00",
@@ -145,16 +158,82 @@ describe("KitchenDisplayPage", () => {
     expect(screen.getByText("In preparation")).toBeInTheDocument();
   });
 
-  it("renders no action controls anywhere on the board", async () => {
+  it("shows a Pick up button on a pending row and a Mark ready button on an in_preparation row, none on ready", async () => {
     // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [ITEM_TABLE_5] })));
+    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [ITEM_TABLE_5, ITEM_TABLE_9, READY_ITEM] })));
 
     // Act
     renderPage();
     await screen.findByText("Table 5");
 
-    // Assert: this story is read-only, Story 5.2 adds pick-up/mark-ready.
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    // Assert
+    expect(screen.getByRole("button", { name: "Pick up" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark ready" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: "Pick up" })).toHaveLength(1);
+    expect(screen.queryAllByRole("button", { name: "Mark ready" })).toHaveLength(1);
+  });
+
+  it("picking up a pending item calls the pick-up endpoint and refreshes the board", async () => {
+    // Arrange
+    let items: unknown[] = [ITEM_TABLE_5];
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).includes("/pick-up")) {
+        items = [{ ...ITEM_TABLE_5, status: "in_preparation", cook_id: 9 }];
+        return Promise.resolve(jsonResponse(200, items[0]));
+      }
+      return stubReads({ items })(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Pick up" }));
+
+    // Assert
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/orders/10/items/1/pick-up"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(await screen.findByText("In preparation")).toBeInTheDocument();
+  });
+
+  it("shows an inline error when a pick-up call fails, without silently doing nothing", async () => {
+    // Arrange
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).includes("/pick-up")) {
+        return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not pending" }));
+      }
+      return stubReads({ items: [ITEM_TABLE_5] })(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Pick up" }));
+
+    // Assert
+    expect(await screen.findByText("Rejected, item not pending")).toBeInTheDocument();
+  });
+
+  it("updates a row's status when a live order.item_status_changed event arrives", async () => {
+    // Arrange
+    let items: unknown[] = [ITEM_TABLE_5];
+    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
+
+    // Act
+    renderPage();
+    await screen.findByText("Pending");
+    items = [{ ...ITEM_TABLE_5, status: "in_preparation", cook_id: 9 }];
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    socket.onmessage?.({
+      data: JSON.stringify({ event: "order.item_status_changed", payload: items[0] }),
+    });
+
+    // Assert
+    expect(await screen.findByText("In preparation")).toBeInTheDocument();
   });
 
   it("shows a retry-capable error when any of the three underlying queries fails", async () => {

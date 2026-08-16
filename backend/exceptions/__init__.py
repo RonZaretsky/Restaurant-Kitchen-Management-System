@@ -251,6 +251,17 @@ class OrderItemNotCancellableError(ConflictError):
     detail = "Rejected, item not cancellable"
 
 
+class OrderItemNotInPreparationError(ConflictError):
+    """Raised when marking an Order Item ready that is not currently in_preparation (AC4/AC5, Story 5.2).
+
+    Covers a pending item skipping straight to ready, an already-ready item re-triggering the
+    transition, and a cancelled item, plus the race where a second transition lands between this
+    request's read and its guarded UPDATE.
+    """
+
+    detail = "Rejected, item not in preparation"
+
+
 class UnitMismatchError(ConflictError):
     """Raised when a Recipe Ingredient line's unit differs from its Ingredient's own unit.
 

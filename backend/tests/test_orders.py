@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_models import (
@@ -9,7 +10,9 @@ from data_models import (
     Order,
     OrderItem,
     OrderItemStatus,
+    RecipeIngredient,
     RestaurantTable,
+    StockMovement,
     TableStatus,
     Unit,
     User,
@@ -51,6 +54,12 @@ async def _login_as_waiter(client: AsyncClient, db_session: AsyncSession, userna
     waiter = await _create_user(db_session, username=username, role=UserRole.waiter)
     await _login(client, username)
     return waiter
+
+
+async def _login_as_cook(client: AsyncClient, db_session: AsyncSession, username: str = "cook1") -> User:
+    cook = await _create_user(db_session, username=username, role=UserRole.cook)
+    await _login(client, username)
+    return cook
 
 
 async def _create_table(client: AsyncClient, db_session: AsyncSession, table_number: int = 1) -> dict:
@@ -107,6 +116,44 @@ async def _create_available_dish(
     available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
     assert available_response.status_code == 200
     return available_response.json()
+
+
+async def _create_available_dish_with_ingredient(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    name: str = "Margherita",
+    price: str = "12.50",
+    ingredient_stock: str = "10.000",
+    ingredient_threshold: str = "1.000",
+    recipe_quantity: str = "0.500",
+) -> tuple[dict, int]:
+    # Same shape as _create_available_dish, but returns the backing Ingredient's
+    # plain id (not the ORM object) too, so pick-up tests can assert
+    # current_stock and control the starting stock/threshold precisely.
+    # Returning the plain id, not the ORM instance, avoids a MissingGreenlet
+    # crash: accessing an attribute on an ORM object after db_session.expire_all()
+    # triggers a synchronous lazy-load, which an AsyncSession cannot perform
+    # outside an explicit await — every caller must already have the id as a
+    # plain int before expiring the session, matching every other fixture
+    # helper in this file's own "pass ids, not ORM objects" convention.
+    await _create_user(db_session, f"pickup-dish-admin-{name}", UserRole.admin)
+    await _login(client, f"pickup-dish-admin-{name}")
+    dish = await _create_dish(client, name, price)
+    ingredient = Ingredient(
+        name=f"{name} Ingredient", unit=Unit.kg, current_stock=ingredient_stock, min_stock_threshold=ingredient_threshold
+    )
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    ingredient_id = ingredient.id
+    recipe_response = await client.post(
+        f"/api/menu/dishes/{dish['id']}/recipe-ingredients",
+        json={"ingredient_id": ingredient_id, "quantity": recipe_quantity, "unit": "kg"},
+    )
+    assert recipe_response.status_code == 201
+    available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
+    assert available_response.status_code == 200
+    return available_response.json(), ingredient_id
 
 
 async def _add_item(
@@ -1076,3 +1123,395 @@ async def test_last_write_wins_on_two_sequential_edits(
     assert first.status_code == 200
     assert second.status_code == 200
     assert second.json()["quantity"] == 5
+
+
+# --- Story 5.2: pick-up and mark-ready -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_picking_up_a_pending_item_deducts_stock_and_records_the_cook(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish, ingredient = await _create_available_dish_with_ingredient(client, db_session, name="Pickup Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=50)
+    item = await _add_item(client, order["id"], dish["id"])
+    cook = await _login_as_cook(client, db_session, "pickup-cook-1")
+    cook_id = cook.id
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "in_preparation"
+    assert body["cook_id"] == cook_id
+
+    db_session.expire_all()
+    updated_ingredient = await db_session.get(Ingredient, ingredient)
+    assert updated_ingredient.current_stock == Decimal("9.500")
+
+    movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
+    movement_rows = movements.scalars().all()
+    assert len(movement_rows) == 1
+    assert movement_rows[0].movement_type.value == "consumption"
+    assert movement_rows[0].quantity_change == Decimal("-0.500")
+    assert movement_rows[0].reference_id == order["id"]
+    assert movement_rows[0].performed_by == cook_id
+
+
+@pytest.mark.asyncio
+async def test_picking_up_deducts_every_recipe_ingredient(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: a Dish with two Recipe Ingredients.
+    await _create_user(db_session, "multi-dish-admin", UserRole.admin)
+    await _login(client, "multi-dish-admin")
+    dish = await _create_dish(client, "Multi-Ingredient Dish", "18.00")
+    flour = Ingredient(name="Flour", unit=Unit.kg, current_stock="10.000", min_stock_threshold="1.000")
+    cheese = Ingredient(name="Cheese", unit=Unit.kg, current_stock="5.000", min_stock_threshold="0.500")
+    db_session.add_all([flour, cheese])
+    await db_session.commit()
+    await db_session.refresh(flour)
+    await db_session.refresh(cheese)
+    flour_id = flour.id
+    cheese_id = cheese.id
+    for ingredient_id, quantity in ((flour_id, "0.300"), (cheese_id, "0.200")):
+        recipe_response = await client.post(
+            f"/api/menu/dishes/{dish['id']}/recipe-ingredients",
+            json={"ingredient_id": ingredient_id, "quantity": quantity, "unit": "kg"},
+        )
+        assert recipe_response.status_code == 201
+    available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
+    assert available_response.status_code == 200
+    dish = available_response.json()
+
+    order, _waiter, _table = await _open_table(client, db_session, table_number=51)
+    item = await _add_item(client, order["id"], dish["id"], quantity=2)
+    await _login_as_cook(client, db_session, "multi-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert: quantity=2, so each ingredient is deducted by (recipe quantity * 2).
+    assert response.status_code == 200
+    db_session.expire_all()
+    updated_flour = await db_session.get(Ingredient, flour_id)
+    updated_cheese = await db_session.get(Ingredient, cheese_id)
+    assert updated_flour.current_stock == Decimal("9.400")
+    assert updated_cheese.current_stock == Decimal("4.600")
+
+    flour_movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == flour_id))
+    cheese_movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == cheese_id))
+    assert len(flour_movements.scalars().all()) == 1
+    assert len(cheese_movements.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_picking_up_the_same_item_twice_does_not_double_deduct(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish, ingredient = await _create_available_dish_with_ingredient(client, db_session, name="No Double Deduct Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=52)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "no-double-cook")
+
+    # Act
+    first = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    second = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["detail"] == "Rejected, item not pending"
+
+    db_session.expire_all()
+    updated_ingredient = await db_session.get(Ingredient, ingredient)
+    assert updated_ingredient.current_stock == Decimal("9.500")
+    movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
+    assert len(movements.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_marking_an_in_preparation_item_ready_is_a_pure_status_change(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish, ingredient = await _create_available_dish_with_ingredient(client, db_session, name="Ready Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=53)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "ready-cook")
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert pick_up.status_code == 200
+
+    db_session.expire_all()
+    stock_after_pickup = (await db_session.get(Ingredient, ingredient)).current_stock
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+    db_session.expire_all()
+    assert (await db_session.get(Ingredient, ingredient)).current_stock == stock_after_pickup
+    movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
+    assert len(movements.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_pending_item_cannot_skip_directly_to_ready(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Skip Ahead Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=54)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "skip-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not in preparation"
+    db_session.expire_all()
+    unchanged = await db_session.get(OrderItem, item["id"])
+    assert unchanged.status is OrderItemStatus.pending
+
+
+@pytest.mark.asyncio
+async def test_in_preparation_item_pick_up_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Already In Prep Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=55)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "already-prep-cook")
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert pick_up.status_code == 200
+
+    # Act: pick-up again on the now in_preparation item.
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not pending"
+
+
+@pytest.mark.asyncio
+async def test_ready_item_pick_up_and_mark_ready_are_both_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Already Ready Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=56)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "already-ready-cook")
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert pick_up.status_code == 200
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+    assert mark_ready.status_code == 200
+
+    # Act
+    pick_up_again = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    mark_ready_again = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+
+    # Assert: no undo, both reverse/re-transition attempts are rejected.
+    assert pick_up_again.status_code == 409
+    assert mark_ready_again.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_a_different_active_cook_can_mark_ready_an_item_picked_up_by_a_deactivated_cook(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: Cook A picks up the item, is then deactivated; Cook B is a
+    # different active Cook.
+    dish = await _create_available_dish(client, db_session, name="Deactivated Cook Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=57)
+    item = await _add_item(client, order["id"], dish["id"])
+    cook_a = await _login_as_cook(client, db_session, "cook-a-deactivated")
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert pick_up.status_code == 200
+    assert pick_up.json()["cook_id"] == cook_a.id
+
+    db_cook_a = await db_session.get(User, cook_a.id)
+    db_cook_a.is_active = False
+    await db_session.commit()
+    await _login_as_cook(client, db_session, "cook-b-active")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+
+    # Assert: attribution is not an access lock, cook_id stays cook_a's.
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert response.json()["cook_id"] == cook_a.id
+
+
+@pytest.mark.asyncio
+async def test_pick_up_below_available_stock_still_succeeds_and_is_not_floor_capped(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: current_stock less than the Recipe requires.
+    dish, ingredient = await _create_available_dish_with_ingredient(
+        client,
+        db_session,
+        name="Below Stock Dish",
+        ingredient_stock="0.200",
+        ingredient_threshold="0.100",
+        recipe_quantity="0.500",
+    )
+    order, _waiter, _table = await _open_table(client, db_session, table_number=58)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "below-stock-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert: succeeds, and current_stock is not clamped at zero (AD-16).
+    assert response.status_code == 200
+    assert response.json()["status"] == "in_preparation"
+    db_session.expire_all()
+    updated_ingredient = await db_session.get(Ingredient, ingredient)
+    assert updated_ingredient.current_stock == Decimal("-0.300")
+
+
+@pytest.mark.asyncio
+async def test_waiter_and_warehouse_manager_cannot_pick_up_or_mark_ready(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Role Guard Dish")
+    order, waiter, _table = await _open_table(client, db_session, table_number=59)
+    item = await _add_item(client, order["id"], dish["id"])
+
+    # Act/Assert: the Waiter who opened the table cannot pick up.
+    await _login(client, waiter.username)
+    waiter_pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert waiter_pick_up.status_code == 403
+
+    # Act/Assert: warehouse_manager cannot pick up or mark ready either.
+    await _create_user(db_session, "role-guard-wm", UserRole.warehouse_manager)
+    await _login(client, "role-guard-wm")
+    wm_pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    wm_mark_ready = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+    assert wm_pick_up.status_code == 403
+    assert wm_mark_ready.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_can_pick_up_and_mark_ready(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Admin Pickup Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=60)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_admin(client, db_session, "pickup-admin")
+
+    # Act
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+
+    # Assert
+    assert pick_up.status_code == 200
+    assert mark_ready.status_code == 200
+    assert mark_ready.json()["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_cannot_pick_up_or_mark_ready(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Unauth Pickup Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=61)
+    item = await _add_item(client, order["id"], dish["id"])
+    client.cookies.clear()
+
+    # Act
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+
+    # Assert
+    assert pick_up.status_code == 401
+    assert mark_ready.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_pick_up_and_mark_ready_on_a_nonexistent_item_are_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=62)
+    await _login_as_cook(client, db_session, "not-found-cook")
+
+    # Act
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/999999/pick-up")
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/999999/mark-ready")
+
+    # Assert
+    assert pick_up.status_code == 404
+    assert mark_ready.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_pick_up_on_an_item_belonging_to_a_different_order_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Wrong Order Dish")
+    order_a, _waiter_a, _table_a = await _open_table(client, db_session, table_number=63)
+    order_b, _waiter_b, _table_b = await _open_table(client, db_session, table_number=64)
+    item = await _add_item(client, order_a["id"], dish["id"])
+    await _login_as_cook(client, db_session, "wrong-order-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order_b['id']}/items/{item['id']}/pick-up")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_race_between_two_pick_ups_only_one_succeeds_and_deducts_once(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange: the item is pending when this request's read step runs, but a
+    # second request picks it up strictly between that read and this
+    # request's guarded UPDATE (trap 18's "a real concurrency test must
+    # change the state between the service's read and its write").
+    dish, ingredient = await _create_available_dish_with_ingredient(client, db_session, name="Race Pickup Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=65)
+    item = await _add_item(client, order["id"], dish["id"])
+    cook = await _login_as_cook(client, db_session, "race-pickup-cook")
+
+    original_get_item = OrderService._get_item
+
+    async def get_item_then_pick_up(self, db, actor, requested_order_id, requested_item_id):
+        loaded = await original_get_item(self, db, actor, requested_order_id, requested_item_id)
+        assert loaded.status is OrderItemStatus.pending
+        racing = await db_session.get(OrderItem, requested_item_id)
+        racing.status = OrderItemStatus.in_preparation
+        racing.cook_id = cook.id
+        await db_session.commit()
+        return loaded
+
+    monkeypatch.setattr(OrderService, "_get_item", get_item_then_pick_up)
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert
+    assert response.status_code == 409
+
+    # Assert: the guarded UPDATE's rowcount hit 0 before any deduction was
+    # attempted (the guard runs first, AD-6), so the racing write, not this
+    # request, is the only thing that ever touched the item's status, and
+    # stock is completely untouched by either.
+    monkeypatch.undo()
+    db_session.expire_all()
+    updated_ingredient = await db_session.get(Ingredient, ingredient)
+    assert updated_ingredient.current_stock == Decimal("10.000")
+    movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
+    assert len(movements.scalars().all()) == 0

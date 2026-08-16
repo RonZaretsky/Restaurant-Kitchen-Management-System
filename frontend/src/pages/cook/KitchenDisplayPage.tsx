@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -15,6 +15,7 @@ import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
 import { KITCHEN_ITEMS_QUERY_KEY, useKitchenItems } from "../../services/kitchenService";
 import { DISHES_QUERY_KEY, useDishes } from "../../services/menuService";
+import { usePickUpItem, useMarkItemReady } from "../../services/orderService";
 import { TABLES_QUERY_KEY, useTables } from "../../services/tableService";
 import type { KitchenItem } from "../../types/kitchen";
 
@@ -57,6 +58,14 @@ function errorMessage(error: Error): string {
  * dishes) — the established "a page driven by more than one independent query must combine
  * loading/error across all of them" rule, applied here for the first time across three queries.
  *
+ * Story 5.2 adds the pick-up/mark-ready action buttons this story's own Scope note explicitly
+ * deferred: each `pending` row gets a "Pick up" button, each `in_preparation` row gets a "Mark
+ * ready" button (UX-DR19, a single large click target), and `ready` rows get none. Subscribes to
+ * the new `order.item_status_changed` push and invalidates KITCHEN_ITEMS_QUERY_KEY on receipt,
+ * alongside the existing `order.item_added` subscription. A failed pick-up/mark-ready call shows
+ * an inline error under that row (UX-DR17), not a toast — this codebase has no toast/snackbar
+ * system anywhere else, so this story does not introduce one either.
+ *
  * @returns The Kitchen Display page.
  */
 export function KitchenDisplayPage() {
@@ -83,6 +92,9 @@ export function KitchenDisplayPage() {
     error: dishesError,
     refetch: refetchDishes,
   } = useDishes();
+  const pickUpMutation = usePickUpItem();
+  const markReadyMutation = useMarkItemReady();
+  const [actionErrors, setActionErrors] = useState<Record<number, string>>({});
 
   const isLoading = isItemsLoading || isTablesLoading || isDishesLoading;
   const isError = isItemsError || isTablesError || isDishesError;
@@ -94,12 +106,41 @@ export function KitchenDisplayPage() {
   };
 
   useEffect(() => {
-    return subscribe("order.item_added", () => {
+    const unsubscribeItemAdded = subscribe("order.item_added", () => {
       void queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: DISHES_QUERY_KEY });
     });
+    const unsubscribeItemStatusChanged = subscribe("order.item_status_changed", () => {
+      void queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY });
+    });
+    return () => {
+      unsubscribeItemAdded();
+      unsubscribeItemStatusChanged();
+    };
   }, [subscribe, queryClient]);
+
+  const handlePickUp = (item: KitchenItem) => {
+    setActionErrors((previous) => ({ ...previous, [item.id]: "" }));
+    pickUpMutation.mutate(
+      { orderId: item.order_id, itemId: item.id },
+      {
+        onError: (error) =>
+          setActionErrors((previous) => ({ ...previous, [item.id]: errorMessage(error) })),
+      },
+    );
+  };
+
+  const handleMarkReady = (item: KitchenItem) => {
+    setActionErrors((previous) => ({ ...previous, [item.id]: "" }));
+    markReadyMutation.mutate(
+      { orderId: item.order_id, itemId: item.id },
+      {
+        onError: (error) =>
+          setActionErrors((previous) => ({ ...previous, [item.id]: errorMessage(error) })),
+      },
+    );
+  };
 
   // Falls back to a bare, clearly-unresolved label rather than the raw internal id (never show a
   // raw id, matching TableOrderDetailPage.tsx's own precedent) — a real table_number could
@@ -153,25 +194,61 @@ export function KitchenDisplayPage() {
               <CardHeader title={`Table ${tableNumber(tableId)}`} />
               <CardContent>
                 <Stack spacing={1.5}>
-                  {tableItems.map((item) => (
-                    <Box key={item.id}>
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        sx={{ alignItems: "center", justifyContent: "space-between" }}
-                      >
-                        <Typography>
-                          {dishName(item.dish_id)} × {item.quantity}
-                        </Typography>
-                        <OrderItemStatusBadge status={item.status} />
-                      </Stack>
-                      {item.notes?.trim() && (
-                        <Typography variant="body2" color="text.secondary">
-                          {item.notes}
-                        </Typography>
-                      )}
-                    </Box>
-                  ))}
+                  {tableItems.map((item) => {
+                    const isPickingUp =
+                      pickUpMutation.isPending && pickUpMutation.variables?.itemId === item.id;
+                    const isMarkingReady =
+                      markReadyMutation.isPending && markReadyMutation.variables?.itemId === item.id;
+                    const actionError = actionErrors[item.id];
+                    return (
+                      <Box key={item.id}>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{ alignItems: "center", justifyContent: "space-between" }}
+                        >
+                          <Typography>
+                            {dishName(item.dish_id)} × {item.quantity}
+                          </Typography>
+                          <OrderItemStatusBadge status={item.status} />
+                        </Stack>
+                        {item.notes?.trim() && (
+                          <Typography variant="body2" color="text.secondary">
+                            {item.notes}
+                          </Typography>
+                        )}
+                        {item.status === "pending" && (
+                          <Button
+                            variant="contained"
+                            fullWidth
+                            size="large"
+                            disabled={isPickingUp}
+                            onClick={() => handlePickUp(item)}
+                            sx={{ marginTop: 1 }}
+                          >
+                            Pick up
+                          </Button>
+                        )}
+                        {item.status === "in_preparation" && (
+                          <Button
+                            variant="contained"
+                            fullWidth
+                            size="large"
+                            disabled={isMarkingReady}
+                            onClick={() => handleMarkReady(item)}
+                            sx={{ marginTop: 1 }}
+                          >
+                            Mark ready
+                          </Button>
+                        )}
+                        {actionError && (
+                          <Typography variant="body2" color="error.main" sx={{ marginTop: 0.5 }}>
+                            {actionError}
+                          </Typography>
+                        )}
+                      </Box>
+                    );
+                  })}
                 </Stack>
               </CardContent>
             </Card>
