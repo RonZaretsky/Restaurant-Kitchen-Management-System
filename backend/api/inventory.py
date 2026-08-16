@@ -90,6 +90,31 @@ async def list_ingredients(
     return await inventory_service.list_ingredients(db)
 
 
+@router.get(
+    "/alerts",
+    response_model=list[IngredientResponse],
+    responses=error_responses(_ERROR_DESCRIPTIONS, 401, 403),
+)
+@inject
+async def list_alerts(
+    actor: InventoryReadDep,
+    db: SessionDep,
+    inventory_service: InventoryService = Depends(Provide[Container.inventory_service]),
+) -> list[Ingredient]:
+    """List every Ingredient currently in shortage (FR-14).
+
+    Args:
+        actor: The authenticated Warehouse Manager, Admin, or Cook making the request.
+        db: The active database session.
+        inventory_service: Injected service handling the read.
+
+    Returns:
+        Every Ingredient whose current_stock is below its own min_stock_threshold. An
+        empty list is a valid, successful response ("no active shortages"), not a 404.
+    """
+    return await inventory_service.list_alerts(db)
+
+
 @router.post(
     "/ingredients",
     response_model=IngredientResponse,

@@ -1,6 +1,9 @@
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import LogoutIcon from "@mui/icons-material/Logout";
 import Alert from "@mui/material/Alert";
 import AppBar from "@mui/material/AppBar";
+import Badge from "@mui/material/Badge";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import Toolbar from "@mui/material/Toolbar";
@@ -8,12 +11,19 @@ import Typography from "@mui/material/Typography";
 import { styled } from "@mui/material/styles";
 import { NavLink, Outlet } from "react-router";
 
+import { ALERTS_QUERY_KEY, useAlerts } from "../../services/inventoryService";
 import { useLogout } from "../../services/authService";
 import { ApiError } from "../../services/httpClient";
 import type { CurrentUser, UserRole } from "../../types/user";
+import { useRealtime } from "./RealtimeProvider";
 import { ReconnectingBanner } from "./ReconnectingBanner";
 import { ThemeToggle } from "./ThemeToggle";
 import { ROLE_NAV_ITEMS } from "./navigationConfig";
+
+// The one nav item that carries a live count badge today (Story 4.2). A
+// per-path badge-lookup map would be premature abstraction: no second nav
+// badge exists anywhere in this codebase yet to justify it.
+const ALERTS_NAV_PATH = "/warehouse/alerts";
 
 const ROLE_LABELS: Record<UserRole, string> = {
   admin: "Admin",
@@ -68,6 +78,24 @@ const NavItem = styled(NavLink)(({ theme }) => ({
 export function AppShell({ user }: { user: CurrentUser }) {
   const navItems = ROLE_NAV_ITEMS[user.role];
   const logoutMutation = useLogout();
+  const queryClient = useQueryClient();
+  const { subscribe } = useRealtime();
+
+  // Story 4.2: only a warehouse_manager has an Alerts nav item at all
+  // (navigationConfig.ts), so the query/subscription are scoped the same way
+  // rather than firing for every Role.
+  const isWarehouseManager = user.role === "warehouse_manager";
+  const { data: alerts } = useAlerts(isWarehouseManager);
+  const alertCount = alerts?.length ?? 0;
+
+  useEffect(() => {
+    if (!isWarehouseManager) {
+      return;
+    }
+    return subscribe("inventory.alerts_changed", () => {
+      void queryClient.invalidateQueries({ queryKey: ALERTS_QUERY_KEY });
+    });
+  }, [isWarehouseManager, subscribe, queryClient]);
 
   return (
     <>
@@ -77,11 +105,17 @@ export function AppShell({ user }: { user: CurrentUser }) {
             RKMS
           </Typography>
           <Box component="nav" sx={{ display: "flex", gap: 0.5, flexGrow: 1 }}>
-            {navItems.map((item) => (
-              <NavItem key={item.path} to={item.path}>
-                {item.label}
-              </NavItem>
-            ))}
+            {navItems.map((item) =>
+              item.path === ALERTS_NAV_PATH ? (
+                <Badge key={item.path} badgeContent={alertCount} color="error" invisible={alertCount === 0}>
+                  <NavItem to={item.path}>{item.label}</NavItem>
+                </Badge>
+              ) : (
+                <NavItem key={item.path} to={item.path}>
+                  {item.label}
+                </NavItem>
+              ),
+            )}
           </Box>
           <Typography variant="body2">
             {user.full_name} · {ROLE_LABELS[user.role]}

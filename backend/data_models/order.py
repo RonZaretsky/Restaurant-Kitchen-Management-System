@@ -201,3 +201,48 @@ class OrderItemResponse(BaseModel):
     notes: str | None
     cook_id: int | None
     price_at_add: Decimal
+
+
+class KitchenItemResponse(BaseModel):
+    """Body of GET /api/kitchen/items, describing one active Order Item plus its Table (Story 5.1).
+
+    OrderItemResponse's exact field set plus table_id. table_id is not a column on OrderItem
+    itself (only order_id is), so this is not from_attributes-constructible off a bare OrderItem
+    the way OrderItemResponse is; KitchenService builds instances explicitly from a (OrderItem,
+    table_id) row pair, the one join in this codebase's services/ layer this story explicitly
+    justifies (see the story's Scope note) — the Kitchen Display groups by Table, and no existing
+    endpoint maps an arbitrary order_id to its table_id for a Cook session.
+    """
+
+    id: int
+    order_id: int
+    table_id: int
+    dish_id: int
+    quantity: int
+    status: OrderItemStatus
+    notes: str | None
+    cook_id: int | None
+    price_at_add: Decimal
+
+    @classmethod
+    def from_item(cls, item: "OrderItem", table_id: int) -> "KitchenItemResponse":
+        """Build a response from an OrderItem row plus its resolved table_id.
+
+        Args:
+            item: The Order Item row.
+            table_id: The table_id of the Order this item belongs to.
+
+        Returns:
+            The assembled response.
+        """
+        return cls(
+            id=item.id,
+            order_id=item.order_id,
+            table_id=table_id,
+            dish_id=item.dish_id,
+            quantity=item.quantity,
+            status=item.status,
+            notes=item.notes,
+            cook_id=item.cook_id,
+            price_at_add=item.price_at_add,
+        )

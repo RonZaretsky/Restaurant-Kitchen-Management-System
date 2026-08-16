@@ -27,6 +27,11 @@ const INGREDIENTS_QUERY_KEY = ["inventory", "ingredients"] as const;
 const ingredientQueryKey = (id: number | null) => ["inventory", "ingredients", id] as const;
 const movementsQueryKey = (id: number | null) => ["inventory", "ingredients", id, "movements"] as const;
 
+// Exported (Story 4.2), mirrors TABLES_QUERY_KEY/DISHES_QUERY_KEY's cross-file-export
+// precedent: both AppShell.tsx's nav badge and AlertsPage.tsx's list independently
+// subscribe to inventory.alerts_changed and need to invalidate this same key.
+export const ALERTS_QUERY_KEY = ["inventory", "alerts"] as const;
+
 /**
  * Fetches every Ingredient.
  *
@@ -49,7 +54,34 @@ export function useIngredients(): UseQueryResult<Ingredient[], Error> {
 }
 
 /**
+ * Fetches every Ingredient currently in shortage (FR-14, Story 4.2).
+ *
+ * @param enabled - Whether the query should run at all. AppShell.tsx calls this
+ *   unconditionally (hooks cannot be called conditionally) but only a
+ *   warehouse_manager has an Alerts nav item to badge, so it passes `false` for
+ *   every other Role rather than firing a request that would only 403.
+ *   AlertsPage.tsx, reachable only by a warehouse_manager (route guard), omits
+ *   this and always fetches.
+ * @returns The TanStack Query result for the derived low-stock alert list.
+ */
+export function useAlerts(enabled = true): UseQueryResult<Ingredient[], Error> {
+  return useQuery({
+    queryKey: ALERTS_QUERY_KEY,
+    queryFn: () => apiRequest<Ingredient[]>("/api/inventory/alerts"),
+    enabled,
+    retry: false,
+  });
+}
+
+/**
  * Creates a new Ingredient (AC4).
+ *
+ * Invalidates ALERTS_QUERY_KEY too, not just INGREDIENTS_QUERY_KEY (Story 4.3 review): a new
+ * Ingredient can be created with current_stock already below min_stock_threshold, and nothing
+ * else would ever refresh the alerts list for it — record_movement's own crossing-triggered
+ * broadcast (Story 4.2) never fires here, since no Stock Movement was involved. Without this,
+ * a newly-created in-shortage Ingredient would render with no shortage styling/sort-to-top on
+ * IngredientsPage.tsx (Story 4.3) until some unrelated event happened to invalidate the cache.
  *
  * @returns The TanStack Query mutation for submitting a new Ingredient.
  */
@@ -62,7 +94,10 @@ export function useCreateIngredient(): UseMutationResult<Ingredient, Error, Crea
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: INGREDIENTS_QUERY_KEY }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: INGREDIENTS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ALERTS_QUERY_KEY });
+    },
   });
 }
 

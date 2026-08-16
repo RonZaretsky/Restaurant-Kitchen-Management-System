@@ -29,8 +29,11 @@ TablesDep = Annotated[User, Depends(require_role(UserRole.admin))]
 # InventoryReadDep's established split between a read-only dependency and a
 # write-only one. This closes a gap project-context.md's own Domain rules
 # section flagged as a deliberate Story 2.4 scoping choice earmarked for
-# Epic 3 to widen.
-TablesReadDep = Annotated[User, Depends(require_role(UserRole.admin, UserRole.waiter))]
+# Epic 3 to widen. Story 5.1 widened it again to admin/waiter/cook: the
+# Kitchen Display resolves each card's table_number client-side via this same
+# endpoint, the same incremental-widening pattern InventoryReadDep/
+# DishCatalogReadDep/MenuReadDep have each already gone through.
+TablesReadDep = Annotated[User, Depends(require_role(UserRole.admin, UserRole.waiter, UserRole.cook))]
 
 # Path ids need the same int4 upper bound their request-body counterparts carry
 # (trap 16, applied proactively here per Story 2.3's review finding).

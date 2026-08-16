@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -14,7 +15,8 @@ import Typography from "@mui/material/Typography";
 
 import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
-import { useCreateIngredient, useIngredients } from "../../services/inventoryService";
+import { useAlerts, useCreateIngredient, useIngredients } from "../../services/inventoryService";
+import type { Ingredient } from "../../types/inventory";
 import type { Unit } from "../../types/menu";
 
 /** Shown when a request fails for a reason that carries no user-safe message of its own. */
@@ -62,13 +64,21 @@ function parseNonNegativeAmount(raw: string): string | null {
  * The Ingredients surface (Story 2.6, replacing Story 1.4's placeholder).
  *
  * An always-visible "Add ingredient" form and a dense-row list (Name / Unit /
- * Current stock / Threshold) of every Ingredient (AC4). Deliberately does not
- * add shortage sorting, highlighting, or a Status column: those need the
- * below-threshold comparison logic Epic 4's Story 4.3 owns. Story 4.1 added
- * row click-through to the Ingredient detail page, since that is plain
- * navigation and needs no comparison logic (unlike sorting/highlighting), and
- * without it Story 4.1's own detail page (stat cards, log-movement form,
- * movement history) had no discoverable entry point from this screen.
+ * Current stock / Threshold) of every Ingredient (AC4). Story 4.1 added row
+ * click-through to the Ingredient detail page, since that is plain navigation
+ * and needs no comparison logic (unlike sorting/highlighting), and without it
+ * Story 4.1's own detail page (stat cards, log-movement form, movement
+ * history) had no discoverable entry point from this screen.
+ *
+ * Story 4.3 added the shortage row treatment: in-shortage rows (reusing
+ * useAlerts()'s already-derived shortage list, Story 4.2, not a second
+ * current_stock < min_stock_threshold comparison here) render a
+ * WarningAmberIcon plus error-colored text and sort to the top, alphabetical
+ * within each group (DESIGN.md's ingredient-row.in-shortage token). Live
+ * updates come free from AppShell.tsx's existing global
+ * inventory.alerts_changed subscription invalidating the shared
+ * ALERTS_QUERY_KEY this page's own useAlerts() call reads from — no second
+ * subscription needed here.
  *
  * @returns The Ingredients page.
  */
@@ -79,8 +89,48 @@ export function IngredientsPage() {
   const [threshold, setThreshold] = useState("");
   const [currentStock, setCurrentStock] = useState("");
 
-  const { data: ingredients, isLoading, isError, error, refetch } = useIngredients();
+  const {
+    data: ingredients,
+    isLoading: isIngredientsLoading,
+    isError: isIngredientsError,
+    error: ingredientsError,
+    refetch: refetchIngredients,
+  } = useIngredients();
+  const {
+    data: alerts,
+    isLoading: isAlertsLoading,
+    isError: isAlertsError,
+    error: alertsError,
+    refetch: refetchAlerts,
+  } = useAlerts();
   const createMutation = useCreateIngredient();
+
+  const isLoading = isIngredientsLoading || isAlertsLoading;
+  const isError = isIngredientsError || isAlertsError;
+  const loadError = ingredientsError ?? alertsError;
+  const refetch = () => {
+    void refetchIngredients();
+    void refetchAlerts();
+  };
+
+  const shortageIds = useMemo(() => new Set(alerts?.map((alert) => alert.id) ?? []), [alerts]);
+
+  const sortedIngredients = useMemo(() => {
+    if (!ingredients) {
+      return undefined;
+    }
+    const withShortageFlag = ingredients.map((ingredient) => ({
+      ingredient,
+      inShortage: shortageIds.has(ingredient.id),
+    }));
+    withShortageFlag.sort((a, b) => {
+      if (a.inShortage !== b.inShortage) {
+        return a.inShortage ? -1 : 1;
+      }
+      return a.ingredient.name.localeCompare(b.ingredient.name);
+    });
+    return withShortageFlag.map(({ ingredient }) => ingredient);
+  }, [ingredients, shortageIds]);
 
   const parsedThreshold = parseNonNegativeAmount(threshold);
   const currentStockTrimmed = currentStock.trim();
@@ -203,15 +253,15 @@ export function IngredientsPage() {
             </Button>
           }
         >
-          {`Could not load the ingredients. ${errorMessage(error)}`}
+          {`Could not load the ingredients. ${errorMessage(loadError ?? new Error(GENERIC_ERROR_MESSAGE))}`}
         </Alert>
       )}
 
-      {!isLoading && !isError && ingredients?.length === 0 && (
+      {!isLoading && !isError && sortedIngredients?.length === 0 && (
         <Typography color="text.secondary">No ingredients recorded yet</Typography>
       )}
 
-      {!isLoading && !isError && ingredients && ingredients.length > 0 && (
+      {!isLoading && !isError && sortedIngredients && sortedIngredients.length > 0 && (
         <Table size="small">
           <TableHead>
             <TableRow>
@@ -222,19 +272,35 @@ export function IngredientsPage() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {ingredients.map((ingredient) => (
-              <TableRow
-                key={ingredient.id}
-                hover
-                onClick={() => navigate(`/warehouse/ingredients/${ingredient.id}`)}
-                sx={{ cursor: "pointer" }}
-              >
-                <TableCell>{ingredient.name}</TableCell>
-                <TableCell>{ingredient.unit}</TableCell>
-                <TableCell>{ingredient.current_stock}</TableCell>
-                <TableCell>{ingredient.min_stock_threshold}</TableCell>
-              </TableRow>
-            ))}
+            {sortedIngredients.map((ingredient: Ingredient) => {
+              const inShortage = shortageIds.has(ingredient.id);
+              return (
+                <TableRow
+                  key={ingredient.id}
+                  hover
+                  onClick={() => navigate(`/warehouse/ingredients/${ingredient.id}`)}
+                  sx={{ cursor: "pointer" }}
+                >
+                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>
+                    {inShortage && (
+                      <WarningAmberIcon
+                        fontSize="small"
+                        color="error"
+                        sx={{ verticalAlign: "text-bottom", marginRight: 0.5 }}
+                      />
+                    )}
+                    {ingredient.name}
+                  </TableCell>
+                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>{ingredient.unit}</TableCell>
+                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>
+                    {ingredient.current_stock}
+                  </TableCell>
+                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>
+                    {ingredient.min_stock_threshold}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}
