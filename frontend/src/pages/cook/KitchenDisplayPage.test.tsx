@@ -176,12 +176,12 @@ describe("KitchenDisplayPage", () => {
   it("picking up a pending item calls the pick-up endpoint and refreshes the board", async () => {
     // Arrange
     let items: unknown[] = [ITEM_TABLE_5];
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn((url: string) => {
       if (String(url).includes("/pick-up")) {
         items = [{ ...ITEM_TABLE_5, status: "in_preparation", cook_id: 9 }];
         return Promise.resolve(jsonResponse(200, items[0]));
       }
-      return stubReads({ items })(url, init);
+      return stubReads({ items })(url);
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -200,11 +200,11 @@ describe("KitchenDisplayPage", () => {
 
   it("shows an inline error when a pick-up call fails, without silently doing nothing", async () => {
     // Arrange
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn((url: string) => {
       if (String(url).includes("/pick-up")) {
         return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not pending" }));
       }
-      return stubReads({ items: [ITEM_TABLE_5] })(url, init);
+      return stubReads({ items: [ITEM_TABLE_5] })(url);
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();

@@ -643,3 +643,20 @@
   but nothing in the test suite itself would fail or flag once the filter should have been added.
   **Action:** whichever of 5.3/5.4 lands first should extend `test_kitchen.py` with a served/closed-
   order exclusion test at that point; no action needed before then.
+
+## Deferred from: code review of story-5-2 (2026-08-16)
+
+- **`Order.status` is still never derived from its items' statuses** (CLAUDE.md's own stated
+  business rule) — an Order can sit at `pending` forever while every one of its Order Items reaches
+  `ready`, since neither `pick_up_item`/`mark_item_ready` (this story) nor `cancel_item`/`edit_item`
+  (Story 3.4) ever touch or recompute `Order.status`. Pre-existing, not introduced by this story.
+  **Action:** this is explicitly Story 5.3's own scope ("Order Status Derives From Its Items") —
+  no action needed before then.
+- **A Dish can reach zero `RecipeIngredient` rows while a `pending` Order Item still references
+  it**, letting a pick-up silently succeed with zero stock deduction — `CannotRemoveLastRecipeIngredientError`'s
+  guard only fires while the Dish `is_available`, so an admin can disable a Dish, then remove its
+  remaining Recipe Ingredients, without anything checking whether a still-pending Order Item
+  already references that Dish. Pre-existing recipe/dish-integrity gap, not introduced by this
+  story. **Action:** would need a broader look at Dish/Recipe deletion guards (e.g. blocking
+  Recipe-Ingredient removal while any non-terminal Order Item references the Dish, regardless of
+  availability) — no immediate action, narrow edge case at this project's demo scale.

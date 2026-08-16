@@ -6,7 +6,7 @@ story: 2
 
 # Story 5.2: Pick Up and Progress an Order Item, with Atomic Stock Deduction
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -534,9 +534,66 @@ Claude Sonnet 5
 - `frontend/src/pages/waiter/TableOrderDetailPage.tsx`
 - `frontend/src/pages/waiter/TableOrderDetailPage.test.tsx`
 
+## Review Findings
+
+Reviewed by three parallel agents (Blind Hunter, Edge Case Hunter, Acceptance Auditor) against this
+story's 8 ACs and `_bmad-output/project-context.md`.
+
+- [x] [Review][Patch] `pick_up_item` deducts stock using `item.quantity` read *before* its own
+  guarded UPDATE, so a concurrent `edit_item` changing quantity between that read and the UPDATE
+  produces a stock deduction based on the stale, pre-edit quantity even though both writes commit
+  successfully — `backend/services/order_service.py:405,434`
+- [x] [Review][Patch] `apply_consumption`'s `IngredientNotFoundError`, raised mid-loop after the
+  guarded `OrderItem` UPDATE already ran in this uncommitted transaction, has no explicit
+  `db.rollback()` unlike every other rejection branch in this file — relies on implicit
+  session-close rollback instead — `backend/services/order_service.py:429-437`
+- [x] [Review][Patch] `actionErrors` state in `KitchenDisplayPage.tsx` is never cleared by a
+  successful mutation or by a live `order.item_status_changed` event from a different session, so a
+  stale inline error (e.g. a lost double-click race) can persist under a row whose status has since
+  moved on correctly — `frontend/src/pages/cook/KitchenDisplayPage.tsx`
+- [x] [Review][Patch] `pickUpMutation`/`markReadyMutation` are single page-level mutation instances
+  shared across every row; per-row pending state is derived from `mutation.variables?.itemId`,
+  which only reflects the most recent call — two rapid clicks on different rows before React
+  re-renders can leave an earlier row's button incorrectly re-enabled while its request is still in
+  flight — `frontend/src/pages/cook/KitchenDisplayPage.tsx`
+- [x] [Review][Patch] `_PICK_UP_ITEM_ERROR_DESCRIPTIONS`'s 404 wording ("No matching Order or Order
+  Item was found") omits the distinct case where `IngredientNotFoundError` bubbles up from
+  `apply_consumption` — `backend/api/orders.py`
+- [x] [Review][Patch] Task 7's own text requires asserting the *absence* of `inventory.alerts_changed`
+  for both non-crossing cases ("already low before, still low after, **or** stays comfortably
+  above") — only the "stays comfortably above" case is tested; the "already low, stays low" case is
+  unverified — `backend/tests/test_websocket.py`
+- [x] [Review][Patch] Task 7 calls for the "belongs to a different `order_id`" 404 case on *both*
+  new routes — only pick-up has this test, mark-ready does not —
+  `backend/tests/test_orders.py::test_pick_up_on_an_item_belonging_to_a_different_order_is_rejected`
+- [x] [Review][Defer] `Order.status` is still never derived from its items' statuses (CLAUDE.md's
+  own stated rule) — pre-existing gap predating this diff (`cancel_item` has the same gap), and
+  explicitly Story 5.3's job ("Order Status Derives From Its Items") — deferred, pre-existing
+- [x] [Review][Defer] A Dish can reach zero `RecipeIngredient` rows while a `pending` `OrderItem`
+  still references it (an admin can disable a Dish then remove its remaining ingredients, since
+  `CannotRemoveLastRecipeIngredientError`'s guard only fires while `is_available`), letting a
+  pick-up silently succeed with zero deduction — pre-existing recipe/dish integrity gap, not
+  introduced by this story — deferred, pre-existing
+
+**Verified as non-issues:**
+
+- **`current_stock` never floor-capped, no DB check constraint** — intentional per AD-16, confirmed
+  by AC7's own wording; not a bug.
+- **Any active Cook can mark ready an item picked up by a different Cook** — explicitly required by
+  AC6 ("attribution not access lock"), confirmed correct, not a bug.
+- **Container-provider ordering enforced only by a hand-maintained comment** — matches this
+  codebase's existing, pre-existing convention for every other provider dependency (e.g.
+  `realtime_service`), not a new gap introduced by this story.
+- **`ingredients_deducted` log count is a line count, not an amount** — cosmetic only, no
+  functional consequence.
+- **Broadcast failures after `db.commit()` are not wrapped in try/except** — consistent with every
+  other broadcast call site in this codebase (`open_table`, `add_item`, `record_movement`); not
+  selectively fixed at one call site while every other one has the same shape.
+
 ## Change Log
 
 | Date | Change |
 |---|---|
 | 2026-08-16 | Story 5.2 created via bmad-create-story: pick-up/mark-ready transitions, atomic stock deduction via a new `InventoryService.apply_consumption` reused from `OrderService`, `order.item_status_changed` broadcast, container reordering (trap 23) required for `order_service`'s new `inventory_service` dependency. |
 | 2026-08-16 | Implemented Story 5.2: pick-up (pending → in_preparation, atomic stock deduction, cook attribution) and mark-ready (in_preparation → ready, pure status change) transitions, both on `OrderService`. New `InventoryService.apply_consumption` reused inside the same transaction, `order.item_status_changed` broadcast, container reordering for the new `order_service` → `inventory_service` dependency (trap 23). 18 new backend tests (339 total), 5 new frontend tests + 1 updated (178 total). |
+| 2026-08-16 | Code review patch pass: fixed a stale-quantity race in `pick_up_item` (now refreshes the item after its own guarded UPDATE succeeds, closing the window a concurrent `edit_item` could exploit); added an explicit rollback on `IngredientNotFoundError` mid-deduction (trap 20 consistency); fixed two frontend gaps in `KitchenDisplayPage.tsx` (stale inline errors never cleared, and a shared-mutation `.variables` tracking bug that could let a rapid second click double-submit); clarified the pick-up route's 404 error description; added the missing "already low, stays low" non-crossing alert test and the missing different-order 404 test for mark-ready. 2 new backend tests (341 total). Deferred: `Order.status` still not derived from its items (explicitly Story 5.3's scope) and a pre-existing Dish/Recipe integrity gap allowing a zero-ingredient pick-up. |

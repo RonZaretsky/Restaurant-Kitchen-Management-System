@@ -22,6 +22,7 @@ from data_models import (
 from exceptions import (
     DishNotAvailableError,
     DishNotFoundError,
+    IngredientNotFoundError,
     OrderItemNotCancellableError,
     OrderItemNotFoundError,
     OrderItemNotInPreparationError,
@@ -419,6 +420,15 @@ class OrderService:
             await db.rollback()
             raise OrderItemNotPendingError()
 
+        # Refreshed here, not just relied on from _get_item's earlier read: the guarded UPDATE
+        # above only just succeeded, meaning the item was still pending an instant ago and a
+        # concurrent edit_item (also guarded on status == pending) could have committed a new
+        # quantity in the narrow window between _get_item's read and this UPDATE. Now that our own
+        # UPDATE has moved status to in_preparation, no further edit_item call can land (its own
+        # guard requires status == pending), so this refresh is the last point a quantity change
+        # could still be pending, and the one this deduction must use (review finding, Story 5.2).
+        await db.refresh(item)
+
         recipe_result = await db.execute(
             select(RecipeIngredient)
             .where(RecipeIngredient.dish_id == item.dish_id)
@@ -427,16 +437,30 @@ class OrderService:
         recipe_ingredients = recipe_result.scalars().all()
 
         crossed_ingredient_ids: list[int] = []
-        for recipe_ingredient in recipe_ingredients:
-            crossed = await self._inventory_service.apply_consumption(
-                db,
-                recipe_ingredient.ingredient_id,
-                recipe_ingredient.quantity * item.quantity,
+        try:
+            for recipe_ingredient in recipe_ingredients:
+                crossed = await self._inventory_service.apply_consumption(
+                    db,
+                    recipe_ingredient.ingredient_id,
+                    recipe_ingredient.quantity * item.quantity,
+                    actor.id,
+                    order_id,
+                )
+                if crossed:
+                    crossed_ingredient_ids.append(recipe_ingredient.ingredient_id)
+        except IngredientNotFoundError:
+            # Explicit rollback, matching every other rejection branch in this file (trap 20):
+            # the guarded status UPDATE above already ran on this session but was never committed,
+            # so this discards it rather than relying on the session's own close-time behavior.
+            self._logger.error(
+                "Order item pick-up failed for user_id={}: order_id={} item_id={} references a"
+                " missing ingredient",
                 actor.id,
                 order_id,
+                item_id,
             )
-            if crossed:
-                crossed_ingredient_ids.append(recipe_ingredient.ingredient_id)
+            await db.rollback()
+            raise
 
         await db.commit()
         await db.refresh(item)

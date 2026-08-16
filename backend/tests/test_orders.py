@@ -1474,6 +1474,28 @@ async def test_pick_up_on_an_item_belonging_to_a_different_order_is_rejected(
 
 
 @pytest.mark.asyncio
+async def test_mark_ready_on_an_item_belonging_to_a_different_order_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: the item is in_preparation, on order_a, but mark-ready is
+    # called against order_b (review finding, Story 5.2 — Task 7's own text
+    # calls for this coverage on both new routes, not just pick-up).
+    dish = await _create_available_dish(client, db_session, name="Wrong Order Ready Dish")
+    order_a, _waiter_a, _table_a = await _open_table(client, db_session, table_number=66)
+    order_b, _waiter_b, _table_b = await _open_table(client, db_session, table_number=67)
+    item = await _add_item(client, order_a["id"], dish["id"])
+    await _login_as_cook(client, db_session, "wrong-order-ready-cook")
+    pick_up = await client.post(f"/api/orders/{order_a['id']}/items/{item['id']}/pick-up")
+    assert pick_up.status_code == 200
+
+    # Act
+    response = await client.post(f"/api/orders/{order_b['id']}/items/{item['id']}/mark-ready")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_race_between_two_pick_ups_only_one_succeeds_and_deducts_once(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

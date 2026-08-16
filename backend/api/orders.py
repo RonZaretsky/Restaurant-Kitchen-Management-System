@@ -86,7 +86,7 @@ _CANCEL_ITEM_ERROR_DESCRIPTIONS = {
 _PICK_UP_ITEM_ERROR_DESCRIPTIONS = {
     401: _ERROR_DESCRIPTIONS[401],
     403: "Authenticated, but the caller's Role is not cook or admin",
-    404: "No matching Order or Order Item was found",
+    404: "No matching Order or Order Item was found, or the item's Dish recipe references an ingredient that no longer exists",
     409: "The item is not pending",
 }
 
@@ -331,6 +331,9 @@ async def pick_up_order_item(
     Raises:
         OrderItemNotFoundError: Propagated from order_service, handled
             globally as a 404, if no Order Item matches item_id on order_id.
+        IngredientNotFoundError: Propagated from order_service, handled
+            globally as a 404, if the item's Dish recipe references an
+            Ingredient that no longer exists.
         OrderItemNotPendingError: Propagated from order_service, handled
             globally as a 409, if the item's status is not pending at the
             moment of the write.

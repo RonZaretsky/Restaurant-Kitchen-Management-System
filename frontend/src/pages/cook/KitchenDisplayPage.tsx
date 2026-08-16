@@ -95,6 +95,13 @@ export function KitchenDisplayPage() {
   const pickUpMutation = usePickUpItem();
   const markReadyMutation = useMarkItemReady();
   const [actionErrors, setActionErrors] = useState<Record<number, string>>({});
+  // Tracked as an explicit Set rather than derived from pickUpMutation.variables/markReadyMutation.variables
+  // (review finding, Story 5.2): a single shared mutation's .variables only ever reflects the most
+  // recent call, so two rapid clicks on different rows before React re-renders could leave an
+  // earlier row's button incorrectly re-enabled while its request is still in flight. Adding to
+  // the Set synchronously before mutate() and removing it in onSettled closes that window.
+  const [pendingPickUpIds, setPendingPickUpIds] = useState<Set<number>>(new Set());
+  const [pendingMarkReadyIds, setPendingMarkReadyIds] = useState<Set<number>>(new Set());
 
   const isLoading = isItemsLoading || isTablesLoading || isDishesLoading;
   const isError = isItemsError || isTablesError || isDishesError;
@@ -111,8 +118,23 @@ export function KitchenDisplayPage() {
       void queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: DISHES_QUERY_KEY });
     });
-    const unsubscribeItemStatusChanged = subscribe("order.item_status_changed", () => {
+    const unsubscribeItemStatusChanged = subscribe("order.item_status_changed", (payload) => {
       void queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY });
+      // Clears a stale inline error for this item (review finding, Story 5.2): a prior
+      // pick-up/mark-ready call from this or another session may have failed and left an error
+      // showing under this row, but a live status-change event proves the item has since moved
+      // on correctly, so that error no longer describes the row's current state.
+      const changedItemId = (payload as { id?: unknown } | null)?.id;
+      if (typeof changedItemId === "number") {
+        setActionErrors((previous) => {
+          if (!(changedItemId in previous)) {
+            return previous;
+          }
+          const next = { ...previous };
+          delete next[changedItemId];
+          return next;
+        });
+      }
     });
     return () => {
       unsubscribeItemAdded();
@@ -120,24 +142,55 @@ export function KitchenDisplayPage() {
     };
   }, [subscribe, queryClient]);
 
+  const clearActionError = (itemId: number) => {
+    setActionErrors((previous) => {
+      if (!(itemId in previous)) {
+        return previous;
+      }
+      const next = { ...previous };
+      delete next[itemId];
+      return next;
+    });
+  };
+
   const handlePickUp = (item: KitchenItem) => {
-    setActionErrors((previous) => ({ ...previous, [item.id]: "" }));
+    if (pendingPickUpIds.has(item.id)) {
+      return;
+    }
+    clearActionError(item.id);
+    setPendingPickUpIds((previous) => new Set(previous).add(item.id));
     pickUpMutation.mutate(
       { orderId: item.order_id, itemId: item.id },
       {
         onError: (error) =>
           setActionErrors((previous) => ({ ...previous, [item.id]: errorMessage(error) })),
+        onSettled: () =>
+          setPendingPickUpIds((previous) => {
+            const next = new Set(previous);
+            next.delete(item.id);
+            return next;
+          }),
       },
     );
   };
 
   const handleMarkReady = (item: KitchenItem) => {
-    setActionErrors((previous) => ({ ...previous, [item.id]: "" }));
+    if (pendingMarkReadyIds.has(item.id)) {
+      return;
+    }
+    clearActionError(item.id);
+    setPendingMarkReadyIds((previous) => new Set(previous).add(item.id));
     markReadyMutation.mutate(
       { orderId: item.order_id, itemId: item.id },
       {
         onError: (error) =>
           setActionErrors((previous) => ({ ...previous, [item.id]: errorMessage(error) })),
+        onSettled: () =>
+          setPendingMarkReadyIds((previous) => {
+            const next = new Set(previous);
+            next.delete(item.id);
+            return next;
+          }),
       },
     );
   };
@@ -195,10 +248,8 @@ export function KitchenDisplayPage() {
               <CardContent>
                 <Stack spacing={1.5}>
                   {tableItems.map((item) => {
-                    const isPickingUp =
-                      pickUpMutation.isPending && pickUpMutation.variables?.itemId === item.id;
-                    const isMarkingReady =
-                      markReadyMutation.isPending && markReadyMutation.variables?.itemId === item.id;
+                    const isPickingUp = pendingPickUpIds.has(item.id);
+                    const isMarkingReady = pendingMarkReadyIds.has(item.id);
                     const actionError = actionErrors[item.id];
                     return (
                       <Box key={item.id}>

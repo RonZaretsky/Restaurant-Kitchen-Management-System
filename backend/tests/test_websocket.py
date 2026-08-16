@@ -555,6 +555,65 @@ async def test_picking_up_an_order_item_that_crosses_threshold_also_broadcasts_a
 
 
 @pytest.mark.asyncio
+async def test_picking_up_an_order_item_already_below_threshold_broadcasts_nothing(db_session) -> None:
+    # Arrange: stock already below threshold before the pick-up, and stays
+    # below after — was_low == is_low == True, no crossing (review finding,
+    # Story 5.2: Task 7's own text requires both non-crossing cases tested,
+    # not just "stays comfortably above").
+    table = RestaurantTable(table_number=6, capacity=4, status=TableStatus.available)
+    category = Category(name="Mains")
+    db_session.add_all([table, category])
+    await db_session.commit()
+    await db_session.refresh(table)
+    await db_session.refresh(category)
+    dish = Dish(
+        name="Already Low Dish",
+        price="15.00",
+        category_id=category.id,
+        prep_time_minutes=10,
+        is_available=True,
+    )
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    ingredient = Ingredient(name="Saffron", unit=Unit.kg, current_stock="0.800", min_stock_threshold="1.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    db_session.add(RecipeIngredient(dish_id=dish.id, ingredient_id=ingredient.id, unit=Unit.kg, quantity="0.100"))
+    await db_session.commit()
+    await _create_user(db_session, "ws_already_low_waiter", role=UserRole.waiter)
+    await _create_user(db_session, "ws_already_low_cook", role=UserRole.cook)
+    await _create_user(db_session, "ws_already_low_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_already_low_waiter")
+        cook_token = await _login_over_http(port, "ws_already_low_cook")
+        wm_token = await _login_over_http(port, "ws_already_low_wm")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            add_response = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert add_response.status_code == 201
+            item_id = add_response.json()["id"]
+
+            async with await _connect(port, wm_token) as wm_ws:
+                # Act
+                http_client.cookies.set(COOKIE_NAME, cook_token)
+                pick_up_response = await http_client.post(f"/api/orders/{order_id}/items/{item_id}/pick-up")
+                assert pick_up_response.status_code == 200
+
+                # Assert: 0.800 - 0.100 = 0.700, still below 1.000 — no crossing, nothing broadcast.
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
 async def test_marking_an_item_ready_broadcasts_order_item_status_changed_with_no_alert(
     db_session,
 ) -> None:
