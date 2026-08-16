@@ -59,6 +59,19 @@ export function useOpenTable(): UseMutationResult<Order, Error, number> {
 }
 
 /**
+ * The shared cache key for one Table's currently open Order.
+ *
+ * Exported (Story 5.3) so TableOrderDetailPage.tsx's live `order.status_changed` subscriber can
+ * invalidate the same key `useOrderForTable` uses, matching `orderItemsQueryKey`'s established
+ * cross-file-export shape rather than reconstructing the array by hand.
+ *
+ * @param tableId - The Table whose open Order key is being built, or null if not yet known.
+ */
+export function orderForTableQueryKey(tableId: number | null) {
+  return ["orders", "table", tableId] as const;
+}
+
+/**
  * Fetches the Order currently open on a Table.
  *
  * The Table/Order detail page is reached by table_id alone (`/waiter/tables/:tableId`), so this
@@ -74,9 +87,34 @@ export function useOpenTable(): UseMutationResult<Order, Error, number> {
  */
 export function useOrderForTable(tableId: number | null): UseQueryResult<Order, Error> {
   return useQuery({
-    queryKey: ["orders", "table", tableId] as const,
+    queryKey: orderForTableQueryKey(tableId),
     queryFn: () => apiRequest<Order>(`/api/orders/tables/${tableId}`),
     enabled: tableId !== null,
+    retry: false,
+  });
+}
+
+/**
+ * The shared cache key for the bulk open-Orders list (Story 5.3).
+ *
+ * Exported so TablesPage.tsx's live `order.status_changed` subscriber can invalidate the same
+ * key this hook uses, matching `KITCHEN_ITEMS_QUERY_KEY`'s established exported-cache-key shape.
+ */
+export const OPEN_ORDERS_QUERY_KEY = ["orders", "open"] as const;
+
+/**
+ * Fetches every currently open (non-closed) Order, across every Table (Story 5.3, AC4).
+ *
+ * Backs the Tables grid's need to know, across every occupied Table at once, whether that
+ * Table's Order is `ready`, to render the attention-state tile treatment — one bulk query
+ * resolved client-side into a table_id -> status lookup, not a per-tile request.
+ *
+ * @returns The TanStack Query result for every open Order.
+ */
+export function useOpenOrders(): UseQueryResult<Order[], Error> {
+  return useQuery({
+    queryKey: OPEN_ORDERS_QUERY_KEY,
+    queryFn: () => apiRequest<Order[]>("/api/orders"),
     retry: false,
   });
 }

@@ -11,6 +11,7 @@ from data_models import (
     OrderItem,
     OrderItemResponse,
     OrderItemStatus,
+    OrderResponse,
     OrderStatus,
     RecipeIngredient,
     RestaurantTable,
@@ -175,6 +176,26 @@ class OrderService:
             raise OrderNotFoundError()
         return order
 
+    async def list_open_orders(self, db: AsyncSession, actor: User) -> Sequence[Order]:
+        """List every currently open (non-closed) Order, across every Table (AC4).
+
+        The first bulk Order read in this codebase — every other Order read is scoped to one
+        Table (get_open_order_for_table) or one Order's items. Backs the Tables grid's need to
+        know, across every occupied Table at once, which one has a ready Order (the Story 5.3
+        attention-state tile treatment) without an N+1 per-tile request. No actor-based filtering
+        (AD-9: permissions are Role-level only), actor is accepted only for signature symmetry
+        with every other method in this service, unused otherwise.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter making the request.
+
+        Returns:
+            Every Order whose status is not closed, in id order.
+        """
+        result = await db.execute(select(Order).where(Order.status != OrderStatus.closed).order_by(Order.id))
+        return result.scalars().all()
+
     async def list_items(self, db: AsyncSession, actor: User, order_id: int) -> Sequence[OrderItem]:
         """List every Order Item on an Order, in id order.
 
@@ -249,6 +270,7 @@ class OrderService:
             price_at_add=dish.price,
         )
         db.add(item)
+        updated_order, order_status_changed = await self._recompute_order_status(db, order_id)
         await db.commit()
         await db.refresh(item)
         self._logger.info(
@@ -264,6 +286,9 @@ class OrderService:
             "order.item_added",
             OrderItemResponse.model_validate(item).model_dump(mode="json"),
         )
+        if order_status_changed:
+            assert updated_order is not None  # order_status_changed is only True when it isn't
+            await self._broadcast_order_status_changed(db, updated_order)
         return item
 
     async def edit_item(
@@ -367,6 +392,7 @@ class OrderService:
             await db.rollback()
             raise OrderItemNotCancellableError()
 
+        updated_order, order_status_changed = await self._recompute_order_status(db, order_id)
         await db.commit()
         await db.refresh(item)
         self._logger.info(
@@ -375,6 +401,9 @@ class OrderService:
             order_id,
             item_id,
         )
+        if order_status_changed:
+            assert updated_order is not None  # order_status_changed is only True when it isn't
+            await self._broadcast_order_status_changed(db, updated_order)
         return item
 
     async def pick_up_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
@@ -462,6 +491,7 @@ class OrderService:
             await db.rollback()
             raise
 
+        updated_order, order_status_changed = await self._recompute_order_status(db, order_id)
         await db.commit()
         await db.refresh(item)
         self._logger.info(
@@ -477,6 +507,9 @@ class OrderService:
             "order.item_status_changed",
             OrderItemResponse.model_validate(item).model_dump(mode="json"),
         )
+        if order_status_changed:
+            assert updated_order is not None  # order_status_changed is only True when it isn't
+            await self._broadcast_order_status_changed(db, updated_order)
         for ingredient_id in crossed_ingredient_ids:
             self._logger.info(
                 "Low-stock alert triggered by consumption: ingredient_id={} order_id={} item_id={}",
@@ -532,6 +565,7 @@ class OrderService:
             await db.rollback()
             raise OrderItemNotInPreparationError()
 
+        updated_order, order_status_changed = await self._recompute_order_status(db, order_id)
         await db.commit()
         await db.refresh(item)
         self._logger.info(
@@ -545,7 +579,100 @@ class OrderService:
             "order.item_status_changed",
             OrderItemResponse.model_validate(item).model_dump(mode="json"),
         )
+        if order_status_changed:
+            assert updated_order is not None  # order_status_changed is only True when it isn't
+            await self._broadcast_order_status_changed(db, updated_order)
         return item
+
+    async def _recompute_order_status(self, db: AsyncSession, order_id: int) -> tuple[Order | None, bool]:
+        """Recompute Order.status from its non-cancelled Items (FR-12).
+
+        A pure recomputation, not a guarded transition (AD-6 does not apply): there is no expected
+        prior status to check, only a value to overwrite with whatever the aggregate says right
+        now, converging to the same correct answer however many times it runs *sequentially*.
+        `served`/`closed` are set explicitly (a later story's territory, FR-11/FR-8) and are never
+        overwritten here, forward-safe even though nothing today can ever produce a `served`/
+        `closed` Order yet.
+
+        The Order row is locked (`SELECT ... FOR UPDATE`, trap 9's row-lock idiom, the same
+        pattern `InventoryService._lock_ingredient`/`MenuService._lock_dish` already use) before
+        reading its sibling Items. Without this lock, two concurrent transactions each finishing a
+        *different* Item of the same multi-item Order could each read the other's not-yet-committed
+        Item status, each independently compute "no change" from their own narrow view, and leave
+        Order.status permanently stuck wrong after both commit — the lock forces the second
+        transaction's read to wait for the first's commit, so it sees the first's already-applied
+        change and recomputes correctly. Always acquired after any OrderItem/Ingredient lock this
+        method's callers already hold (never before), so no new lock-ordering/deadlock risk.
+
+        Mutates the given Order's `.status` attribute in place, in the caller's own session, but
+        does not commit — the caller commits this together with the OrderItem write that triggered
+        the recompute, in the same transaction (mirrors AD-6's "things that change together commit
+        together" principle for the stock-deduction path).
+
+        Args:
+            db: The active database session, mid-transaction.
+            order_id: The Order whose status is being recomputed.
+
+        Returns:
+            A tuple of (the Order row, or None if it does not exist; whether this call changed
+            Order.status). The second element is False whenever the first is None.
+        """
+        result = await db.execute(select(Order).where(Order.id == order_id).with_for_update())
+        order = result.scalar_one_or_none()
+        if order is None:
+            return None, False
+        if order.status not in (OrderStatus.pending, OrderStatus.in_preparation, OrderStatus.ready):
+            return order, False
+
+        items_result = await db.execute(
+            select(OrderItem.status).where(
+                OrderItem.order_id == order_id,
+                OrderItem.status != OrderItemStatus.cancelled,
+            )
+        )
+        statuses = items_result.scalars().all()
+
+        if not statuses:
+            new_status = OrderStatus.pending
+        elif all(status == OrderItemStatus.ready for status in statuses):
+            new_status = OrderStatus.ready
+        else:
+            new_status = OrderStatus.in_preparation
+
+        if new_status == order.status:
+            return order, False
+
+        old_status = order.status
+        order.status = new_status
+        self._logger.info(
+            "Order status recomputed: order_id={} status {} -> {}",
+            order_id,
+            old_status.value,
+            new_status.value,
+        )
+        return order, True
+
+    async def _broadcast_order_status_changed(self, db: AsyncSession, order: Order) -> None:
+        """Refresh and broadcast an Order whose derived status just changed (AD-2, AC4).
+
+        Called only when `_recompute_order_status` returned a True changed-flag, after the
+        caller's own `db.commit()`: `db.commit()`'s default `expire_on_commit=True` leaves every
+        attribute on `order` stale, so it is refreshed (resolving the expiry) before building the
+        broadcast payload, the same refresh-after-commit convention every other method in this
+        file already follows for its own `item`. Takes the already-loaded `Order` object directly
+        from `_recompute_order_status` rather than re-fetching it by id, avoiding a second,
+        redundant read of the same row every broadcast would otherwise pay for.
+
+        Args:
+            db: The active database session, just past its own commit.
+            order: The Order whose status changed, as returned by `_recompute_order_status`.
+        """
+        await db.refresh(order)
+        await self._realtime_service.broadcast(
+            [UserRole.waiter],
+            "order.status_changed",
+            OrderResponse.model_validate(order).model_dump(mode="json"),
+        )
 
     async def _get_order(self, db: AsyncSession, actor: User, order_id: int) -> Order:
         """Fetch a single Order by id, or raise if it does not exist.

@@ -20,6 +20,7 @@ import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
 import { useDishes } from "../../services/menuService";
 import {
+  orderForTableQueryKey,
   orderItemsQueryKey,
   useAddOrderItem,
   useCancelOrderItem,
@@ -347,6 +348,10 @@ export function TableOrderDetailPage() {
   // order.item_added rather than folded into one subscribe() call, since
   // useRealtime()'s subscribe is per-event-name. Both invalidate the same
   // key: this page never inspects the payload directly, only refetches.
+  // Story 5.3: order.status_changed is a third, distinct event (the Order's own derived
+  // status, not an item), invalidating this page's `useOrderForTable` query key instead —
+  // that Order object is what first makes `.status` a real, changing field this story adds,
+  // so it needs the same live-refresh treatment every other query on this page already gets.
   useEffect(() => {
     if (order?.id === undefined) {
       return undefined;
@@ -357,11 +362,15 @@ export function TableOrderDetailPage() {
     const unsubscribeItemStatusChanged = subscribe("order.item_status_changed", () => {
       void queryClient.invalidateQueries({ queryKey: orderItemsQueryKey(order.id) });
     });
+    const unsubscribeOrderStatusChanged = subscribe("order.status_changed", () => {
+      void queryClient.invalidateQueries({ queryKey: orderForTableQueryKey(parsedTableId) });
+    });
     return () => {
       unsubscribeItemAdded();
       unsubscribeItemStatusChanged();
+      unsubscribeOrderStatusChanged();
     };
-  }, [subscribe, queryClient, order?.id]);
+  }, [subscribe, queryClient, order?.id, parsedTableId]);
   const dishesQuery = useDishes();
   const { data: dishes } = dishesQuery;
   // Reused rather than fetched per-table: the Tables grid this page is reached from has already

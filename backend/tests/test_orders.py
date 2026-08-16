@@ -1,7 +1,8 @@
+import asyncio
 from decimal import Decimal
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +11,7 @@ from data_models import (
     Order,
     OrderItem,
     OrderItemStatus,
+    OrderStatus,
     RecipeIngredient,
     RestaurantTable,
     StockMovement,
@@ -19,6 +21,7 @@ from data_models import (
     UserRole,
 )
 from data_models.order import MAX_ORDER_ITEM_QUANTITY
+from main import app
 from services.auth_service import AuthService
 from services.order_service import OrderService
 
@@ -1537,3 +1540,265 @@ async def test_race_between_two_pick_ups_only_one_succeeds_and_deducts_once(
     assert updated_ingredient.current_stock == Decimal("10.000")
     movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
     assert len(movements.scalars().all()) == 0
+
+
+# --- Story 5.3: Order.status derivation (FR-12) -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_order_status_round_trips_pending_to_in_preparation_and_back(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: a freshly opened Order is pending by default (zero items). Adding one pending
+    # item is not "zero non-cancelled items" and not "every item ready", so the aggregate is
+    # in_preparation (AC1's "anything else" bucket, exercised here with a single pending item,
+    # not just a mix). Cancelling that same item brings the non-cancelled count back to zero,
+    # returning the Order to pending (AC3) — not "stuck" at in_preparation, proving the
+    # recompute actually re-derives on every change rather than only moving forward.
+    dish = await _create_available_dish(client, db_session, name="Round Trip Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=70)
+
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.pending
+
+    # Act: add the item.
+    item = await _add_item(client, order["id"], dish["id"])
+
+    # Assert
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.in_preparation
+
+    # Act: cancel it back out.
+    cancel_response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+    assert cancel_response.status_code == 200
+
+    # Assert
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.pending
+
+
+@pytest.mark.asyncio
+async def test_order_reaches_ready_only_once_every_item_is_ready(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: two items on one Order.
+    dish = await _create_available_dish(client, db_session, name="All Ready Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=71)
+    item_one = await _add_item(client, order["id"], dish["id"])
+    item_two = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "order-ready-cook")
+
+    # Act: bring only the first item to ready.
+    pick_up_one = await client.post(f"/api/orders/{order['id']}/items/{item_one['id']}/pick-up")
+    assert pick_up_one.status_code == 200
+    ready_one = await client.post(f"/api/orders/{order['id']}/items/{item_one['id']}/mark-ready")
+    assert ready_one.status_code == 200
+
+    # Assert: one ready, one still pending — the mix case (AC1), not ready yet.
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.in_preparation
+
+    # Act: bring the second item to ready too.
+    pick_up_two = await client.post(f"/api/orders/{order['id']}/items/{item_two['id']}/pick-up")
+    assert pick_up_two.status_code == 200
+    ready_two = await client.post(f"/api/orders/{order['id']}/items/{item_two['id']}/mark-ready")
+    assert ready_two.status_code == 200
+
+    # Assert: both non-cancelled items are ready — the Order now reads ready (AC2).
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.ready
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_remaining_pending_item_pushes_the_order_to_ready(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: one item ready, a second still pending — the Order reads in_preparation (AC1).
+    dish = await _create_available_dish(client, db_session, name="Cancel To Ready Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=72)
+    ready_item = await _add_item(client, order["id"], dish["id"])
+    pending_item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "cancel-to-ready-cook")
+
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{ready_item['id']}/pick-up")
+    assert pick_up.status_code == 200
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/{ready_item['id']}/mark-ready")
+    assert mark_ready.status_code == 200
+
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.in_preparation
+
+    # Act: cancel the still-pending item (cook cancelling is permitted, Story 3.4) — the only
+    # non-cancelled item left is ready, so the aggregate flips to ready (AC2/FR-12), a case that
+    # is reached by a cancel, not by every item independently reaching ready.
+    cancel_response = await client.post(f"/api/orders/{order['id']}/items/{pending_item['id']}/cancel")
+    assert cancel_response.status_code == 200
+
+    # Assert
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.ready
+
+
+@pytest.mark.asyncio
+async def test_adding_a_new_item_pulls_a_ready_order_back_to_in_preparation(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: a single-item Order taken all the way to ready.
+    dish = await _create_available_dish(client, db_session, name="Pulled Back Dish")
+    order, waiter, _table = await _open_table(client, db_session, table_number=73)
+    # Captured now, as a plain str, not read off the ORM object after the expire_all() calls
+    # below: an attribute access on an ORM instance post-expire triggers a synchronous
+    # lazy-load an AsyncSession cannot perform outside an explicit await (MissingGreenlet).
+    waiter_username = waiter.username
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "pulled-back-cook")
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert pick_up.status_code == 200
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")
+    assert mark_ready.status_code == 200
+
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.ready
+
+    # Act: the Waiter adds a brand-new pending item to the same, already-ready Order.
+    await _login(client, waiter_username)
+    await _add_item(client, order["id"], dish["id"])
+
+    # Assert: the new pending item pulls the aggregate back down (AC1/FR-12) — a ready Order is
+    # not "sticky", it re-derives on every item-set change, including an addition.
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.in_preparation
+
+
+@pytest.mark.asyncio
+async def test_get_open_orders_lists_every_non_closed_order(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: two open Orders on two different Tables.
+    order_a, waiter, _table_a = await _open_table(client, db_session, table_number=74)
+    order_b, _waiter_b, _table_b = await _open_table(client, db_session, table_number=75)
+
+    # Act
+    await _login(client, waiter.username)
+    response = await client.get("/api/orders")
+
+    # Assert
+    assert response.status_code == 200
+    order_ids = {order["id"] for order in response.json()}
+    assert order_a["id"] in order_ids
+    assert order_b["id"] in order_ids
+
+
+@pytest.mark.asyncio
+async def test_get_open_orders_is_empty_when_no_orders_are_open(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as_waiter(client, db_session, "no-open-orders-waiter")
+
+    # Act
+    response = await client.get("/api/orders")
+
+    # Assert: an empty list, not a 404.
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_get_open_orders_role_coverage(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=76)
+
+    # Act/Assert: waiter can list.
+    response = await client.get("/api/orders")
+    assert response.status_code == 200
+
+    # Act/Assert: cook, admin, and warehouse_manager cannot (OrdersDep is Waiter-only, no Admin
+    # fallback, matching every other route in this file gated on it).
+    await _create_user(db_session, "open-orders-cook", UserRole.cook)
+    await _login(client, "open-orders-cook")
+    assert (await client.get("/api/orders")).status_code == 403
+
+    await _login_as_admin(client, db_session, "open-orders-admin")
+    assert (await client.get("/api/orders")).status_code == 403
+
+    await _create_user(db_session, "open-orders-wm", UserRole.warehouse_manager)
+    await _login(client, "open-orders-wm")
+    assert (await client.get("/api/orders")).status_code == 403
+
+    # Act/Assert: unauthenticated is rejected.
+    client.cookies.clear()
+    assert (await client.get("/api/orders")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_recompute_does_not_touch_a_served_or_closed_order(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: an Order forced to `served` directly (no code path can produce this yet, that's
+    # Story 5.4's job) with a still-pending item. If _recompute_order_status's served/closed
+    # no-op guard were ever broken, cancelling that item would wrongly revert this Order back to
+    # `pending` (zero non-cancelled items left) instead of leaving it untouched (code review
+    # finding, Story 5.3: this guard previously shipped with zero test coverage).
+    dish = await _create_available_dish(client, db_session, name="Served Guard Dish")
+    order, waiter, _table = await _open_table(client, db_session, table_number=78)
+    waiter_username = waiter.username
+    item = await _add_item(client, order["id"], dish["id"])
+
+    db_order = await db_session.get(Order, order["id"])
+    db_order.status = OrderStatus.served
+    await db_session.commit()
+
+    # Act
+    await _login(client, waiter_username)
+    cancel_response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
+    assert cancel_response.status_code == 200
+
+    # Assert: still served, not reverted to pending.
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.served
+
+
+@pytest.mark.asyncio
+async def test_concurrent_mark_ready_on_sibling_items_converges_order_to_ready(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: two items on one Order, both already in_preparation. Code review finding, Story
+    # 5.3: without a row lock, two transactions each finishing a *different* item of the same
+    # Order can each read the other's not-yet-committed item status, each independently compute
+    # "no change" from their own stale view, and leave Order.status stuck wrong after both
+    # commit — even though every item is actually ready. _recompute_order_status now locks the
+    # Order row (SELECT ... FOR UPDATE, trap 9) before reading its items, which forces whichever
+    # transaction runs second to wait for the first's commit and see its already-applied change.
+    dish = await _create_available_dish(client, db_session, name="Concurrent Ready Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=79)
+    item_one = await _add_item(client, order["id"], dish["id"])
+    item_two = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "concurrent-ready-cook")
+
+    pick_up_one = await client.post(f"/api/orders/{order['id']}/items/{item_one['id']}/pick-up")
+    pick_up_two = await client.post(f"/api/orders/{order['id']}/items/{item_two['id']}/pick-up")
+    assert pick_up_one.status_code == 200
+    assert pick_up_two.status_code == 200
+
+    # Act: mark both items ready at the same time. A genuine concurrency test, not a
+    # monkeypatched sequential interleave (trap 18's usual technique) — the mechanism under test
+    # is a real DB-level row lock, which a single-threaded interleave cannot exercise. Two
+    # independent AsyncClients (each backed by its own ASGITransport onto the same app) so each
+    # request gets its own DB session/transaction, matching how two concurrent requests behave
+    # in production regardless of which actor issues them.
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://test", cookies=client.cookies
+    ) as second_client:
+        first_response, second_response = await asyncio.gather(
+            client.post(f"/api/orders/{order['id']}/items/{item_one['id']}/mark-ready"),
+            second_client.post(f"/api/orders/{order['id']}/items/{item_two['id']}/mark-ready"),
+        )
+
+    # Assert: both transitions succeeded, and Order.status converged to ready regardless of
+    # which transaction's recompute actually ran first — the row lock guarantees this
+    # deterministically, not just "usually."
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.ready

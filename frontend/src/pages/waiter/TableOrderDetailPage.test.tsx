@@ -387,6 +387,30 @@ describe("TableOrderDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Mark ready" })).not.toBeInTheDocument();
   });
 
+  it("refetches the Order when a live order.status_changed event arrives", async () => {
+    // Arrange: this page renders no Order-level status badge itself (Story 5.3), so this
+    // asserts the underlying order lookup actually refetches in response to the event, the
+    // same live-refresh treatment every other query on this page already gets, not any new
+    // visible element.
+    let order = ORDER;
+    const fetchMock = vi.fn((url: string) => stubReads({ order: jsonResponse(200, order) })(url));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Act
+    renderPage();
+    await screen.findByText("No items added yet.");
+    const orderLookupCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/orders/tables/")).length;
+    const callsBeforeEvent = orderLookupCalls();
+    order = { ...ORDER, status: "ready" };
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    socket.onmessage?.({ data: JSON.stringify({ event: "order.status_changed", payload: order }) });
+
+    // Assert: a second order lookup was issued in response to the event.
+    await vi.waitFor(() => expect(orderLookupCalls()).toBeGreaterThan(callsBeforeEvent));
+  });
+
   it("edits a pending item, always sending both quantity and note", async () => {
     // Arrange: the mock echoes the submitted body back, matching the add-item
     // test's own "never hardcode what the page sent" pattern, so a page that
