@@ -597,3 +597,66 @@
   `TablesPage.tsx`/`TableOrderDetailPage.tsx`'s existing precedent, but that precedent itself was
   never verified this way either. **Action:** low priority, same test-coverage gap in both places;
   revisit if double-fetching is ever observed for real (e.g. in Network tab during manual testing).
+
+## Deferred from: code review of story-4-3 (2026-08-16)
+
+- **An Admin viewing `IngredientsPage.tsx` gets correct shortage highlighting on initial load, but
+  no live re-highlighting/re-sorting while they stay on the page.** `frontend/src/pages/warehouse/
+  IngredientsPage.tsx`'s own `useAlerts()` call is unconditionally enabled for both `admin` and
+  `warehouse_manager` (both can reach this route). But the backend
+  (`backend/services/inventory_service.py`'s `record_movement`) only ever broadcasts
+  `inventory.alerts_changed` to `[UserRole.warehouse_manager]`, and `AppShell.tsx`'s subscription
+  is hard-gated the same way (`if (!isWarehouseManager) return`). No AC in Story 4.3 (or 4.2) asks
+  for Admin to receive live updates — only "Warehouse Manager" is named throughout — so this is a
+  real but out-of-scope gap, not a regression against any stated requirement. **Action:** if a
+  future story ever puts Admin on this screen as a primary, not incidental, user, widen the
+  broadcast target to `[UserRole.warehouse_manager, UserRole.admin]` in `record_movement` and drop
+  the `isWarehouseManager` gate in `AppShell.tsx`'s subscription (the `useAlerts()` gate can likely
+  stay, since Admin already fetches unconditionally on `IngredientsPage.tsx`).
+- **`IngredientsPage.tsx`'s combined error message always prefers `ingredientsError` over
+  `alertsError`** (`const loadError = ingredientsError ?? alertsError`) when both queries fail
+  simultaneously with distinct causes. Low impact — both funnel through the same generic
+  `ApiError`/`GENERIC_ERROR_MESSAGE` shape today — but it silently drops whichever message wasn't
+  chosen. **Action:** concatenate both messages if this ever causes real diagnostic confusion in
+  practice; not worth the complexity preemptively.
+
+## Deferred from: code review of story-5-1 (2026-08-16)
+
+- **`KitchenService.list_active_items` has no pagination or bound** — every non-cancelled
+  `OrderItem` in the entire restaurant is returned in one response, with no `LIMIT` and (as
+  already documented in the story/service docstring) no `Order.status` filter to retire
+  served/closed orders once Stories 5.3/5.4 exist. Fine at this project's stated demo/NFR-5 scale;
+  in a long-running deployment this becomes an ever-growing, unbounded query well before 5.3/5.4
+  close the correctness gap. **Action:** revisit once Stories 5.3/5.4 add the `Order.status`
+  filter — at that point the result set is naturally bounded to genuinely active orders again, so
+  this may resolve itself as a side effect rather than needing separate pagination work.
+- **`KitchenItemResponse` carries `price_at_add` and `order_id` to a read-only Kitchen Display that
+  never renders either** — the story mandated "OrderItemResponse's exact field set plus table_id"
+  verbatim, a deliberate reuse-over-narrowing choice, consistent with this codebase's Role-level-
+  only permissions model (no per-field filtering exists anywhere). Not a security bug, just an
+  unweighed least-privilege tradeoff. **Action:** define a narrower response shape only if a future
+  story's requirements make the unused fields actually matter (e.g. an audit concern), not
+  speculatively.
+- **No tripwire (TODO/xfail marker) forces `test_kitchen.py` to be revisited once Stories 5.3/5.4
+  add the `Order.status` filter this story's own docstring already predicts will be needed** — the
+  gap is well-documented in three places (story Scope note, Dev Agent Record, service docstring),
+  but nothing in the test suite itself would fail or flag once the filter should have been added.
+  **Action:** whichever of 5.3/5.4 lands first should extend `test_kitchen.py` with a served/closed-
+  order exclusion test at that point; no action needed before then.
+
+## Deferred from: code review of story-5-2 (2026-08-16)
+
+- **`Order.status` is still never derived from its items' statuses** (CLAUDE.md's own stated
+  business rule) — an Order can sit at `pending` forever while every one of its Order Items reaches
+  `ready`, since neither `pick_up_item`/`mark_item_ready` (this story) nor `cancel_item`/`edit_item`
+  (Story 3.4) ever touch or recompute `Order.status`. Pre-existing, not introduced by this story.
+  **Action:** this is explicitly Story 5.3's own scope ("Order Status Derives From Its Items") —
+  no action needed before then.
+- **A Dish can reach zero `RecipeIngredient` rows while a `pending` Order Item still references
+  it**, letting a pick-up silently succeed with zero stock deduction — `CannotRemoveLastRecipeIngredientError`'s
+  guard only fires while the Dish `is_available`, so an admin can disable a Dish, then remove its
+  remaining Recipe Ingredients, without anything checking whether a still-pending Order Item
+  already references that Dish. Pre-existing recipe/dish-integrity gap, not introduced by this
+  story. **Action:** would need a broader look at Dish/Recipe deletion guards (e.g. blocking
+  Recipe-Ingredient removal while any non-terminal Order Item references the Dish, regardless of
+  availability) — no immediate action, narrow edge case at this project's demo scale.

@@ -28,6 +28,7 @@ container.wire(
         "api.menu",
         "api.tables",
         "api.orders",
+        "api.kitchen",
     ]
 )
 
