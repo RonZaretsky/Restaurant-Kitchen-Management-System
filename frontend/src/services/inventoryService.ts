@@ -27,6 +27,11 @@ const INGREDIENTS_QUERY_KEY = ["inventory", "ingredients"] as const;
 const ingredientQueryKey = (id: number | null) => ["inventory", "ingredients", id] as const;
 const movementsQueryKey = (id: number | null) => ["inventory", "ingredients", id, "movements"] as const;
 
+// Exported (Story 4.2), mirrors TABLES_QUERY_KEY/DISHES_QUERY_KEY's cross-file-export
+// precedent: both AppShell.tsx's nav badge and AlertsPage.tsx's list independently
+// subscribe to inventory.alerts_changed and need to invalidate this same key.
+export const ALERTS_QUERY_KEY = ["inventory", "alerts"] as const;
+
 /**
  * Fetches every Ingredient.
  *
@@ -44,6 +49,26 @@ export function useIngredients(): UseQueryResult<Ingredient[], Error> {
     // Matches authService's deliberate opt-out. The app-level QueryClient sets no
     // retry, so the default of 3 attempts with backoff would turn a 401/403/404
     // into four requests and a multi-second wait before the error state settles.
+    retry: false,
+  });
+}
+
+/**
+ * Fetches every Ingredient currently in shortage (FR-14, Story 4.2).
+ *
+ * @param enabled - Whether the query should run at all. AppShell.tsx calls this
+ *   unconditionally (hooks cannot be called conditionally) but only a
+ *   warehouse_manager has an Alerts nav item to badge, so it passes `false` for
+ *   every other Role rather than firing a request that would only 403.
+ *   AlertsPage.tsx, reachable only by a warehouse_manager (route guard), omits
+ *   this and always fetches.
+ * @returns The TanStack Query result for the derived low-stock alert list.
+ */
+export function useAlerts(enabled = true): UseQueryResult<Ingredient[], Error> {
+  return useQuery({
+    queryKey: ALERTS_QUERY_KEY,
+    queryFn: () => apiRequest<Ingredient[]>("/api/inventory/alerts"),
+    enabled,
     retry: false,
   });
 }

@@ -567,3 +567,33 @@
   no inline text explaining why until a type is also chosen. Minor; the form's own layout makes the
   missing selection fairly self-evident. **Action:** add a helper text or select-level error state
   if this proves confusing in manual testing.
+
+## Deferred from: code review of story-4-2 (2026-08-16)
+
+- **`FakeWebSocket` is now duplicated across a third and fourth test file**
+  (`frontend/src/pages/warehouse/AlertsPage.test.tsx`, `frontend/src/components/shell/AppShell.test.tsx`),
+  crossing the "if a fourth test file needs the same double" threshold this file's own Story 3.3
+  entry named as the trigger to finally extract it. **Action:** extract to a shared
+  `src/testUtils/FakeWebSocket.ts` the next time any of these four files is touched, rather than
+  copying it a fifth time.
+- **`AppShell.tsx`'s Alerts nav badge has no visible fallback when `useAlerts` fails** (a network
+  error, 5xx, etc.) — only `data` is destructured from the query result, so a failed fetch leaves
+  `alerts` `undefined` forever and the badge renders as invisible/zero, indistinguishable from "no
+  active shortages." Low severity (the failure mode is silently conservative, never shows a false
+  alert), but UX-DR5's whole premise is that Noa can trust this badge without checking the screen
+  itself. **Action:** surface `isError` somehow (an alternate badge color/icon, or at minimum log
+  it) if this proves to be a real operational gap; no AC in Story 4.2 asked for it, so it wasn't
+  built speculatively.
+- **`InventoryService.list_alerts` has no index backing `current_stock < min_stock_threshold`** —
+  a full table scan on every warehouse_manager `AppShell` mount, every `AlertsPage` load, and every
+  crossing broadcast's resulting refetch. Fine at this project's stated demo/NFR-5 scale, the same
+  call already made for `add_item`'s no-batching gap elsewhere in this file. **Action:** add a
+  partial index (`WHERE current_stock < min_stock_threshold` isn't expressible as a static partial
+  index since both sides are columns, so this would need a computed/generated boolean column) only
+  if the ingredient count ever grows past what a full scan handles instantly.
+- **No test mounts both `AppShell.tsx` and `AlertsPage.tsx` together to verify their two independent
+  `inventory.alerts_changed` subscriptions collapse into one network request via TanStack Query's
+  de-dupe**, rather than firing two. The story asserts this is "fine" by citing
+  `TablesPage.tsx`/`TableOrderDetailPage.tsx`'s existing precedent, but that precedent itself was
+  never verified this way either. **Action:** low priority, same test-coverage gap in both places;
+  revisit if double-fetching is ever observed for real (e.g. in Network tab during manual testing).

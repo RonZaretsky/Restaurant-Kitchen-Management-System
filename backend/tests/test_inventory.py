@@ -768,3 +768,196 @@ async def test_omitting_notes_on_a_movement_defaults_to_null(client: AsyncClient
     # Assert
     assert response.status_code == 201
     assert response.json()["notes"] is None
+
+
+@pytest.mark.asyncio
+async def test_alerts_is_empty_when_nothing_is_in_shortage(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    await _create_ingredient(client, "Rice", current_stock="10.000", min_stock_threshold="1.000")
+
+    # Act
+    response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_a_waste_movement_that_crosses_below_threshold_appears_in_alerts(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    ingredient = await _create_ingredient(client, "Basil", current_stock="5.000", min_stock_threshold="3.000")
+
+    # Act
+    response = await client.post(
+        f"/api/inventory/ingredients/{ingredient['id']}/movements",
+        json={"movement_type": "waste", "quantity": "3.000"},
+    )
+    alerts_response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 201
+    alerts = alerts_response.json()
+    assert len(alerts) == 1
+    assert alerts[0]["id"] == ingredient["id"]
+    assert alerts[0]["current_stock"] == "2.000"
+
+
+@pytest.mark.asyncio
+async def test_a_negative_adjustment_that_crosses_below_threshold_appears_in_alerts(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    ingredient = await _create_ingredient(client, "Oregano", current_stock="5.000", min_stock_threshold="3.000")
+
+    # Act
+    response = await client.post(
+        f"/api/inventory/ingredients/{ingredient['id']}/movements",
+        json={"movement_type": "adjustment", "quantity": "-3.000"},
+    )
+    alerts_response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 201
+    alerts = alerts_response.json()
+    assert len(alerts) == 1
+    assert alerts[0]["id"] == ingredient["id"]
+
+
+@pytest.mark.asyncio
+async def test_an_ingredient_exactly_at_threshold_is_not_in_shortage(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    ingredient = await _create_ingredient(client, "Thyme", current_stock="5.000", min_stock_threshold="3.000")
+
+    # Act: lands exactly at threshold, not below it.
+    response = await client.post(
+        f"/api/inventory/ingredients/{ingredient['id']}/movements",
+        json={"movement_type": "waste", "quantity": "2.000"},
+    )
+    alerts_response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 201
+    assert alerts_response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_a_second_waste_movement_while_already_in_shortage_does_not_duplicate_the_alert(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    ingredient = await _create_ingredient(client, "Paprika", current_stock="5.000", min_stock_threshold="3.000")
+    first = await client.post(
+        f"/api/inventory/ingredients/{ingredient['id']}/movements",
+        json={"movement_type": "waste", "quantity": "3.000"},
+    )
+    assert first.status_code == 201
+
+    # Act: already below threshold, this movement drives it further below, not across.
+    second = await client.post(
+        f"/api/inventory/ingredients/{ingredient['id']}/movements",
+        json={"movement_type": "waste", "quantity": "1.000"},
+    )
+    alerts_response = await client.get("/api/inventory/alerts")
+
+    # Assert: still exactly one alert row for this ingredient, not two.
+    assert second.status_code == 201
+    alerts = [a for a in alerts_response.json() if a["id"] == ingredient["id"]]
+    assert len(alerts) == 1
+    assert alerts[0]["current_stock"] == "1.000"
+
+
+@pytest.mark.asyncio
+async def test_a_purchase_that_brings_stock_back_above_threshold_clears_the_alert(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    ingredient = await _create_ingredient(client, "Cinnamon", current_stock="1.000", min_stock_threshold="3.000")
+
+    # Act
+    response = await client.post(
+        f"/api/inventory/ingredients/{ingredient['id']}/movements",
+        json={"movement_type": "purchase", "quantity": "5.000"},
+    )
+    alerts_response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 201
+    alerts = [a for a in alerts_response.json() if a["id"] == ingredient["id"]]
+    assert len(alerts) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_purchase_landing_exactly_at_threshold_also_clears_the_alert(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    ingredient = await _create_ingredient(client, "Nutmeg", current_stock="1.000", min_stock_threshold="3.000")
+
+    # Act: lands exactly at threshold.
+    response = await client.post(
+        f"/api/inventory/ingredients/{ingredient['id']}/movements",
+        json={"movement_type": "purchase", "quantity": "2.000"},
+    )
+    alerts_response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 201
+    alerts = [a for a in alerts_response.json() if a["id"] == ingredient["id"]]
+    assert len(alerts) == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_can_read_alerts(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.admin, "admin1")
+
+    # Act
+    response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_cook_can_read_alerts(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_waiter_cannot_read_alerts(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.waiter, "maya")
+
+    # Act
+    response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_cannot_read_alerts(client: AsyncClient) -> None:
+    # Act
+    response = await client.get("/api/inventory/alerts")
+
+    # Assert
+    assert response.status_code == 401

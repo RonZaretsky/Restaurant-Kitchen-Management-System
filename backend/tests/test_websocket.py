@@ -14,7 +14,7 @@ from websockets.exceptions import ConnectionClosed
 
 import api.websocket as websocket_module
 from constants import SETTINGS
-from data_models import Category, Dish, RestaurantTable, TableStatus, User, UserRole
+from data_models import Category, Dish, Ingredient, RestaurantTable, TableStatus, Unit, User, UserRole
 from main import app, container
 from services.auth_service import COOKIE_NAME, AuthService
 from utils import load_config
@@ -432,3 +432,124 @@ async def test_unserializable_payload_does_not_unsubscribe_the_client(db_session
             await realtime_service.broadcast([UserRole.cook], "test.good", {"ok": True})
             message = await asyncio.wait_for(ws.recv(), timeout=2)
             assert json.loads(message) == {"event": "test.good", "payload": {"ok": True}}
+
+
+@pytest.mark.asyncio
+async def test_a_movement_crossing_below_threshold_broadcasts_alerts_changed(db_session) -> None:
+    # Arrange
+    ingredient = Ingredient(name="Saffron", unit=Unit.kg, current_stock="5.000", min_stock_threshold="3.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    await _create_user(db_session, "ws_alert_wm", role=UserRole.warehouse_manager)
+    await _create_user(db_session, "ws_alert_cook", role=UserRole.cook)
+
+    async with _running_server() as port:
+        wm_token = await _login_over_http(port, "ws_alert_wm")
+        cook_token = await _login_over_http(port, "ws_alert_cook")
+
+        async with await _connect(port, wm_token) as wm_ws:
+            async with await _connect(port, cook_token) as cook_ws:
+                # Act
+                async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+                    http_client.cookies.set(COOKIE_NAME, wm_token)
+                    response = await http_client.post(
+                        f"/api/inventory/ingredients/{ingredient.id}/movements",
+                        json={"movement_type": "waste", "quantity": "3.000"},
+                    )
+                assert response.status_code == 201
+
+                # Assert
+                message = await asyncio.wait_for(wm_ws.recv(), timeout=2)
+                assert json.loads(message) == {
+                    "event": "inventory.alerts_changed",
+                    "payload": {"ingredient_id": ingredient.id},
+                }
+
+                # Assert: warehouse_manager-scoped, a Cook (also permitted to read
+                # /alerts, but not a UI consumer of it) receives nothing.
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(cook_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_a_movement_that_does_not_cross_threshold_broadcasts_nothing(db_session) -> None:
+    # Arrange: comfortably above threshold both before and after.
+    ingredient = Ingredient(name="Vanilla", unit=Unit.kg, current_stock="10.000", min_stock_threshold="1.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    await _create_user(db_session, "ws_no_cross_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        wm_token = await _login_over_http(port, "ws_no_cross_wm")
+
+        async with await _connect(port, wm_token) as wm_ws:
+            # Act
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+                http_client.cookies.set(COOKIE_NAME, wm_token)
+                response = await http_client.post(
+                    f"/api/inventory/ingredients/{ingredient.id}/movements",
+                    json={"movement_type": "purchase", "quantity": "5.000"},
+                )
+            assert response.status_code == 201
+
+            # Assert: no crossing, nothing broadcast.
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_a_second_movement_while_already_in_shortage_broadcasts_nothing(db_session) -> None:
+    # Arrange: already below threshold before this test's own movement lands.
+    ingredient = Ingredient(name="Cardamom", unit=Unit.kg, current_stock="1.000", min_stock_threshold="3.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    await _create_user(db_session, "ws_already_low_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        wm_token = await _login_over_http(port, "ws_already_low_wm")
+
+        async with await _connect(port, wm_token) as wm_ws:
+            # Act: still below threshold after, no crossing.
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+                http_client.cookies.set(COOKIE_NAME, wm_token)
+                response = await http_client.post(
+                    f"/api/inventory/ingredients/{ingredient.id}/movements",
+                    json={"movement_type": "waste", "quantity": "0.500"},
+                )
+            assert response.status_code == 201
+
+            # Assert
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_a_purchase_that_reduces_but_does_not_clear_a_shortage_broadcasts_nothing(db_session) -> None:
+    # Arrange: already below threshold before this test's own movement lands.
+    # The symmetric case to test_a_second_movement_while_already_in_shortage_broadcasts_nothing
+    # above, but with an increasing movement instead of a decreasing one.
+    ingredient = Ingredient(name="Fennel", unit=Unit.kg, current_stock="0.500", min_stock_threshold="3.000")
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    await _create_user(db_session, "ws_reduces_shortage_wm", role=UserRole.warehouse_manager)
+
+    async with _running_server() as port:
+        wm_token = await _login_over_http(port, "ws_reduces_shortage_wm")
+
+        async with await _connect(port, wm_token) as wm_ws:
+            # Act: still below threshold after (0.500 + 1.000 = 1.500, threshold 3.000), no crossing.
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+                http_client.cookies.set(COOKIE_NAME, wm_token)
+                response = await http_client.post(
+                    f"/api/inventory/ingredients/{ingredient.id}/movements",
+                    json={"movement_type": "purchase", "quantity": "1.000"},
+                )
+            assert response.status_code == 201
+
+            # Assert
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(wm_ws.recv(), timeout=0.5)

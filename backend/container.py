@@ -74,11 +74,6 @@ class Container(containers.DeclarativeContainer):
         logger=logging,
     )
 
-    inventory_service = providers.Factory(
-        InventoryService,
-        logger=logging,
-    )
-
     menu_service = providers.Factory(
         MenuService,
         logger=logging,
@@ -97,13 +92,19 @@ class Container(containers.DeclarativeContainer):
         logger=logging,
     )
 
-    # order_service must stay below realtime_service: these are plain Python
-    # class-body assignments evaluated top to bottom, so injecting
+    # order_service and inventory_service must stay below realtime_service: these are
+    # plain Python class-body assignments evaluated top to bottom, so injecting
     # realtime_service into a provider declared above it raises NameError at
     # import time. Any future provider that depends on another must be
     # declared after it, the same way.
     order_service = providers.Factory(
         OrderService,
+        logger=logging,
+        realtime_service=realtime_service,
+    )
+
+    inventory_service = providers.Factory(
+        InventoryService,
         logger=logging,
         realtime_service=realtime_service,
     )

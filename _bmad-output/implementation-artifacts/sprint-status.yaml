@@ -92,7 +92,7 @@ development_status:
   # Epic 4: Warehouse Inventory Operations & Low-Stock Alerts
   epic-4: in-progress
   4-1-record-manual-stock-movements: done
-  4-2-low-stock-alert: backlog
+  4-2-low-stock-alert: done
   4-3-view-ingredient-stock-levels: backlog
   epic-4-retrospective: optional
 

@@ -5,26 +5,32 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import CreateIngredientRequest, CreateStockMovementRequest, Ingredient, MovementType, StockMovement, User
+from data_models import CreateIngredientRequest, CreateStockMovementRequest, Ingredient, MovementType, StockMovement, User, UserRole
 from exceptions import DuplicateIngredientNameError, IngredientNotFoundError
+from services.realtime_service import RealtimeService
 
 
 class InventoryService:
     """Creates and manages Ingredient records.
 
-    Config-free, so it is registered as a container-level Factory with only
-    the logger injected. Per-request state such as the DB session is passed
-    into each method as an argument, never held on the instance, matching
-    UserService's shape.
+    Config-free apart from realtime_service, so it is registered as a
+    container-level Factory with the logger and realtime_service injected.
+    Per-request state such as the DB session is passed into each method as an
+    argument, never held on the instance, matching UserService's shape.
     """
 
-    def __init__(self, logger: Any) -> None:
+    def __init__(self, logger: Any, realtime_service: RealtimeService) -> None:
         """Initialize the service.
 
         Args:
             logger: The loguru logger injected from the container.
+            realtime_service: Injected push-notification service, used to
+                broadcast inventory.alerts_changed when a Stock Movement
+                crosses an Ingredient's shortage threshold in either
+                direction (Story 4.2).
         """
         self._logger = logger
+        self._realtime_service = realtime_service
 
     async def list_ingredients(self, db: AsyncSession) -> Sequence[Ingredient]:
         """List every Ingredient.
@@ -39,6 +45,31 @@ class InventoryService:
             Every Ingredient row, in id order.
         """
         result = await db.execute(select(Ingredient).order_by(Ingredient.id))
+        return result.scalars().all()
+
+    async def list_alerts(self, db: AsyncSession) -> Sequence[Ingredient]:
+        """List every Ingredient currently in shortage (FR-14).
+
+        A Low-Stock Alert is a derived state, not a stored entity (see the
+        story's Scope note): an Ingredient is "in shortage" whenever its
+        current_stock is strictly below its min_stock_threshold, computed
+        fresh on every call. There is nothing to create, dedupe, or clear —
+        at most one row per Ingredient exists to begin with, so "at most one
+        active alert per Ingredient" and "no manual dismiss" both hold by
+        construction.
+
+        Args:
+            db: The active database session.
+
+        Returns:
+            Every Ingredient currently below its own min_stock_threshold,
+            ordered by name.
+        """
+        result = await db.execute(
+            select(Ingredient)
+            .where(Ingredient.current_stock < Ingredient.min_stock_threshold)
+            .order_by(Ingredient.name)
+        )
         return result.scalars().all()
 
     async def create_ingredient(
@@ -156,6 +187,13 @@ class InventoryService:
         already signed. current_stock is never floor-capped at zero (AD-16): a waste or negative
         adjustment is applied in full even past zero.
 
+        Story 4.2: broadcasts inventory.alerts_changed to warehouse_manager connections, but only
+        when this movement crosses the shortage threshold in either direction (current_stock <
+        min_stock_threshold flips), not on every movement. was_low is read for free from the
+        Ingredient row _lock_ingredient already loaded, no extra query; is_low still costs the
+        same db.refresh() this method already performs for its own return value, not a new
+        round-trip added by the crossing check itself.
+
         Args:
             db: The active database session.
             actor: The Warehouse Manager or Admin logging the movement.
@@ -177,6 +215,8 @@ class InventoryService:
                 ingredient_id,
             )
             raise
+
+        was_low = ingredient.current_stock < ingredient.min_stock_threshold
 
         delta = -payload.quantity if payload.movement_type == MovementType.waste else payload.quantity
         ingredient.current_stock = ingredient.current_stock + delta
@@ -200,6 +240,22 @@ class InventoryService:
             delta,
             ingredient.current_stock,
         )
+
+        is_low = ingredient.current_stock < ingredient.min_stock_threshold
+        if was_low != is_low:
+            self._logger.info(
+                "Low-stock alert {} for ingredient_id={}: current_stock={} min_stock_threshold={}",
+                "activated" if is_low else "cleared",
+                ingredient_id,
+                ingredient.current_stock,
+                ingredient.min_stock_threshold,
+            )
+            await self._realtime_service.broadcast(
+                [UserRole.warehouse_manager],
+                "inventory.alerts_changed",
+                {"ingredient_id": ingredient_id},
+            )
+
         return movement
 
     async def _get_ingredient(self, db: AsyncSession, ingredient_id: int) -> Ingredient:

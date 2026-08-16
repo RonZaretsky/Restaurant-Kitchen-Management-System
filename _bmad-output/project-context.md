@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is under way: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is under way: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only.**
 
 ```
 backend/
@@ -82,7 +82,10 @@ backend/
                      matching api/orders.py's TableIdPath/OrderIdPath/ItemIdPath shape; api/menu.py
                      already declares its own same-named IngredientIdPath independently for its
                      recipe-ingredient routes, the two are unrelated module-level constants that
-                     happen to share a name, not one shared definition
+                     happen to share a name, not one shared definition. Story 4.2 added
+                     GET /alerts, also on InventoryReadDep (admin, warehouse_manager, cook can all
+                     read it, though only warehouse_manager has a frontend screen for it — an
+                     intentional backend-ahead-of-UI grant, not a gap)
   api/menu.py         Story 2.2: POST /categories, POST /dishes, PATCH /dishes/{id}, admin-only.
                      Story 2.3 added GET /categories, GET /dishes, and Recipe Ingredient CRUD at
                      /dishes/{dish_id}/recipe-ingredients (GET/POST/PATCH/DELETE). Story 2.5 split
@@ -139,7 +142,15 @@ backend/
                      still insert correctly either way). Sign convention (AD-16): purchase/waste
                      submit a positive magnitude and the service applies +/-; adjustment submits the
                      already-signed delta directly. current_stock is never floor-capped at zero,
-                     verified by tests asserting the exact negative resulting value
+                     verified by tests asserting the exact negative resulting value. Story 4.2 added
+                     list_alerts (a plain derived-state SELECT, current_stock < min_stock_threshold,
+                     no stored entity — see "Domain rules worth restating") and extended
+                     record_movement to capture was_low from the row _lock_ingredient already holds,
+                     compare against is_low after commit, and broadcast inventory.alerts_changed to
+                     warehouse_manager only when that boolean flips (crossing-triggered, not
+                     every-movement). This is the service's first RealtimeService producer, which
+                     meant moving its container.py provider below realtime_service's (trap 23,
+                     second application after order_service)
   services/menu_service.py  Story 2.2: Category/Dish creation and edits, AD-8's availability gate.
                      Story 2.3 added list_categories/list_dishes, Recipe Ingredient CRUD, AD-8's
                      second half, a unit-mismatch guard, and _lock_dish (see trap 9, now joined by
@@ -169,7 +180,9 @@ backend/
                      here, unlike 3.3's two producers)
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
                      calls into services/ (AD-1); broadcast(roles, event, payload).
-                     **RESOLVED by Story 3.3**: OrderService is now its first producer (see above)
+                     **RESOLVED by Story 3.3**: OrderService is now its first producer (see above).
+                     Story 4.2 made InventoryService its second: inventory.alerts_changed, to
+                     UserRole.warehouse_manager only
   exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409),
                      NotFoundError family (404, one shared base since Story 2.3, see trap 17)
   exceptions/handlers.py    register_exception_handlers(app); exactly four handlers, one per family
@@ -191,7 +204,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and seven real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, and the Warehouse Ingredient detail page). The other 6 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and eight real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, the Warehouse Ingredient detail page, and the Warehouse Alerts page). The other 5 IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -235,7 +248,14 @@ frontend/src/
                         which invalidates three keys onSettled (the single-ingredient key, the
                         movements-list key, and INGREDIENTS_QUERY_KEY), since a logged movement
                         changes current_stock and IngredientsPage.tsx's own list must not show
-                        stale stock after a Warehouse Manager navigates back to it
+                        stale stock after a Warehouse Manager navigates back to it. Story 4.2 added
+                        useAlerts(enabled = true) (GET /api/inventory/alerts) and exported
+                        ALERTS_QUERY_KEY, so both AppShell.tsx's nav badge and AlertsPage.tsx's list
+                        can invalidate the same key from their own independent
+                        inventory.alerts_changed subscriptions; the enabled param exists so
+                        AppShell.tsx (rendered for every Role) can gate the query to
+                        warehouse_manager only, since hooks cannot themselves be called
+                        conditionally
   services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable. TABLES_QUERY_KEY
                         exported (Story 3.1) so orderService.ts's mutation can invalidate the same
                         cache key without a second copy of ["tables"]
@@ -270,7 +290,13 @@ frontend/src/
   components/shell/        RequireAuth (route guard, now wraps AppShell in RealtimeProvider),
                         AppShell (app bar + nav + Outlet; Story 1.7 added a Sign Out IconButton
                         next to ThemeToggle, same icon-button-with-visible-aria-label shape,
-                        rendering its own isError Alert on a failed logout), AppShellSkeleton (the
+                        rendering its own isError Alert on a failed logout; Story 4.2 added a MUI
+                        Badge on the "Alerts" NavItem specifically, matched by a literal path
+                        comparison rather than a generic per-path badge map since no second nav
+                        badge exists yet, driven by useAlerts(isWarehouseManager) and a live
+                        inventory.alerts_changed subscription, both scoped to
+                        user.role === "warehouse_manager" since that's the only Role with an Alerts
+                        nav entry at all), AppShellSkeleton (the
                         cold-load stand-in: app bar shape, not a blank page), ThemeModeProvider/ThemeToggle,
                         ConnectionStatusContext/ReconnectingBanner, RealtimeProvider (Story 1.5:
                         owns the single WebSocket connection, drives ConnectionStatusContext with
@@ -280,8 +306,8 @@ frontend/src/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
                         so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
-  pages/{role}/           placeholder components for the 6 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Seven are now real:
+  pages/{role}/           placeholder components for the 5 IA surfaces that have not shipped yet
+                        (just the surface's own title as the page's h1). Eight are now real:
                         admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
                         "+ New dish" form and an inline "+ New category" reveal on its Category
                         picker, no dialog), admin/TablesSetupPage.tsx (Story 2.4), cook/DishesPage.tsx
@@ -336,7 +362,15 @@ frontend/src/
                         stuck mid-edit falls back to read-only if its item transitions away from
                         pending under it. Deliberately NOT in this story: live updates for edit/
                         cancel (Story 3.3 added live push for open/add only), the Close-order
-                        bar/total (FR-8, a later story)
+                        bar/total (FR-8, a later story), and
+                        warehouse/AlertsPage.tsx (Story 4.2, replacing Story 4.1's placeholder:
+                        useAlerts()-driven loading/error/empty("No active shortages")/loaded states,
+                        one row per Ingredient in shortage reading "Stock low: {name}
+                        ({current_stock}{unit} left)" per UX-DR10, no dismiss control anywhere, a
+                        row click navigates to that Ingredient's own detail page; subscribes to the
+                        live inventory.alerts_changed push independently of AppShell.tsx's own
+                        subscription for the nav badge, both invalidating the same
+                        ALERTS_QUERY_KEY)
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
@@ -666,7 +700,10 @@ These are the ones that cost hours because nothing errors:
     declaration below `realtime_service`'s (and `connection_registry`'s, which `realtime_service`
     itself depends on). **Any new cross-service dependency added to an existing provider needs the
     same check**: verify the provider it now references is declared earlier in the file, not just
-    that it exists somewhere in it.
+    that it exists somewhere in it. **Hit a second time in Story 4.2**: `inventory_service` needed
+    `realtime_service` injected (its first producer role, for `inventory.alerts_changed`) but was
+    declared above it (right after `user_service`); moved below `order_service`'s own declaration,
+    same fix shape, caught before it could raise rather than rediscovered.
 
 24. **A page that exists, works, and is fully wired into the router is not necessarily reachable
     from anywhere a user can click, and a diff-only review cannot see that it isn't.** Story 2.6
@@ -869,6 +906,13 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   `current_stock` without a corresponding movement.
 - Low-Stock Alert is a **derived state, not a stored entity** — an Ingredient is in shortage whenever
   stock < threshold. At most one active alert per ingredient; it clears when a movement restores it.
+  **RESOLVED (built) by Story 4.2.** `InventoryService.list_alerts`/`GET /api/inventory/alerts` is
+  the derived query (strictly `<`, not `<=`); no `LowStockAlert` table exists or is needed, since
+  "at most one active alert per ingredient" and "clears automatically" both hold structurally (one
+  `Ingredient` row, no alert entity to duplicate or dismiss). The live push
+  (`inventory.alerts_changed`, to `warehouse_manager` only) is crossing-triggered from
+  `record_movement`, not fired on every stock-decreasing movement — see `record_movement`'s own
+  docstring and Story 4.2's Scope note for the exact reasoning.
 - Permissions are **Role-level only.** No per-resource filtering anywhere: every Waiter sees every
   Table; every Cook sees every chat session. "Current user's items first" is a *sort*, never a filter.
 - An Admin sets a new User's **initial password** at creation and can **reset** it later. No
@@ -1543,4 +1587,57 @@ note on the sign convention and the deliberate "Recorded by" no-join gap (also l
 `deferred-work.md`). AD-16 marked with its first real application. Suites are now **296 backend and
 153 frontend tests**.
 
-Last Updated: 2026-08-15
+**2026-08-16 patch (Story 4.2, Low-Stock Alert, plus its code review):** Low-Stock Alert built as a
+**derived state, not a stored entity** (PRD glossary), which collapsed most of FR-14's own
+acceptance criteria to "satisfied by construction" rather than new state-machine code: one
+`Ingredient` row per ingredient means there is structurally nothing for "at most one active alert"
+to duplicate, and Story 4.1's pre-existing `_lock_ingredient` (`SELECT ... FOR UPDATE`) already
+serializes any two concurrent movements on the same row, so "exactly one alert results" needed no
+new locking either. `InventoryService.list_alerts` is a plain `SELECT ... WHERE current_stock <
+min_stock_threshold` (strict `<`), exposed at `GET /api/inventory/alerts`, reusing
+`IngredientResponse` — no new Pydantic schema, no new ORM entity, no Alembic migration.
+
+`InventoryService` became `RealtimeService`'s **second producer** (after `OrderService`, Story
+3.3): `record_movement` now captures `was_low` from the Ingredient row `_lock_ingredient` already
+holds (free, no extra query), computes `is_low` after commit, and broadcasts
+`inventory.alerts_changed` to `warehouse_manager` only when that boolean actually flips —
+crossing-triggered, not fired on every stock-decreasing movement, matching FR-14's own literal
+"crosses... below threshold" wording. **Trap 23 hit a second time**, exactly as the story's own
+Scope note predicted in advance: `inventory_service`'s `container.py` provider had to move below
+`realtime_service`'s once it needed that dependency injected, same fix shape as Story 3.3's
+original discovery.
+
+Frontend: `AlertsPage.tsx` replaces its Story 4.1-era placeholder (the eighth real domain screen, 5
+IA surfaces remain placeholders) — loading/error/empty("No active shortages")/loaded states, one
+row per shortage reading `"Stock low: {name} ({current_stock}{unit} left)"` (UX-DR10), no dismiss
+control, click-through to that Ingredient's detail page. `AppShell.tsx` gained a persistent MUI
+`Badge` on the "Alerts" `NavItem` (warehouse_manager only, matched by a direct path comparison
+rather than a new generic badge-lookup abstraction), hidden entirely at zero rather than showing a
+visible "0" (UX-DR5's "no toast" framing). Both `AppShell.tsx` and `AlertsPage.tsx` independently
+subscribe to `inventory.alerts_changed`, each invalidating the newly-exported
+`ALERTS_QUERY_KEY` on receipt — two independent subscriptions to one event, matching
+`TablesPage.tsx`/`TableOrderDetailPage.tsx`'s existing precedent for overlapping event relevance,
+not a shared subscription object. `useAlerts(enabled)` takes a boolean so `AppShell.tsx` (rendered
+for every Role) can gate the query to `warehouse_manager` only — hooks cannot themselves be called
+conditionally, so the query's own `enabled` flag does the gating instead. 14 new backend tests, 9
+new frontend tests.
+
+Code review (three parallel agents): fixed one real gap — a missing symmetric negative-broadcast
+test (the suite covered "already-in-shortage, another decreasing movement, no re-broadcast" but not
+the mirror "already-in-shortage, a purchase that reduces without clearing, no re-broadcast") — plus
+one docstring precision tightening. Several findings verified as false positives after direct
+checking rather than trusted from prose: the "badge hidden at zero" frontend test was confirmed via
+an ad hoc render to test genuine DOM absence, not an MUI implementation-detail artifact; the
+broadcast payload's `ingredient_id` field name was checked against `table.status_changed`'s own
+`table_id` precedent (the correct comparison) rather than `order.item_added`'s unrelated
+full-state-transfer shape; and AC2/AC3's "satisfied by construction" claim was independently
+re-verified by reading the schema and lock code directly. Test-count claims in the story file were
+independently re-run and matched exactly — no repeat of a prior story's count-inaccuracy mistake.
+Four items deferred as non-blocking (see `deferred-work.md`): `FakeWebSocket` duplicated a fourth
+time, past Story 3.3's own "extract at four" threshold; no visible fallback on the Alerts nav badge
+if its own query fails; no index backing the shortage comparison (accepted at this project's
+current scale, same call made for other O(n) reads elsewhere); no test proving the two independent
+`inventory.alerts_changed` subscribers de-dupe into one network request. Suites are now **311
+backend and 162 frontend tests**.
+
+Last Updated: 2026-08-16
