@@ -597,3 +597,25 @@
   `TablesPage.tsx`/`TableOrderDetailPage.tsx`'s existing precedent, but that precedent itself was
   never verified this way either. **Action:** low priority, same test-coverage gap in both places;
   revisit if double-fetching is ever observed for real (e.g. in Network tab during manual testing).
+
+## Deferred from: code review of story-4-3 (2026-08-16)
+
+- **An Admin viewing `IngredientsPage.tsx` gets correct shortage highlighting on initial load, but
+  no live re-highlighting/re-sorting while they stay on the page.** `frontend/src/pages/warehouse/
+  IngredientsPage.tsx`'s own `useAlerts()` call is unconditionally enabled for both `admin` and
+  `warehouse_manager` (both can reach this route). But the backend
+  (`backend/services/inventory_service.py`'s `record_movement`) only ever broadcasts
+  `inventory.alerts_changed` to `[UserRole.warehouse_manager]`, and `AppShell.tsx`'s subscription
+  is hard-gated the same way (`if (!isWarehouseManager) return`). No AC in Story 4.3 (or 4.2) asks
+  for Admin to receive live updates — only "Warehouse Manager" is named throughout — so this is a
+  real but out-of-scope gap, not a regression against any stated requirement. **Action:** if a
+  future story ever puts Admin on this screen as a primary, not incidental, user, widen the
+  broadcast target to `[UserRole.warehouse_manager, UserRole.admin]` in `record_movement` and drop
+  the `isWarehouseManager` gate in `AppShell.tsx`'s subscription (the `useAlerts()` gate can likely
+  stay, since Admin already fetches unconditionally on `IngredientsPage.tsx`).
+- **`IngredientsPage.tsx`'s combined error message always prefers `ingredientsError` over
+  `alertsError`** (`const loadError = ingredientsError ?? alertsError`) when both queries fail
+  simultaneously with distinct causes. Low impact — both funnel through the same generic
+  `ApiError`/`GENERIC_ERROR_MESSAGE` shape today — but it silently drops whichever message wasn't
+  chosen. **Action:** concatenate both messages if this ever causes real diagnostic confusion in
+  practice; not worth the complexity preemptively.

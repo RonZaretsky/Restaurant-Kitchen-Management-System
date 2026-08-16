@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is under way: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes.**
 
 ```
 backend/
@@ -255,7 +255,10 @@ frontend/src/
                         inventory.alerts_changed subscriptions; the enabled param exists so
                         AppShell.tsx (rendered for every Role) can gate the query to
                         warehouse_manager only, since hooks cannot themselves be called
-                        conditionally
+                        conditionally. Story 4.3's review fixed useCreateIngredient to also
+                        invalidate ALERTS_QUERY_KEY (not just INGREDIENTS_QUERY_KEY): creating an
+                        Ingredient never goes through record_movement, so nothing else would ever
+                        refresh the alerts list for one created already below its own threshold
   services/tableService.ts  Story 2.4: useTables / useCreateTable / useUpdateTable. TABLES_QUERY_KEY
                         exported (Story 3.1) so orderService.ts's mutation can invalidate the same
                         cache key without a second copy of ["tables"]
@@ -314,12 +317,23 @@ frontend/src/
                         (Story 2.5, strictly read-only, groups every Dish by Category, resolves
                         Recipe Ingredient lines to names via useIngredients()),
                         warehouse/IngredientsPage.tsx (Story 2.6, replacing Story 1.4's placeholder:
-                        an "Add ingredient" form plus a dense-row list, deliberately no shortage
-                        sorting/highlighting, that scope still belongs to Epic 4's Story 4.3; Story
+                        an "Add ingredient" form plus a dense-row list; Story
                         4.1 added row click-through to warehouse/IngredientDetailPage.tsx, found
                         missing during Story 4.1's own manual testing, not by any of the three
                         automated review layers, see trap 24: plain navigation needs none of the
-                        deferred comparison logic, only sorting/highlighting does),
+                        deferred comparison logic, only sorting/highlighting does. Story 4.3 added
+                        the shortage sorting/highlighting this docstring used to defer: reuses
+                        useAlerts() (Story 4.2) rather than recomputing current_stock <
+                        min_stock_threshold a second time client-side, sorts in-shortage rows to
+                        the top (alphabetical within each group), and renders WarningAmberIcon +
+                        error-colored text on those rows — zero backend changes, the first Epic 4
+                        story to need none. Live re-highlighting works for every warehouse_manager
+                        session for free, via AppShell.tsx's existing global
+                        inventory.alerts_changed subscription sharing the same ALERTS_QUERY_KEY
+                        cache; Admin (who can also reach this screen) gets correct data on load but
+                        no live re-highlighting, since the backend only broadcasts to
+                        warehouse_manager — a known, deferred gap, not a regression, since no AC
+                        asks for Admin live updates),
                         warehouse/IngredientDetailPage.tsx (Story 4.1, replacing Story 1.4's
                         placeholder: stat cards for current stock and minimum threshold, a
                         log-movement form restricted to Purchase/Waste/Adjustment (Consumption is
@@ -912,7 +926,10 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
   `Ingredient` row, no alert entity to duplicate or dismiss). The live push
   (`inventory.alerts_changed`, to `warehouse_manager` only) is crossing-triggered from
   `record_movement`, not fired on every stock-decreasing movement — see `record_movement`'s own
-  docstring and Story 4.2's Scope note for the exact reasoning.
+  docstring and Story 4.2's Scope note for the exact reasoning. **Story 4.3 gave the derived state
+  its second frontend consumer**: `IngredientsPage.tsx` reuses the same `useAlerts()` hook (not a
+  second `current_stock < min_stock_threshold` comparison) to sort in-shortage Ingredients to the
+  top and render them with a warning icon, entirely frontend, zero backend changes.
 - Permissions are **Role-level only.** No per-resource filtering anywhere: every Waiter sees every
   Table; every Cook sees every chat session. "Current user's items first" is a *sort*, never a filter.
 - An Admin sets a new User's **initial password** at creation and can **reset** it later. No
@@ -1639,5 +1656,38 @@ if its own query fails; no index backing the shortage comparison (accepted at th
 current scale, same call made for other O(n) reads elsewhere); no test proving the two independent
 `inventory.alerts_changed` subscribers de-dupe into one network request. Suites are now **311
 backend and 162 frontend tests**.
+
+**2026-08-16 patch (Story 4.3, View Ingredient Stock Levels, plus its code review):** Closes Epic 4.
+The first story in the epic with **zero backend changes** — both capabilities it needed
+(`current_stock`/`min_stock_threshold`, already returned by `GET /api/inventory/ingredients` since
+Story 2.3; the derived shortage list, already computed by `GET /api/inventory/alerts` since Story
+4.2) already existed. `IngredientsPage.tsx` now calls `useAlerts()` alongside `useIngredients()`,
+sorts in-shortage rows to the top (alphabetical within each group, per `DESIGN.md`'s literal
+"pinned to top, then alphabetical"), and renders `WarningAmberIcon` plus `error.main`-colored text
+on those rows — reusing the exact `"error"` MUI key `OrderItemStatusBadge.tsx`'s `cancelled` entry
+already uses, no new hex value anywhere. Live re-highlighting for `warehouse_manager` sessions costs
+zero new subscription code: `AppShell.tsx`'s existing global `inventory.alerts_changed` subscription
+(Story 4.2) already keeps the shared `ALERTS_QUERY_KEY` fresh for every mounted `useAlerts()`
+consumer via TanStack Query's keyed cache.
+
+Two of the story's four ACs (empty-state copy, movement-history empty state) turned out to already
+be fully implemented by Stories 2.6 and 4.1 respectively, each already covered by an existing test
+asserting the exact required copy — verified directly rather than trusted from the story's own
+claim, confirmed true, zero new code needed for either.
+
+Code review (three parallel agents): fixed a real gap — `useCreateIngredient` only invalidated
+`INGREDIENTS_QUERY_KEY`, not `ALERTS_QUERY_KEY`, so a newly-created Ingredient already below its own
+threshold showed no shortage styling until an unrelated event happened to refresh the alerts cache
+(creating an Ingredient never goes through `record_movement`, so Story 4.2's crossing-triggered
+broadcast never fires for it). Also added missing icon-presence and non-shortage-group sort-order
+test coverage, and corrected a garbled `baseline_commit` hash in the story file's own frontmatter.
+One finding verified as a non-issue: the shortage icon has no `aria-label`, initially flagged as an
+accessibility gap, but `DESIGN.md`'s own `ingredient-row.in-shortage` token specifies color-plus-icon
+only (unlike `status-badge`'s explicit "plus spelled-out label" requirement) — the implementation
+matches its actual design spec. One item deferred as non-blocking, out of this story's stated scope
+(see `deferred-work.md`): Admin (who can also reach this screen) gets correct shortage data on
+initial load but no live re-highlighting while parked on the page, since the backend only ever
+broadcasts `inventory.alerts_changed` to `warehouse_manager` — no AC anywhere asks for Admin live
+updates. Suites are now **311 backend and 167 frontend tests**.
 
 Last Updated: 2026-08-16

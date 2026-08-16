@@ -90,10 +90,10 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Warehouse Inventory Operations & Low-Stock Alerts
-  epic-4: in-progress
+  epic-4: done
   4-1-record-manual-stock-movements: done
   4-2-low-stock-alert: done
-  4-3-view-ingredient-stock-levels: backlog
+  4-3-view-ingredient-stock-levels: done
   epic-4-retrospective: optional
 
   # Epic 5: Kitchen Fulfillment, Automatic Stock Deduction & Close-Out

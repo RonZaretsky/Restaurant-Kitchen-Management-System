@@ -76,6 +76,13 @@ export function useAlerts(enabled = true): UseQueryResult<Ingredient[], Error> {
 /**
  * Creates a new Ingredient (AC4).
  *
+ * Invalidates ALERTS_QUERY_KEY too, not just INGREDIENTS_QUERY_KEY (Story 4.3 review): a new
+ * Ingredient can be created with current_stock already below min_stock_threshold, and nothing
+ * else would ever refresh the alerts list for it — record_movement's own crossing-triggered
+ * broadcast (Story 4.2) never fires here, since no Stock Movement was involved. Without this,
+ * a newly-created in-shortage Ingredient would render with no shortage styling/sort-to-top on
+ * IngredientsPage.tsx (Story 4.3) until some unrelated event happened to invalidate the cache.
+ *
  * @returns The TanStack Query mutation for submitting a new Ingredient.
  */
 export function useCreateIngredient(): UseMutationResult<Ingredient, Error, CreateIngredientPayload> {
@@ -87,7 +94,10 @@ export function useCreateIngredient(): UseMutationResult<Ingredient, Error, Crea
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: INGREDIENTS_QUERY_KEY }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: INGREDIENTS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ALERTS_QUERY_KEY });
+    },
   });
 }
 
