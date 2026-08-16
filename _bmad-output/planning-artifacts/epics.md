@@ -965,6 +965,29 @@ So that I can finish the table and free it up for the next guests.
 **When** that happens
 **Then** the Waiter's "tables need attention" counter clears for that table automatically, with no dismiss action (UX-DR4)
 
+### Story 5.5: Live-Update the Kitchen Display and Waiter Screen on Cancel/Edit
+
+As a Cook or Waiter,
+I want a cancelled or edited Order Item to update my screen live,
+So that I never act on a stale item after someone else has already changed it.
+
+**Acceptance Criteria:**
+
+**Given** a pending or in_preparation Order Item is cancelled
+**When** the cancellation commits
+**Then** the same `order.item_status_changed` event Story 5.2 introduced is broadcast to
+[waiter, cook], and both the Kitchen Display and the Waiter's own Table/Order Detail page reflect
+the cancellation within 2 seconds, with no manual refresh (NFR-1)
+
+**Given** a pending Order Item's quantity or note is edited
+**When** the edit commits
+**Then** the same event is broadcast, and both screens reflect the change within 2 seconds, with no
+manual refresh (NFR-1)
+
+**Given** a Kitchen Display that has stayed foregrounded for an extended period
+**When** another Role cancels or edits an item shown on it
+**Then** the display updates without requiring a tab switch, window refocus, or manual reload
+
 ## Epic 6: Smart Chef, Recipe Suggestions & Assistant Chat
 
 A Cook can generate an AI recipe suggestion from live stock and iterate on it via chat; an Admin can confirm a suggestion into a real menu Dish.

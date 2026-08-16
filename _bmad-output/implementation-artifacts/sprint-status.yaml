@@ -102,6 +102,7 @@ development_status:
   5-2-pick-up-and-progress-an-order-item-with-atomic-stock-deduction: done
   5-3-order-status-derives-from-its-items: backlog
   5-4-mark-an-order-served-and-close-the-table: backlog
+  5-5-live-update-the-kitchen-display-and-waiter-screen-on-cancel-edit: backlog
   epic-5-retrospective: optional
 
   # Epic 6: Smart Chef, Recipe Suggestions & Assistant Chat
