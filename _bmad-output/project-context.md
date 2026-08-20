@@ -116,7 +116,10 @@ backend/
                      new OrderItemCancelDep = waiter, cook, admin — the project's first 3-role
                      require_role() usage). Story 5.2 added POST .../pick-up and POST
                      .../mark-ready, both on a new OrderItemProgressDep = cook, admin (the first
-                     route pair in this file with no waiter access at all)
+                     route pair in this file with no waiter access at all). Story 5.3 added
+                     GET /api/orders (bare router prefix, @router.get("", ...)) on the existing
+                     waiter-only OrdersDep, unwidened — the first bulk (not Table/Order-scoped)
+                     read in this file
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -210,7 +213,17 @@ backend/
                      pick_up_item additionally broadcasts inventory.alerts_changed per Ingredient
                      that actually crosses threshold, after commit, reusing record_movement's
                      was_low/is_low pattern rather than duplicating it (see trap 26 for the
-                     stale-quantity-read bug found and fixed in this story's own code review)
+                     stale-quantity-read bug found and fixed in this story's own code review).
+                     Story 5.3 added _recompute_order_status (private, called from add_item/
+                     cancel_item/pick_up_item/mark_item_ready, never edit_item) and
+                     list_open_orders (the first bulk Order read — GET /api/orders). The
+                     recompute is deliberately NOT a guarded UPDATE (see AD-6 vs AD-5 note above
+                     trap 27) but does lock the Order row (SELECT ... FOR UPDATE) before reading
+                     sibling Items — trap 27, added this story after the code review caught a
+                     real concurrency bug here. Broadcasts order.status_changed
+                     ([UserRole.waiter] only, unlike order.item_status_changed's [waiter, cook])
+                     via a shared _broadcast_order_status_changed(db, order) helper, only when
+                     the aggregate actually changed
   services/kitchen_service.py  Story 5.1 (new): list_active_items — the FIRST genuine join in
                      backend/services/ (every prior story returned raw ids and resolved names
                      client-side instead). Joins OrderItem to Order to resolve table_id, since
@@ -323,7 +336,14 @@ frontend/src/
                         Invalidate KITCHEN_ITEMS_QUERY_KEY only (imported from kitchenService.ts) —
                         the Waiter's own orderItemsQueryKey refreshes from the live
                         order.item_status_changed push instead, not from this mutation reaching
-                        into a cache key it doesn't otherwise know about
+                        into a cache key it doesn't otherwise know about. Story 5.3 exported
+                        orderForTableQueryKey(tableId) (previously only built inline inside
+                        useOrderForTable, needed once TableOrderDetailPage.tsx's new
+                        order.status_changed subscriber had to invalidate it without
+                        reconstructing the array by hand) and added OPEN_ORDERS_QUERY_KEY /
+                        useOpenOrders() (GET /api/orders, the first bulk Order read), which
+                        TablesPage.tsx resolves client-side into a table_id -> status lookup to
+                        drive the attention-state tile treatment
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
   components/orders/OrderItemStatusBadge.tsx  Story 3.2: the shared Order Item status badge
@@ -843,6 +863,28 @@ These are the ones that cost hours because nothing errors:
     refresh the last point the value could still change. Generalizes: after a guarded UPDATE
     succeeds, any other column on that row you're about to read for downstream logic needs a fresh
     read, not the one from before the guard ran.
+
+27. **A value derived by aggregating several sibling rows needs a row lock too, even though no
+    single row is being "written" the way trap 9's canonical cases are.** Story 5.3's
+    `_recompute_order_status` reads every non-cancelled `OrderItem.status` for an Order and
+    writes the aggregate onto `Order.status` — no guarded UPDATE applies (there is no expected
+    prior value to check, FR-12's rule is a pure recompute, not a state-machine transition, see
+    AD-6 vs. AD-5 distinction below), so it looked lock-free by construction. It wasn't: two
+    concurrent transactions each finishing a *different* sibling Item (e.g. two Cooks marking two
+    Items of the same Order ready within the same overlapping window) each read the other's
+    not-yet-committed Item status under READ COMMITTED, each independently compute "no change"
+    from their own narrow view, and both commit — leaving the aggregate stuck wrong with nothing
+    left to re-trigger a correct recompute. Fixed by locking the *owning* row (`SELECT Order ...
+    FOR UPDATE`, before reading the children), which is trap 9's mechanism applied to a case
+    trap 9's own framing doesn't obviously cover: the row being locked is not itself one of the
+    rows in conflict, it's the aggregate's anchor, and taking its lock is what serializes the two
+    transactions' reads of the *set* of children. **Generalize: whenever a value is computed by
+    reading N sibling/child rows and writing the result onto a parent, lock the parent before the
+    read, regardless of whether any single row's own write looks unguarded in isolation.** Caught
+    only by the code review's adversarial layer, reproduced with a genuine two-connection
+    concurrency test (`asyncio.gather` across two independent `AsyncClient`s), not a monkeypatched
+    interleave — trap 18's usual technique doesn't apply here, since the mechanism under test is a
+    real DB-level lock, not a guarded UPDATE's rowcount.
 
 ---
 
@@ -1883,5 +1925,59 @@ mark-ready). Deferred as pre-existing, not introduced by this story (see `deferr
 a Dish can reach zero `RecipeIngredient` rows while a still-`pending` Order Item references it
 (`CannotRemoveLastRecipeIngredientError`'s guard only fires while the Dish `is_available`). Suites
 are now **341 backend and 178 frontend tests**.
+
+**2026-08-16 patch (Story 5.3, Order Status Derives From Its Items, plus its code review):**
+`Order.status` is now genuinely live — resolves the gap Stories 5.1/5.2's own reviews flagged and
+explicitly deferred to this story. FR-12's rule is exactly three buckets (zero non-cancelled
+Items → `pending`; every non-cancelled Item `ready` → `ready`; anything else → `in_preparation`),
+implemented as a new private `OrderService._recompute_order_status`, called from all four methods
+that can change an Order's non-cancelled item set (`add_item`, `cancel_item`, `pick_up_item`,
+`mark_item_ready`) — deliberately **not** `edit_item`, which only touches quantity/notes, never
+status.
+
+**A new, generalizable distinction from AD-6's guarded-UPDATE idiom:** this recompute is a pure
+overwrite-with-current-truth, not a state-machine transition — there is no expected prior value
+to guard against, so no `UPDATE ... WHERE status = <expected>` was written for it (AD-5's
+last-write-wins already covers Order edits generally). Writing a guarded UPDATE here would be
+answering a question ("was the prior status still X?") FR-12 never asks. A `served`/`closed`
+Order is left untouched by the recompute (a one-`if` forward-looking guard for Story 5.4, since
+`served`/`closed` are set explicitly, never derived) — unreachable today since nothing can produce
+one yet, but now has a dedicated test forcing the state directly, so the guard isn't shipping
+blind.
+
+**A genuine concurrency bug, caught only by the code review's adversarial layer** (see trap 27,
+added this story): the recompute's own read of sibling `OrderItem` statuses had no row lock, so
+two concurrent transactions each finishing a different Item of the same Order could each converge
+on "no change" from their own stale view and leave the aggregate stuck wrong after both committed
+— reproduced with a real two-connection concurrency test, not a monkeypatch, and fixed by locking
+the Order row before reading its children.
+
+New broadcast `order.status_changed`, waiter-only (unlike `order.item_status_changed`'s
+`[waiter, cook]` — Cook's Kitchen Display has no use for Order-level status), fired only when the
+aggregate actually changes, not on every item mutation. New bulk read `GET /api/orders`
+(`OrderService.list_open_orders`, reusing the existing Waiter-only `OrdersDep` unchanged) — the
+first bulk Order read in the project, existing for exactly one reason: the Tables grid needs to
+know, across every occupied Table at once, whether its Order is `ready`, to render the
+attention-state tile treatment (UX-DR3). Resolved client-side into a `table_id -> status` lookup,
+matching the established "client-side resolution, never a second server-side filter" precedent,
+rather than an N+1 per-tile request.
+
+**A second review-caught bug, this time frontend:** `TablesPage.tsx`'s Retry button only refetched
+`useTables()`, not the new `useOpenOrders()`, even though `isError` was already the OR of both —
+a failure isolated to the open-orders query left the grid permanently stuck behind the error
+banner with no in-app recovery. Fixed by refetching both queries together, matching this
+codebase's own "Retry must refetch all of them, not just one" rule (already stated earlier in
+this file) more literally than the first implementation pass did. Combining two queries' error
+state also broke TypeScript's discriminated-union narrowing on TanStack Query's nullable `error`
+field (a `Error | null` no longer type-checked against a strictly-`Error`-typed helper once
+`isError` became a synthesized OR of two independent flags) — caught by `npx tsc -b`, not
+anticipated in the story, fixed by widening the file-local `errorMessage()` helper to accept
+`Error | null` and building an explicit `firstError = tablesError ?? openOrdersError`.
+
+Deferred, not fixed (see `deferred-work.md`): `GET /api/orders` has no pagination, the same
+unbounded-growth shape already deferred for `KitchenService.list_active_items`; and that Kitchen
+Display filter gap itself is still open too, since this story deliberately left
+`api/kitchen.py`/`kitchen_service.py` untouched (nothing can reach `served`/`closed` until Story
+5.4 exists). Suites are now **352 backend and 184 frontend tests**.
 
 Last Updated: 2026-08-16

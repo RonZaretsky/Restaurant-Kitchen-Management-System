@@ -682,6 +682,133 @@ async def test_marking_an_item_ready_broadcasts_order_item_status_changed_with_n
 
 
 @pytest.mark.asyncio
+async def test_marking_the_only_item_ready_broadcasts_order_status_changed_to_waiter_only(
+    db_session,
+) -> None:
+    # Arrange: a single-item Order, so marking that item ready flips the Order's derived
+    # status from in_preparation straight to ready (Story 5.3, FR-12/AC2), which is the case
+    # that must broadcast order.status_changed.
+    table = RestaurantTable(table_number=7, capacity=4, status=TableStatus.available)
+    category = Category(name="Mains")
+    db_session.add_all([table, category])
+    await db_session.commit()
+    await db_session.refresh(table)
+    await db_session.refresh(category)
+    dish = Dish(
+        name="Order Status Dish",
+        price="11.00",
+        category_id=category.id,
+        prep_time_minutes=10,
+        is_available=True,
+    )
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    await _create_user(db_session, "ws_order_status_waiter", role=UserRole.waiter)
+    await _create_user(db_session, "ws_order_status_cook", role=UserRole.cook)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_order_status_waiter")
+        cook_token = await _login_over_http(port, "ws_order_status_cook")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            add_response = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert add_response.status_code == 201
+            item_id = add_response.json()["id"]
+
+            http_client.cookies.set(COOKIE_NAME, cook_token)
+            pick_up_response = await http_client.post(f"/api/orders/{order_id}/items/{item_id}/pick-up")
+            assert pick_up_response.status_code == 200
+
+            async with await _connect(port, waiter_token) as waiter_ws:
+                async with await _connect(port, cook_token) as cook_ws:
+                    # Act
+                    ready_response = await http_client.post(
+                        f"/api/orders/{order_id}/items/{item_id}/mark-ready"
+                    )
+                    assert ready_response.status_code == 200
+
+                    # Assert: the Waiter receives order.item_status_changed first (the item-level
+                    # event, unconditional), then order.status_changed second (conditional on the
+                    # Order's derived status having actually moved).
+                    item_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
+                    assert item_message["event"] == "order.item_status_changed"
+
+                    order_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
+                    assert order_message["event"] == "order.status_changed"
+                    assert order_message["payload"]["id"] == order_id
+                    assert order_message["payload"]["status"] == "ready"
+
+                    # Assert: a connected Cook receives the item-level event (unchanged
+                    # recipient list) but not order.status_changed, which is waiter-only.
+                    cook_message = json.loads(await asyncio.wait_for(cook_ws.recv(), timeout=2))
+                    assert cook_message["event"] == "order.item_status_changed"
+                    with pytest.raises(asyncio.TimeoutError):
+                        await asyncio.wait_for(cook_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_one_of_several_pending_items_broadcasts_nothing(db_session) -> None:
+    # Arrange: two pending items on one Order (aggregate is in_preparation, FR-12's "anything
+    # else" bucket). Cancelling one still leaves one non-cancelled pending item, so the
+    # aggregate reads in_preparation both before and after — _recompute_order_status must not
+    # manufacture a no-op order.status_changed broadcast (Story 5.3).
+    table = RestaurantTable(table_number=8, capacity=4, status=TableStatus.available)
+    category = Category(name="Mains")
+    db_session.add_all([table, category])
+    await db_session.commit()
+    await db_session.refresh(table)
+    await db_session.refresh(category)
+    dish = Dish(
+        name="No Op Dish",
+        price="8.00",
+        category_id=category.id,
+        prep_time_minutes=5,
+        is_available=True,
+    )
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    await _create_user(db_session, "ws_noop_waiter", role=UserRole.waiter)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_noop_waiter")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            first_add = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert first_add.status_code == 201
+            second_add = await http_client.post(
+                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
+            )
+            assert second_add.status_code == 201
+            item_to_cancel_id = second_add.json()["id"]
+
+            async with await _connect(port, waiter_token) as waiter_ws:
+                # Act
+                cancel_response = await http_client.post(
+                    f"/api/orders/{order_id}/items/{item_to_cancel_id}/cancel"
+                )
+                assert cancel_response.status_code == 200
+
+                # Assert: cancel_item itself broadcasts no item-level event today, and the no-op
+                # recompute must not manufacture an order.status_changed either.
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(waiter_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
 async def test_unserializable_payload_does_not_unsubscribe_the_client(db_session) -> None:
     # Arrange
     await _create_user(db_session, "ws_bad_payload")

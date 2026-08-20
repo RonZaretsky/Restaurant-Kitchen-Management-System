@@ -14,6 +14,35 @@ const AVAILABLE_TABLE = { id: 1, table_number: 1, capacity: 4, status: "availabl
 const OCCUPIED_TABLE = { id: 2, table_number: 2, capacity: 2, status: "occupied" };
 const RESERVED_TABLE = { id: 3, table_number: 3, capacity: 6, status: "reserved" };
 
+function readyOrder(tableId: number) {
+  return {
+    id: 100 + tableId,
+    table_id: tableId,
+    waiter_id: 1,
+    status: "ready",
+    created_at: "2026-01-01T00:00:00Z",
+    closed_at: null,
+    total_amount: "12.50",
+  };
+}
+
+/**
+ * Routes a stubbed `fetch` to `/api/tables` and `/api/orders`, the two queries every
+ * `TablesPage` render now depends on (Story 5.3). `openOrders` defaults to `[]` so existing
+ * tests that don't care about the attention-state treatment don't need to think about it.
+ */
+function stubTablesAndOrders(tables: unknown[], openOrders: unknown[] = []) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      const path = String(url);
+      if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, tables));
+      if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, openOrders));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    }),
+  );
+}
+
 const navigateMock = vi.fn();
 vi.mock("react-router", async () => {
   const actual = await vi.importActual<typeof import("react-router")>("react-router");
@@ -83,14 +112,7 @@ describe("TablesPage", () => {
 
   it("renders every table with its status badge", async () => {
     // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (String(url).includes("/api/tables"))
-          return Promise.resolve(jsonResponse(200, [AVAILABLE_TABLE, OCCUPIED_TABLE, RESERVED_TABLE]));
-        return Promise.reject(new Error(`unexpected request: ${url}`));
-      }),
-    );
+    stubTablesAndOrders([AVAILABLE_TABLE, OCCUPIED_TABLE, RESERVED_TABLE]);
 
     // Act
     renderPage();
@@ -124,6 +146,7 @@ describe("TablesPage", () => {
           );
         }
         if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, [AVAILABLE_TABLE]));
+        if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
         return Promise.reject(new Error(`unexpected request: ${path}`));
       }),
     );
@@ -148,6 +171,7 @@ describe("TablesPage", () => {
           return Promise.resolve(jsonResponse(409, { detail: "Rejected, table not available" }));
         }
         if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, [AVAILABLE_TABLE]));
+        if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
         return Promise.reject(new Error(`unexpected request: ${path}`));
       }),
     );
@@ -165,8 +189,10 @@ describe("TablesPage", () => {
   it("navigates straight to the detail page on an occupied tile, without opening it", async () => {
     // Arrange
     const fetchMock = vi.fn((url: string) => {
-      if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, [OCCUPIED_TABLE]));
-      return Promise.reject(new Error(`unexpected request: ${url}`));
+      const path = String(url);
+      if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, [OCCUPIED_TABLE]));
+      if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -183,8 +209,10 @@ describe("TablesPage", () => {
   it("has no click affordance on a reserved tile", async () => {
     // Arrange
     const fetchMock = vi.fn((url: string) => {
-      if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, [RESERVED_TABLE]));
-      return Promise.reject(new Error(`unexpected request: ${url}`));
+      const path = String(url);
+      if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, [RESERVED_TABLE]));
+      if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -200,13 +228,7 @@ describe("TablesPage", () => {
 
   it("shows the empty-state copy when there are no tables", async () => {
     // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, []));
-        return Promise.reject(new Error(`unexpected request: ${url}`));
-      }),
-    );
+    stubTablesAndOrders([]);
 
     // Act
     renderPage();
@@ -223,8 +245,10 @@ describe("TablesPage", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string) => {
-        if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, tables));
-        return Promise.reject(new Error(`unexpected request: ${url}`));
+        const path = String(url);
+        if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, tables));
+        if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.reject(new Error(`unexpected request: ${path}`));
       }),
     );
 
@@ -242,6 +266,79 @@ describe("TablesPage", () => {
     expect(await screen.findByText("occupied")).toBeInTheDocument();
   });
 
+  it("shows the attention-state chip on an occupied tile whose Order is ready, layered on the status badge", async () => {
+    // Arrange
+    stubTablesAndOrders([OCCUPIED_TABLE], [readyOrder(OCCUPIED_TABLE.id)]);
+
+    // Act
+    renderPage();
+
+    // Assert: both the base table-status Chip and the new attention Chip render, the base one
+    // is not replaced (DESIGN.md's "layered on top of, not replacing" instruction).
+    expect(await screen.findByText("occupied")).toBeInTheDocument();
+    expect(screen.getByText("Ready")).toBeInTheDocument();
+  });
+
+  it("does not show the attention-state chip when the occupied tile's Order is not ready", async () => {
+    // Arrange
+    const inPreparationOrder = { ...readyOrder(OCCUPIED_TABLE.id), status: "in_preparation" };
+    stubTablesAndOrders([OCCUPIED_TABLE], [inPreparationOrder]);
+
+    // Act
+    renderPage();
+
+    // Assert
+    expect(await screen.findByText("occupied")).toBeInTheDocument();
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+  });
+
+  it("never shows the attention-state chip on an available or reserved tile", async () => {
+    // Arrange: a ready Order can only ever belong to an occupied Table in v1 (no
+    // reservation-arrival flow), but this asserts the tile itself never renders the chip for a
+    // non-occupied status regardless of what the open-orders list happens to contain.
+    stubTablesAndOrders(
+      [AVAILABLE_TABLE, RESERVED_TABLE],
+      [readyOrder(AVAILABLE_TABLE.id), readyOrder(RESERVED_TABLE.id)],
+    );
+
+    // Act
+    renderPage();
+
+    // Assert
+    expect(await screen.findByText("available")).toBeInTheDocument();
+    expect(screen.getByText("reserved")).toBeInTheDocument();
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+  });
+
+  it("refetches the open-orders list when a live order.status_changed event arrives", async () => {
+    // Arrange: the occupied tile starts with no ready Order, then the backend reports one on
+    // the second fetch, simulating a Cook marking the last item ready (Story 5.3, AC4).
+    let openOrders: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = String(url);
+        if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, [OCCUPIED_TABLE]));
+        if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, openOrders));
+        return Promise.reject(new Error(`unexpected request: ${path}`));
+      }),
+    );
+
+    // Act
+    renderPage();
+    await screen.findByText("occupied");
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+    openOrders = [readyOrder(OCCUPIED_TABLE.id)];
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    socket.onmessage?.({
+      data: JSON.stringify({ event: "order.status_changed", payload: { id: 101, status: "ready" } }),
+    });
+
+    // Assert
+    expect(await screen.findByText("Ready")).toBeInTheDocument();
+  });
+
   it("shows a retry-capable error when the table list cannot be loaded", async () => {
     // Arrange
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
@@ -252,5 +349,34 @@ describe("TablesPage", () => {
     // Assert
     expect(await screen.findByText(/Could not load the tables/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("retries the open-orders query too when only it failed, not just the table list", async () => {
+    // Arrange: tables loads fine on the first try; open-orders fails once, then succeeds on
+    // retry (code review finding, Story 5.3: Retry previously only refetched useTables(), so a
+    // failure isolated to useOpenOrders() left the page stuck behind the error banner forever).
+    let openOrdersAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = String(url);
+        if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, [OCCUPIED_TABLE]));
+        if (path.includes("/api/orders")) {
+          openOrdersAttempts += 1;
+          if (openOrdersAttempts === 1) return Promise.reject(new TypeError("Failed to fetch"));
+          return Promise.resolve(jsonResponse(200, []));
+        }
+        return Promise.reject(new Error(`unexpected request: ${path}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText(/Could not load the tables/);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    // Assert: the retried open-orders request succeeds and the grid renders.
+    expect(await screen.findByText("occupied")).toBeInTheDocument();
   });
 });

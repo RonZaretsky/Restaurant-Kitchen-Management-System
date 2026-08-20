@@ -660,3 +660,21 @@
   story. **Action:** would need a broader look at Dish/Recipe deletion guards (e.g. blocking
   Recipe-Ingredient removal while any non-terminal Order Item references the Dish, regardless of
   availability) — no immediate action, narrow edge case at this project's demo scale.
+
+## Deferred from: code review of story-5-3 (2026-08-16)
+
+- **`GET /api/orders` (`OrderService.list_open_orders`) has no pagination or bound beyond
+  `status != closed`** — every non-closed Order in the entire restaurant is returned in one
+  response, the same unpaginated-growth shape Story 5.1's review already flagged for
+  `KitchenService.list_active_items` (and, per that entry's own prediction, expected to become
+  naturally self-bounding once Story 5.4 starts moving Orders to `closed` — that hasn't happened
+  yet, so both endpoints' result sets still grow unboundedly today). Fine at this project's
+  stated demo/NFR-5 scale. **Action:** revisit once Story 5.4 ships; if the `closed` filter alone
+  doesn't keep the result set small enough in practice, add real pagination to both endpoints
+  together rather than piecemeal.
+- **`KitchenService.list_active_items`'s own `Order.status` filter gap (flagged by Story 5.1's
+  and 5.2's reviews) is still open** — this story deliberately left `backend/api/kitchen.py`/
+  `backend/services/kitchen_service.py` untouched (its own Scope note states this explicitly),
+  since nothing can move an Order to `served`/`closed` until Story 5.4 exists. **Action:**
+  unchanged from the prior entries — Story 5.4 is still the one that needs to add the exclusion
+  filter once it makes `served`/`closed` reachable.

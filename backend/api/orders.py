@@ -60,6 +60,11 @@ _GET_ORDER_ERROR_DESCRIPTIONS = {
     404: "No matching Table was found, or the Table has no Order currently open",
 }
 
+_LIST_OPEN_ORDERS_ERROR_DESCRIPTIONS = {
+    401: _ERROR_DESCRIPTIONS[401],
+    403: _ERROR_DESCRIPTIONS[403],
+}
+
 _ITEM_ERROR_DESCRIPTIONS = {
     401: _ERROR_DESCRIPTIONS[401],
     403: _ERROR_DESCRIPTIONS[403],
@@ -96,6 +101,33 @@ _MARK_READY_ITEM_ERROR_DESCRIPTIONS = {
     404: "No matching Order or Order Item was found",
     409: "The item is not in_preparation",
 }
+
+
+@router.get(
+    "",
+    response_model=list[OrderResponse],
+    responses=error_responses(_LIST_OPEN_ORDERS_ERROR_DESCRIPTIONS, 401, 403),
+)
+@inject
+async def list_open_orders(
+    actor: OrdersDep,
+    db: SessionDep,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+) -> Sequence[Order]:
+    """List every currently open (non-closed) Order, across every Table (Story 5.3, AC4).
+
+    Backs the Tables grid's bulk read of Order status, so it can resolve which occupied Tables
+    have a ready Order without an N+1 request per tile.
+
+    Args:
+        actor: The authenticated Waiter making the request.
+        db: The active database session.
+        order_service: Injected service handling the lookup.
+
+    Returns:
+        Every Order whose status is not closed.
+    """
+    return await order_service.list_open_orders(db, actor)
 
 
 @router.post(
