@@ -223,7 +223,18 @@ backend/
                      real concurrency bug here. Broadcasts order.status_changed
                      ([UserRole.waiter] only, unlike order.item_status_changed's [waiter, cook])
                      via a shared _broadcast_order_status_changed(db, order) helper, only when
-                     the aggregate actually changed
+                     the aggregate actually changed. Story 5.4 added mark_served (guarded UPDATE,
+                     WHERE status IN (ready, pending) — pending already means zero non-cancelled
+                     items per FR-12, no separate item count) and close_order (guarded UPDATE,
+                     WHERE status == served, then computes total_amount as a Decimal sum of
+                     price_at_add * quantity over non-cancelled items, stamps closed_at, and
+                     guarded-UPDATEs the owning RestaurantTable back to available, all one
+                     transaction). Both reuse _broadcast_order_status_changed unchanged; close_order
+                     also broadcasts table.status_changed (open_table's own plain-dict shape),
+                     conditional on the Table UPDATE's own rowcount actually succeeding (review
+                     finding — a client must never be told the table freed up when it didn't).
+                     These are the project's first guarded UPDATEs against Order.status itself
+                     (contrast _recompute_order_status above, which deliberately is not one)
   services/kitchen_service.py  Story 5.1 (new): list_active_items — the FIRST genuine join in
                      backend/services/ (every prior story returned raw ids and resolved names
                      client-side instead). Joins OrderItem to Order to resolve table_id, since
@@ -231,7 +242,9 @@ backend/
                      OrderItem.status != cancelled only; no filter on the owning Order's own
                      status yet, since nothing can move an Order to served/closed until Stories
                      5.3/5.4 — flagged explicitly in the method's own docstring as a
-                     forward-compatibility gap for whichever of those ships next
+                     forward-compatibility gap for whichever of those ships next. **RESOLVED by
+                     Story 5.4**: the filter now also excludes Order.status IN (served, closed),
+                     since this story is what first makes those reachable
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
                      calls into services/ (AD-1); broadcast(roles, event, payload).
                      **RESOLVED by Story 3.3**: OrderService is now its first producer (see above).
@@ -886,6 +899,25 @@ These are the ones that cost hours because nothing errors:
     interleave — trap 18's usual technique doesn't apply here, since the mechanism under test is a
     real DB-level lock, not a guarded UPDATE's rowcount.
 
+28. **Invalidating a query key that belongs to the page you are about to navigate away from can
+    race the navigation, flashing the wrong UI first.** Story 5.4's Close button called
+    `closeMutation.mutate(undefined, { onSuccess: () => navigate("/waiter/tables") })`, and
+    `useCloseOrder`'s own `onSettled` invalidated the just-closed Order's query key
+    (`orderForTableQueryKey`). Hook-level mutation callbacks fire before call-level ones (trap:
+    not obvious from either callback in isolation), so the invalidation's background refetch was
+    already in flight before `navigate()` ran — and on localhost's near-zero latency, that
+    refetch could resolve and re-render `TableOrderDetailPage.tsx` with its `hasNoOpenOrder`
+    banner **before** the route change fully committed, a flash a human tester caught that no
+    test (including this story's own) had covered. A first fix (gating the order-content block on
+    `!hasNoOpenOrder` so the two states couldn't co-render) removed the *simultaneous* rendering
+    but not the flash itself, since the banner could still legitimately render for one frame
+    before navigation won the race. The real fix: stop invalidating that query key at all — once
+    a mutation's own success handler is about to navigate away from the page a key belongs to,
+    that page has nothing left to refresh, and refreshing it anyway only creates a race with the
+    navigation for no benefit. **Generalize: before invalidating a query key inside a mutation
+    hook, check whether every real caller of that mutation immediately navigates away on success —
+    if so, the invalidation is very likely pure risk, not a safety net.**
+
 ---
 
 ## Where code goes
@@ -1045,6 +1077,11 @@ From the architecture spine — these are contracts, not suggestions. Cited by A
 
 - `Order.status` (`pending`/`in_preparation`/`ready`) is **derived** from its non-cancelled OrderItems.
   `served` and `closed` are set explicitly. An Order with zero non-cancelled items is `pending`.
+  **RESOLVED (both transitions built) by Story 5.4.** `OrderService.mark_served`/`close_order` are
+  guarded UPDATEs (AD-6), not recomputes — `ready`/`pending` → `served`, `served` → `closed`.
+  Closing also computes `Order.total_amount` (sum of `price_at_add × quantity` over non-cancelled
+  items, AD-7) and returns the owning `RestaurantTable` to `available`, all three writes in one
+  transaction.
 - Stock deducts at **transition to `in_preparation`** (prep start), not at order placement.
 - `StockMovement` is **append-only** — the audit trail. Never mutate a past row. No code path changes
   `current_stock` without a corresponding movement.
@@ -1980,4 +2017,50 @@ Display filter gap itself is still open too, since this story deliberately left
 `api/kitchen.py`/`kitchen_service.py` untouched (nothing can reach `served`/`closed` until Story
 5.4 exists). Suites are now **352 backend and 184 frontend tests**.
 
-Last Updated: 2026-08-16
+**2026-08-21 patch (Story 5.4, Mark an Order Served and Close the Table, plus its code review and
+manual-testing fixes):** `Order.status` can finally reach `served` and `closed` — the two values
+Story 3.1 created and Story 5.3's `_recompute_order_status` explicitly no-op'd on, unreachable
+until now. Two new guarded UPDATEs on `OrderService` (`mark_served`, `close_order`), a real
+contrast with Story 5.3's own recompute: these are genuine state-machine transitions with an
+expected prior status to check (AD-6), not a pure overwrite-with-current-truth (AD-5). `mark_served`
+guards on `status IN (ready, pending)` — FR-12 already guarantees `pending` means zero
+non-cancelled items, so no separate item count is needed server-side. `close_order` guards on
+`status == served`, computes `total_amount` (`Decimal` sum of `price_at_add × quantity` over
+non-cancelled items, AD-7) and frees the owning Table, all three writes in one transaction. No row
+lock was needed for the total's aggregate read (contrast trap 27): every non-cancelled item is
+already `ready` by the time an Order reaches `served`, and nothing can change any item's status
+once it is, so the set is frozen by construction.
+
+**Required, not optional: fixed the Kitchen Display's served/closed leak**, a gap Story 5.3's own
+`list_active_items` docstring had explicitly deferred here — a served Order's items would
+otherwise linger on the Kitchen Display forever. This story is what first makes `served`/`closed`
+reachable, so leaving that filter unfixed would have left the system broken end-to-end, not merely
+incomplete against its own literal ACs.
+
+**Two review-caught issues, both fixed:** `close_order` broadcast `table.status_changed` as
+"available" even on the (currently unreachable) branch where the Table's own guarded UPDATE
+failed — fixed to broadcast only when that write actually succeeded. And unlike Story 5.3's own
+concurrent-mark-ready test validating a similar "no lock needed" argument empirically, this
+story initially shipped with no concurrent-close test — added one (two independent `AsyncClient`s,
+`asyncio.gather`), confirming the guarded Order-status UPDATE alone correctly serializes two
+simultaneous `/close` calls with no row lock required.
+
+**Frontend: the first Waiter-facing "tables need attention" nav badge** (`AppShell.tsx`), reusing
+Story 5.3's `useOpenOrders()` (now gated by a new `enabled` param so a non-waiter Role never fires
+the request) filtered to a live ready-Order count, green (`success`) unlike the Alerts badge's red
+— DESIGN.md's own explicit two-token distinction. `TableOrderDetailPage.tsx` gained an
+always-visible Order total bar (client-computed pre-close, the server's own stored value once
+`closed`) with Mark served/Close buttons, both applying with no confirm step (AC6, UX-DR12
+contrast).
+
+**A two-round manual-testing bug, not caught by any automated test:** closing an Order left the
+Waiter on that Order's own now-nonexistent page, showing the "no open order" banner layered over
+the stale, just-closed Order's own content simultaneously — and even after gating those two states
+to be mutually exclusive, the banner could still flash for one frame before a since-added
+`navigate("/waiter/tables")` call won its race against the mutation's own query invalidation (see
+trap 28, added this story). Fixed in two passes: first, mutual exclusion plus the navigation
+itself; then, dropping the invalidation of the closed Order's own query key entirely, since a
+caller that navigates away on success has nothing left on that page to refresh anyway. Suites are
+now **365 backend and 196 frontend tests**.
+
+Last Updated: 2026-08-21
