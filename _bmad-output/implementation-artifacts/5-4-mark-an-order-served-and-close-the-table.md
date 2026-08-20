@@ -6,7 +6,7 @@ story: 4
 
 # Story 5.4: Mark an Order Served and Close the Table
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -554,9 +554,78 @@ Claude Sonnet 5
 - `frontend/src/components/shell/AppShell.tsx`
 - `frontend/src/components/shell/AppShell.test.tsx`
 
+## Review Findings
+
+Reviewed by three parallel agents (Blind Hunter, Edge Case Hunter, Acceptance Auditor) against
+this story's 7 ACs and `_bmad-output/project-context.md`.
+
+- [x] [Review][Patch] `close_order` broadcasts `table.status_changed` with `status: "available"`
+  unconditionally, even on the branch where the Table's own guarded UPDATE returned `rowcount ==
+  0` (logged at `ERROR`, table left unchanged) — waiter clients would be told the table freed up
+  when it did not. Currently unreachable in production (a Table backing a `served` Order can only
+  be `occupied`, and no other code path can change a Table's status while its Order is open), but
+  cheap and unambiguous to fix: only broadcast when the write actually succeeded —
+  `backend/services/order_service.py:close_order`
+- [x] [Review][Patch] No concurrency test exists for two simultaneous `/close` calls on the same
+  Order, unlike Story 5.3's own precedent of empirically verifying a similar "no lock needed"
+  argument with a genuine two-client concurrent test rather than reasoning alone. Add one —
+  `backend/tests/test_orders.py`
+- [x] [Review][Defer] `computeClientSideTotal` (`TableOrderDetailPage.tsx`) sums currency with
+  native JS `Number` arithmetic while the backend uses `Decimal` (AD-7) for the same computation
+  — theoretical floating-point drift for the pre-close preview total. Deferred: this is the
+  story's own explicit design choice (Dev Notes: "computed... the same way `formatPrice` already
+  exists for a single line"), the backend's stored `total_amount` remains authoritative post-close
+  (AC5), and `price_at_add` is always exactly 2 decimal places (`Numeric(8,2)`), bounding realistic
+  drift to well below display precision.
+- [x] [Review][Defer] `useMarkOrderServed`/`useCloseOrder` invalidate only the mutating page's own
+  query key, relying on the WebSocket broadcast round-trip to refresh the Tables grid/nav badge on
+  other pages — a brief self-observed staleness window if the actor's own socket is mid-reconnect
+  at the moment of their own action. Deferred: matches this codebase's own established, documented
+  precedent ("the live event is what refreshes other pages, not the mutating page's own success
+  handler," `usePickUpItem`'s docstring), not a gap introduced by this story; the existing
+  `ReconnectingBanner` already surfaces degraded connectivity to the user.
+- [x] [Review][Defer] Mark served's eligibility check is implemented independently on both sides —
+  backend trusts `Order.status` alone (FR-12's invariant), frontend re-derives from the raw item
+  list (deliberately, to guard against the two independent TanStack Query caches momentarily
+  disagreeing) — with no shared/contract test asserting the two conditions never diverge. Deferred:
+  both directions fail safe (worst case is a disabled button requiring a manual refresh, never an
+  incorrectly-enabled one that reaches a 409), and this codebase has no existing precedent for
+  cross-stack contract tests to extend.
+
+**Verified as non-issues:**
+
+- **`close_order` mixes a raw Core `update()` (for `status`/`closed_at`) with a plain ORM
+  attribute assignment (`order.total_amount = total`) on the same identity-mapped object in one
+  transaction** — flagged as a "known SQLAlchemy footgun," but `synchronize_session="auto"`'s
+  evaluator strategy only refreshes the in-memory attribute values from the bulk statement, it
+  does not mark them dirty for re-flush; only the explicitly-assigned `total_amount` enters the
+  pending flush. Verified correct by every passing test that asserts `total_amount`/`closed_at`
+  post-close, not just by reasoning.
+- **`mark_served`'s guard has no independent item-count check, trusting `Order.status` alone** —
+  by design (Scope note): FR-12/`_recompute_order_status` already guarantees `pending` means zero
+  non-cancelled items; a second count would duplicate an invariant this codebase already enforces
+  centrally, not add real safety.
+- **`OrderNotServableError` reuses one `detail` string for three distinct rejection causes** (item
+  not ready, already served, already closed) — matches this exact file's own established
+  precedent (`OrderItemNotPendingError`, `TableNotAvailableError`, `OrderItemNotCancellableError`
+  all document the identical "guard cannot distinguish these cases, same detail" reasoning), not
+  an oversight specific to this story.
+- **No ownership check ties the acting Waiter to the Order's `waiter_id`** — matches AD-9
+  (Role-level-only permissions) exactly, an explicit, already-documented architecture decision
+  applied consistently across every method in this file, not a gap.
+- **The in-memory computed `Decimal` total might not match the value later reloaded from the
+  `Numeric(10,2)` column** — factually inapplicable: `price_at_add` is always exactly 2 decimal
+  places, and multiplying a 2-decimal `Decimal` by an integer quantity can never produce more than
+  2 decimal places, so no column-level rounding can ever apply.
+- **Test-style nitpick (blank-line spacing, login-helper choice) in the new `test_kitchen.py`
+  case** — both parts are false positives: the spacing matches this file's standard two-blank-line
+  convention, and `_login_as(...)` is this exact file's own established helper (used by every
+  sibling test), not an inconsistency with a different file's `_login_as_cook`.
+
 ## Change Log
 
 | Date | Change |
 |---|---|
 | 2026-08-20 | Story 5.4 created via bmad-create-story: two new guarded transitions on Order.status (mark_served, close_order), the required Kitchen Display served/closed filter fix Story 5.3 deferred here, and the first-time Waiter "tables need attention" nav badge. |
 | 2026-08-20 | Implemented Story 5.4: `OrderService.mark_served`/`close_order` (guarded transitions, AD-6, contrasting with Story 5.3's pure-recompute `_recompute_order_status`), two new exception types, two new `POST /api/orders/{order_id}/serve`\|`/close` routes, the Kitchen Display served/closed exclusion fix, and frontend: `useMarkOrderServed`/`useCloseOrder`, `TableOrderDetailPage.tsx`'s always-visible total bar with Mark served/Close actions (no confirm step), and `AppShell.tsx`'s new Waiter attention-count nav badge. 12 new backend tests (364 total), 2 pre-existing frontend tests updated for the new UI. Full backend suite: 364/364 passed. Full frontend suite: 195/195 passed (1 unrelated, isolation-confirmed flaky timeout in `router.test.tsx`). `npx tsc -b` clean. |
+| 2026-08-21 | Code review patch pass (three parallel agents): fixed `close_order` broadcasting `table.status_changed` as "available" even when the Table's own guarded UPDATE failed to free it (now conditional on the write actually succeeding). Added a genuine concurrent double-close test (two independent `AsyncClient`s, `asyncio.gather`), confirming the guarded Order-status UPDATE alone — not a row lock — correctly serializes two simultaneous `/close` calls. Deferred: client-side JS-float total computation vs. the backend's `Decimal` (bounded, display-only, matches the story's own stated approach); cross-page query invalidation relying on the WebSocket round-trip (matches an existing, documented codebase precedent); no contract test between the backend's and frontend's independently-derived mark-served eligibility checks (both fail safe). 1 new backend test (365 total). |

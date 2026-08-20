@@ -699,7 +699,8 @@ class OrderService:
             .where(RestaurantTable.id == order.table_id, RestaurantTable.status == TableStatus.occupied)
             .values(status=TableStatus.available)
         )
-        if table_result.rowcount == 0:
+        table_freed = table_result.rowcount > 0
+        if not table_freed:
             self._logger.error(
                 "Order close for order_id={} table_id={} did not free the table: table was not"
                 " occupied",
@@ -717,11 +718,14 @@ class OrderService:
             order.table_id,
         )
         await self._broadcast_order_status_changed(db, order)
-        await self._realtime_service.broadcast(
-            [UserRole.waiter],
-            "table.status_changed",
-            {"table_id": order.table_id, "status": TableStatus.available.value},
-        )
+        # Only broadcast the Table as freed if it genuinely was — otherwise a client would be
+        # told the table is available when its DB status never actually changed (review finding).
+        if table_freed:
+            await self._realtime_service.broadcast(
+                [UserRole.waiter],
+                "table.status_changed",
+                {"table_id": order.table_id, "status": TableStatus.available.value},
+            )
         return order
 
     async def _recompute_order_status(self, db: AsyncSession, order_id: int) -> tuple[Order | None, bool]:

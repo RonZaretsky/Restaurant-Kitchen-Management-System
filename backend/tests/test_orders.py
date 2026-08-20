@@ -2003,3 +2003,33 @@ async def test_serve_and_close_role_coverage(client: AsyncClient, db_session: As
     await _login(client, waiter.username)
     assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 200
     assert (await client.post(f"/api/orders/{order['id']}/close")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_concurrent_close_only_one_succeeds(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: a served Order, closeable by two simultaneous requests. Review finding: the
+    # Scope note argues no row lock is needed for close's total computation because the Order
+    # Item set is frozen once served — verify that empirically with a genuine two-connection
+    # concurrency test (asyncio.gather across two independent AsyncClients), the same pattern
+    # Story 5.3's own concurrent-mark-ready test used, not just by reasoning.
+    order, _waiter, table = await _open_table(client, db_session, table_number=89)
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 200
+
+    # Act
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://test", cookies=client.cookies
+    ) as second_client:
+        first_response, second_response = await asyncio.gather(
+            client.post(f"/api/orders/{order['id']}/close"),
+            second_client.post(f"/api/orders/{order['id']}/close"),
+        )
+
+    # Assert: exactly one succeeds, the guarded Order-status UPDATE (not a row lock) is what
+    # serializes the two — the loser's guard finds status already `closed`, not `served`.
+    statuses = sorted([first_response.status_code, second_response.status_code])
+    assert statuses == [200, 409]
+
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.closed
+    updated_table = await db_session.get(RestaurantTable, table["id"])
+    assert updated_table.status is TableStatus.available

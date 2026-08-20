@@ -672,9 +672,28 @@
   stated demo/NFR-5 scale. **Action:** revisit once Story 5.4 ships; if the `closed` filter alone
   doesn't keep the result set small enough in practice, add real pagination to both endpoints
   together rather than piecemeal.
-- **`KitchenService.list_active_items`'s own `Order.status` filter gap (flagged by Story 5.1's
-  and 5.2's reviews) is still open** — this story deliberately left `backend/api/kitchen.py`/
-  `backend/services/kitchen_service.py` untouched (its own Scope note states this explicitly),
-  since nothing can move an Order to `served`/`closed` until Story 5.4 exists. **Action:**
-  unchanged from the prior entries — Story 5.4 is still the one that needs to add the exclusion
-  filter once it makes `served`/`closed` reachable.
+- ~~**`KitchenService.list_active_items`'s own `Order.status` filter gap (flagged by Story 5.1's
+  and 5.2's reviews) is still open**~~ — **Resolved by Story 5.4** (2026-08-20): `list_active_items`
+  now excludes `OrderItem`s belonging to a `served`/`closed` Order, alongside the existing
+  `!= cancelled` filter.
+
+## Deferred from: code review of story-5-4 (2026-08-21)
+
+- **`TableOrderDetailPage.tsx`'s `computeClientSideTotal` sums currency with native JS `Number`
+  arithmetic, while the backend uses `Decimal` (AD-7) for the same computation** — theoretical
+  floating-point drift for the pre-close preview total only (the backend's stored `total_amount`
+  remains authoritative post-close, AC5). Bounded in practice: `price_at_add` is always exactly 2
+  decimal places. **Action:** none planned; would need a decimal-safe JS library to fully close,
+  not worth it for a bounded, display-only preview value.
+- **`useMarkOrderServed`/`useCloseOrder` invalidate only the mutating page's own query key,
+  relying on the WebSocket broadcast round-trip to refresh the Tables grid/nav badge on other
+  pages** — a brief self-observed staleness window if the actor's own socket is mid-reconnect at
+  the moment of their own action. Matches this codebase's existing, documented precedent (the live
+  event refreshes other pages, not the mutating page's own success handler); the
+  `ReconnectingBanner` already surfaces degraded connectivity. **Action:** none planned unless this
+  becomes a recurring real-world complaint.
+- **Mark served's eligibility check is implemented independently on both the backend (trusts
+  `Order.status` alone) and frontend (re-derives from the raw item list) with no shared/contract
+  test asserting the two never diverge** — both directions fail safe. **Action:** revisit only if
+  this pattern (independently-derived, duplicated business logic across the stack) recurs enough
+  to justify a cross-stack contract-testing convention this codebase doesn't have yet.
