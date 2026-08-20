@@ -748,35 +748,59 @@ describe("TableOrderDetailPage", () => {
     expect(await screen.findByRole("button", { name: "Close order" })).toBeDisabled();
   });
 
-  it("falls back to the no-open-order state once the Order query 404s after close", async () => {
-    // Arrange: get_open_order_for_table filters status != closed, so once this Order is closed,
-    // a refetch of the same lookup 404s — the page's existing hasNoOpenOrder branch covers it,
-    // no new "closed" banner needed.
-    let orderIsClosed = false;
+  it("navigates back to the Tables grid once Close succeeds", async () => {
+    // Arrange: a successful close should return the Waiter to the grid immediately, rather than
+    // leaving them on a page whose Order just stopped existing (manual test finding: staying put
+    // showed a stale "no open order" banner layered over the now-closed Order's own content
+    // until a manual reload).
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) => {
+      vi.fn((url: string, init: RequestInit = {}) => {
         const path = String(url);
-        if (path.includes("/api/orders/tables/")) {
-          return orderIsClosed
-            ? Promise.resolve(jsonResponse(404, { detail: "Order not found" }))
-            : Promise.resolve(jsonResponse(200, { ...ORDER, status: "served" }));
-        }
-        if (path.includes("/orders/10/close")) {
-          orderIsClosed = true;
+        if (path.includes("/orders/10/close") && init.method === "POST") {
           return Promise.resolve(jsonResponse(200, { ...ORDER, status: "closed", total_amount: "0.00" }));
         }
-        return stubReads({ items: [] })(url);
+        return stubReads({ order: jsonResponse(200, { ...ORDER, status: "served" }), items: [] })(url);
       }),
     );
     const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     // Act
-    renderPage();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/waiter/tables/1"]}>
+          <RealtimeProvider>
+            <Routes>
+              <Route path="/waiter/tables/:tableId" element={<TableOrderDetailPage />} />
+              <Route path="/waiter/tables" element={<div>Tables grid</div>} />
+            </Routes>
+          </RealtimeProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
     await user.click(await screen.findByRole("button", { name: "Close order" }));
 
     // Assert
+    expect(await screen.findByText("Tables grid")).toBeInTheDocument();
+  });
+
+  it("shows no stale order content once the Order lookup 404s after being closed elsewhere", async () => {
+    // Arrange: reaching this page by URL/refresh after the Order was already closed (not via
+    // this page's own Close button, so no navigation is involved) — the no-open-order banner
+    // and the order's item table/total bar must never render at the same time.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(stubReads({ order: jsonResponse(404, { detail: "Order not found" }) })),
+    );
+
+    // Act
+    renderPage();
+
+    // Assert
     expect(await screen.findByText(/This table has no open order/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close order" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Order total")).not.toBeInTheDocument();
   });
 
   it("shows a retry-capable error when the order cannot be loaded", async () => {

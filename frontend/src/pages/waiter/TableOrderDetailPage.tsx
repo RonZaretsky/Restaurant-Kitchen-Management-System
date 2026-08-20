@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link as RouterLink, useParams } from "react-router";
+import { Link as RouterLink, useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
@@ -137,6 +137,7 @@ function computeClientSideTotal(items: OrderItem[]): string {
  * @returns The total bar with its Mark served / Close actions.
  */
 function OrderTotalBar({ order, items }: { order: Order; items: OrderItem[] }) {
+  const navigate = useNavigate();
   const markServedMutation = useMarkOrderServed(order.id, order.table_id);
   const closeMutation = useCloseOrder(order.id, order.table_id);
 
@@ -179,7 +180,7 @@ function OrderTotalBar({ order, items }: { order: Order; items: OrderItem[] }) {
         </Button>
         <Button
           variant="contained"
-          onClick={() => closeMutation.mutate()}
+          onClick={() => closeMutation.mutate(undefined, { onSuccess: () => navigate("/waiter/tables") })}
           disabled={!canClose || closeMutation.isPending}
         >
           Close order
@@ -594,7 +595,7 @@ export function TableOrderDetailPage() {
         </Alert>
       )}
 
-      {!isLoading && !isError && order && dishes && (
+      {!isLoading && !isError && !hasNoOpenOrder && order && dishes && (
         <>
           {!hasDishes && (
             <Alert severity="info" sx={{ marginBottom: 2 }}>
