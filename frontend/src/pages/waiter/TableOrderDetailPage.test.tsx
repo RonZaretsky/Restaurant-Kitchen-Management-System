@@ -209,7 +209,9 @@ describe("TableOrderDetailPage", () => {
     expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
-    expect(screen.getByText("42.00 ₪")).toBeInTheDocument();
+    // Two matches: the item row's own price cell, and the total bar (Story 5.4), which
+    // happens to equal the same amount for a single qty-1 item.
+    expect(screen.getAllByText("42.00 ₪")).toHaveLength(2);
   });
 
   it("renders an em dash for a note that is present but blank", async () => {
@@ -644,6 +646,137 @@ describe("TableOrderDetailPage", () => {
 
     // Assert
     expect(await screen.findByText("Rejected, item not cancellable")).toBeInTheDocument();
+  });
+
+  it("computes the pre-close total client-side, excluding a cancelled item", async () => {
+    // Arrange: 42.00 (pending, qty 1) + 42.00*2 (in_preparation, qty 2) = 126.00, excluding the
+    // cancelled item's own 42.00.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(stubReads({ items: [PENDING_ITEM, IN_PREPARATION_ITEM, CANCELLED_ITEM] })),
+    );
+
+    // Act
+    renderPage();
+
+    // Assert
+    expect(await screen.findByText("126.00 ₪")).toBeInTheDocument();
+  });
+
+  it("enables Mark served only when the Order is ready or pending-with-zero-items", async () => {
+    // Arrange: pending, with items present (not the zero-item case) — not eligible.
+    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [PENDING_ITEM] })));
+
+    // Act
+    renderPage();
+
+    // Assert
+    expect(await screen.findByRole("button", { name: "Mark served" })).toBeDisabled();
+  });
+
+  it("enables Mark served on a zero-item pending Order", async () => {
+    // Arrange
+    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [] })));
+
+    // Act
+    renderPage();
+
+    // Assert
+    expect(await screen.findByRole("button", { name: "Mark served" })).toBeEnabled();
+  });
+
+  it("enables Mark served on a ready Order and calls the endpoint with no confirm step", async () => {
+    // Arrange
+    const serveMock = vi.fn(() => Promise.resolve(jsonResponse(200, { ...ORDER, status: "served" })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/orders/10/serve") && init.method === "POST") {
+          return serveMock();
+        }
+        return stubReads({ order: jsonResponse(200, { ...ORDER, status: "ready" }), items: [READY_ITEM] })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    const serveButton = await screen.findByRole("button", { name: "Mark served" });
+    expect(serveButton).toBeEnabled();
+    await user.click(serveButton);
+
+    // Assert: fired immediately, no intermediate confirm click required.
+    await vi.waitFor(() => expect(serveMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps Close disabled until the Order is served, then applies immediately with no confirm", async () => {
+    // Arrange
+    const closeMock = vi.fn(() =>
+      Promise.resolve(jsonResponse(200, { ...ORDER, status: "closed", total_amount: "42.00" })),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        const path = String(url);
+        if (path.includes("/orders/10/close") && init.method === "POST") {
+          return closeMock();
+        }
+        return stubReads({ order: jsonResponse(200, { ...ORDER, status: "served" }), items: [READY_ITEM] })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    const closeButton = await screen.findByRole("button", { name: "Close order" });
+    expect(closeButton).toBeEnabled();
+    await user.click(closeButton);
+
+    // Assert: fired immediately, no confirm dialog appeared first.
+    await vi.waitFor(() => expect(closeMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("disables Close on an Order that is not yet served", async () => {
+    // Arrange
+    vi.stubGlobal("fetch", vi.fn(stubReads({ order: jsonResponse(200, { ...ORDER, status: "ready" }), items: [READY_ITEM] })));
+
+    // Act
+    renderPage();
+
+    // Assert
+    expect(await screen.findByRole("button", { name: "Close order" })).toBeDisabled();
+  });
+
+  it("falls back to the no-open-order state once the Order query 404s after close", async () => {
+    // Arrange: get_open_order_for_table filters status != closed, so once this Order is closed,
+    // a refetch of the same lookup 404s — the page's existing hasNoOpenOrder branch covers it,
+    // no new "closed" banner needed.
+    let orderIsClosed = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = String(url);
+        if (path.includes("/api/orders/tables/")) {
+          return orderIsClosed
+            ? Promise.resolve(jsonResponse(404, { detail: "Order not found" }))
+            : Promise.resolve(jsonResponse(200, { ...ORDER, status: "served" }));
+        }
+        if (path.includes("/orders/10/close")) {
+          orderIsClosed = true;
+          return Promise.resolve(jsonResponse(200, { ...ORDER, status: "closed", total_amount: "0.00" }));
+        }
+        return stubReads({ items: [] })(url);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Close order" }));
+
+    // Assert
+    expect(await screen.findByText(/This table has no open order/)).toBeInTheDocument();
   });
 
   it("shows a retry-capable error when the order cannot be loaded", async () => {

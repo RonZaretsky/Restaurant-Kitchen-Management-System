@@ -1,7 +1,8 @@
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_models import (
@@ -28,7 +29,9 @@ from exceptions import (
     OrderItemNotFoundError,
     OrderItemNotInPreparationError,
     OrderItemNotPendingError,
+    OrderNotClosableError,
     OrderNotFoundError,
+    OrderNotServableError,
     TableNotAvailableError,
     TableNotFoundError,
 )
@@ -583,6 +586,143 @@ class OrderService:
             assert updated_order is not None  # order_status_changed is only True when it isn't
             await self._broadcast_order_status_changed(db, updated_order)
         return item
+
+    async def mark_served(self, db: AsyncSession, actor: User, order_id: int) -> Order:
+        """Mark a ready (or zero-item) Order served, a pure status change (AC1, AC2, FR-11).
+
+        A guarded transition (AD-6, trap 18), unlike Story 5.3's `_recompute_order_status`: there
+        is a real expected prior status to check here, not a pure recompute. The guard accepts
+        both `ready` and `pending` because, per FR-12, an Order is `pending` if and only if it
+        currently has zero non-cancelled Order Items — the status column already encodes that
+        fact, so no separate item count is needed.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter marking the Order served.
+            order_id: The id of the Order to mark served.
+
+        Returns:
+            The now-served Order.
+
+        Raises:
+            OrderNotFoundError: If no Order matches order_id.
+            OrderNotServableError: If the Order's status is not ready or pending at the moment of
+                the write (AC2).
+        """
+        order = await self._get_order(db, actor, order_id)
+
+        result = await db.execute(
+            update(Order)
+            .where(Order.id == order_id, Order.status.in_([OrderStatus.ready, OrderStatus.pending]))
+            .values(status=OrderStatus.served)
+        )
+        if result.rowcount == 0:
+            self._logger.warning(
+                "Order mark-served rejected for user_id={}: order_id={} is not ready or pending",
+                actor.id,
+                order_id,
+            )
+            await db.rollback()
+            raise OrderNotServableError()
+
+        await db.commit()
+        await db.refresh(order)
+        self._logger.info(
+            "Order marked served by user_id={}: order_id={}",
+            actor.id,
+            order_id,
+        )
+        await self._broadcast_order_status_changed(db, order)
+        return order
+
+    async def close_order(self, db: AsyncSession, actor: User, order_id: int) -> Order:
+        """Close a served Order, computing its total and freeing its Table (AC3, AC4, AC5, FR-8).
+
+        A guarded transition (AD-6, trap 18): Order.status moves from served to closed, in the
+        same transaction as computing Order.total_amount (sum of price_at_add x quantity over
+        non-cancelled Order Items, AD-7) and returning the owning Table to available. All three
+        writes commit together — a closed Order whose Table never reopened, or vice versa, is a
+        state nothing later can recover from cleanly, the same "things that change together
+        commit together" principle AD-6 already applies to pick-up's stock deduction.
+
+        No row lock is needed for the total's aggregate read (contrast trap 27, Story 5.3): by
+        the time an Order reaches served, every non-cancelled Order Item is already ready
+        (mark_served's own guard only accepts ready/pending, and ready per FR-12 means every
+        non-cancelled item already is), and no later action can change any Order Item's status
+        once its Order is served (cancel_item only accepts pending/in_preparation items, none of
+        which exist once served). The item set is frozen, so reading it here sees a value nothing
+        else can be concurrently mutating.
+
+        Args:
+            db: The active database session.
+            actor: The Waiter closing the Order.
+            order_id: The id of the Order to close.
+
+        Returns:
+            The now-closed Order, with total_amount populated.
+
+        Raises:
+            OrderNotFoundError: If no Order matches order_id.
+            OrderNotClosableError: If the Order's status is not served at the moment of the write
+                (AC4).
+        """
+        order = await self._get_order(db, actor, order_id)
+
+        result = await db.execute(
+            update(Order)
+            .where(Order.id == order_id, Order.status == OrderStatus.served)
+            .values(status=OrderStatus.closed, closed_at=func.now())
+        )
+        if result.rowcount == 0:
+            self._logger.warning(
+                "Order close rejected for user_id={}: order_id={} is not served",
+                actor.id,
+                order_id,
+            )
+            await db.rollback()
+            raise OrderNotClosableError()
+
+        items_result = await db.execute(
+            select(OrderItem.price_at_add, OrderItem.quantity).where(
+                OrderItem.order_id == order_id,
+                OrderItem.status != OrderItemStatus.cancelled,
+            )
+        )
+        total = sum(
+            (price_at_add * quantity for price_at_add, quantity in items_result.all()),
+            start=Decimal("0.00"),
+        )
+        order.total_amount = total
+
+        table_result = await db.execute(
+            update(RestaurantTable)
+            .where(RestaurantTable.id == order.table_id, RestaurantTable.status == TableStatus.occupied)
+            .values(status=TableStatus.available)
+        )
+        if table_result.rowcount == 0:
+            self._logger.error(
+                "Order close for order_id={} table_id={} did not free the table: table was not"
+                " occupied",
+                order_id,
+                order.table_id,
+            )
+
+        await db.commit()
+        await db.refresh(order)
+        self._logger.info(
+            "Order closed by user_id={}: order_id={} total_amount={} table_id={}",
+            actor.id,
+            order_id,
+            order.total_amount,
+            order.table_id,
+        )
+        await self._broadcast_order_status_changed(db, order)
+        await self._realtime_service.broadcast(
+            [UserRole.waiter],
+            "table.status_changed",
+            {"table_id": order.table_id, "status": TableStatus.available.value},
+        )
+        return order
 
     async def _recompute_order_status(self, db: AsyncSession, order_id: int) -> tuple[Order | None, bool]:
         """Recompute Order.status from its non-cancelled Items (FR-12).

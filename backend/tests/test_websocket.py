@@ -809,6 +809,82 @@ async def test_cancelling_one_of_several_pending_items_broadcasts_nothing(db_ses
 
 
 @pytest.mark.asyncio
+async def test_marking_an_order_served_broadcasts_order_status_changed_to_waiter_only(db_session) -> None:
+    # Arrange: a freshly opened Order (zero items, `pending`) — the AC1 "or zero items" branch,
+    # so mark-served needs no item setup to reach an eligible state (Story 5.4).
+    table = RestaurantTable(table_number=9, capacity=4, status=TableStatus.available)
+    db_session.add(table)
+    await db_session.commit()
+    await db_session.refresh(table)
+    await _create_user(db_session, "ws_serve_waiter", role=UserRole.waiter)
+    await _create_user(db_session, "ws_serve_cook", role=UserRole.cook)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_serve_waiter")
+        cook_token = await _login_over_http(port, "ws_serve_cook")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+
+            async with await _connect(port, waiter_token) as waiter_ws:
+                async with await _connect(port, cook_token) as cook_ws:
+                    # Act
+                    serve_response = await http_client.post(f"/api/orders/{order_id}/serve")
+                    assert serve_response.status_code == 200
+
+                    # Assert: the Waiter receives order.status_changed.
+                    order_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
+                    assert order_message["event"] == "order.status_changed"
+                    assert order_message["payload"]["id"] == order_id
+                    assert order_message["payload"]["status"] == "served"
+
+                    # Assert: a connected Cook receives nothing — order.status_changed is
+                    # waiter-only (Story 5.3's own precedent, unchanged here).
+                    with pytest.raises(asyncio.TimeoutError):
+                        await asyncio.wait_for(cook_ws.recv(), timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_closing_an_order_broadcasts_order_status_changed_and_table_status_changed(db_session) -> None:
+    # Arrange: a served Order, ready to close.
+    table = RestaurantTable(table_number=10, capacity=4, status=TableStatus.available)
+    db_session.add(table)
+    await db_session.commit()
+    await db_session.refresh(table)
+    await _create_user(db_session, "ws_close_waiter", role=UserRole.waiter)
+
+    async with _running_server() as port:
+        waiter_token = await _login_over_http(port, "ws_close_waiter")
+
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
+            http_client.cookies.set(COOKIE_NAME, waiter_token)
+            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
+            assert open_response.status_code == 201
+            order_id = open_response.json()["id"]
+            serve_response = await http_client.post(f"/api/orders/{order_id}/serve")
+            assert serve_response.status_code == 200
+
+            async with await _connect(port, waiter_token) as waiter_ws:
+                # Act
+                close_response = await http_client.post(f"/api/orders/{order_id}/close")
+                assert close_response.status_code == 200
+
+                # Assert: order.status_changed first (the reused Story 5.3 helper), then
+                # table.status_changed (the Table returning to available, mirroring open_table's
+                # own broadcast shape).
+                order_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
+                assert order_message["event"] == "order.status_changed"
+                assert order_message["payload"]["status"] == "closed"
+
+                table_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
+                assert table_message["event"] == "table.status_changed"
+                assert table_message["payload"] == {"table_id": table.id, "status": "available"}
+
+
+@pytest.mark.asyncio
 async def test_unserializable_payload_does_not_unsubscribe_the_client(db_session) -> None:
     # Arrange
     await _create_user(db_session, "ws_bad_payload")

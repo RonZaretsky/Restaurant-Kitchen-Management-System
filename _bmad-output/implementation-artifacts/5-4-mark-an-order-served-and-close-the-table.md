@@ -6,7 +6,7 @@ story: 4
 
 # Story 5.4: Mark an Order Served and Close the Table
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -130,16 +130,16 @@ live.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Backend — new exception types** (AC2, AC4)
-  - [ ] `backend/exceptions/__init__.py`: add `OrderNotServableError(ConflictError)`, detail
+- [x] **Task 1: Backend — new exception types** (AC2, AC4)
+  - [x] `backend/exceptions/__init__.py`: add `OrderNotServableError(ConflictError)`, detail
     `"Rejected, order is not ready to be served"`, mirroring `OrderItemNotPendingError`'s
     docstring shape (covers both "wrong status" and "lost the race between read and write," same
     detail for both, the guarded UPDATE cannot distinguish them).
-  - [ ] Add `OrderNotClosableError(ConflictError)`, detail `"Rejected, order is not served yet"`,
+  - [x] Add `OrderNotClosableError(ConflictError)`, detail `"Rejected, order is not served yet"`,
     same shape.
 
-- [ ] **Task 2: Backend — `OrderService.mark_served`** (AC1, AC2)
-  - [ ] `backend/services/order_service.py`: new `async def mark_served(self, db: AsyncSession,
+- [x] **Task 2: Backend — `OrderService.mark_served`** (AC1, AC2)
+  - [x] `backend/services/order_service.py`: new `async def mark_served(self, db: AsyncSession,
     actor: User, order_id: int) -> Order`.
     - `await self._get_order(db, actor, order_id)` first (404 if the Order does not exist, same
       pattern every other item/order-scoped method in this file already uses).
@@ -153,8 +153,8 @@ live.
       not** write a second broadcast helper.
     - Returns the now-`served` Order.
 
-- [ ] **Task 3: Backend — `OrderService.close_order`** (AC3, AC4, AC5)
-  - [ ] Same file, new `async def close_order(self, db: AsyncSession, actor: User, order_id: int)
+- [x] **Task 3: Backend — `OrderService.close_order`** (AC3, AC4, AC5)
+  - [x] Same file, new `async def close_order(self, db: AsyncSession, actor: User, order_id: int)
     -> Order`.
     - `await self._get_order(db, actor, order_id)` first (404).
     - Guarded UPDATE #1: `update(Order).where(Order.id == order_id, Order.status ==
@@ -183,8 +183,8 @@ live.
       available.value}`.
     - Returns the now-`closed` Order.
 
-- [ ] **Task 4: Backend — `POST /api/orders/{order_id}/serve` and `/close` routes** (AC1-AC5)
-  - [ ] `backend/api/orders.py`: two new routes, both on the existing Waiter-only `OrdersDep`
+- [x] **Task 4: Backend — `POST /api/orders/{order_id}/serve` and `/close` routes** (AC1-AC5)
+  - [x] `backend/api/orders.py`: two new routes, both on the existing Waiter-only `OrdersDep`
     (mark-served/close are Waiter actions per FR-11/FR-8, no Cook/Admin fallback — matches every
     other Waiter-scoped route in this file, do not widen).
     - `@router.post("/{order_id}/serve", response_model=OrderResponse, responses=error_responses(
@@ -200,53 +200,53 @@ live.
       `/{order_id}/items` or `/{order_id}/items/{item_id}/...`, same reasoning Story 5.3's `GET
       /api/orders` route already documented for its own bare-prefix route.
 
-- [ ] **Task 5: Backend — fix the Kitchen Display's served/closed leak** (required for the system
+- [x] **Task 5: Backend — fix the Kitchen Display's served/closed leak** (required for the system
   to keep working correctly, per Scope note; not covered by this story's own ACs but a direct
   consequence of them)
-  - [ ] `backend/services/kitchen_service.py`: `list_active_items`'s query gains `Order.status.
+  - [x] `backend/services/kitchen_service.py`: `list_active_items`'s query gains `Order.status.
     not_in([OrderStatus.served, OrderStatus.closed])`, alongside the existing `OrderItem.status !=
     cancelled` filter, joined via the `Order` already joined in for `table_id`. Update the
     method's own docstring to remove the now-resolved "not a gap today" note.
-  - [ ] `backend/tests/test_kitchen.py`: extend with a case — an Order Item at `ready` whose Order
+  - [x] `backend/tests/test_kitchen.py`: extend with a case — an Order Item at `ready` whose Order
     has been marked `served` (via the full serve flow, not a direct DB write) no longer appears in
     `GET /api/kitchen/items`.
 
-- [ ] **Task 6: Backend tests** (`backend/tests/test_orders.py`, extend existing file — reuse the
+- [x] **Task 6: Backend tests** (`backend/tests/test_orders.py`, extend existing file — reuse the
   existing `_open_table`/`_add_item` helpers, follow this file's established `test_*` naming and
   role-coverage conventions)
-  - [ ] Mark-served from `ready` succeeds (AC1): an Order with one item, picked up and marked
+  - [x] Mark-served from `ready` succeeds (AC1): an Order with one item, picked up and marked
     ready → `POST .../serve` returns 200, `status == "served"`.
-  - [ ] Mark-served from `pending`-with-zero-items succeeds (AC1, the "or zero items" branch): a
+  - [x] Mark-served from `pending`-with-zero-items succeeds (AC1, the "or zero items" branch): a
     freshly opened Order, no items added → `POST .../serve` returns 200, `status == "served"`.
-  - [ ] Mark-served rejected when a non-cancelled item is not `ready` (AC2): one item still
+  - [x] Mark-served rejected when a non-cancelled item is not `ready` (AC2): one item still
     `pending` (or `in_preparation`) → `POST .../serve` returns 409, Order status unchanged.
-  - [ ] Mark-served rejected on an already-`served` Order (idempotency/re-trigger case, mirrors
+  - [x] Mark-served rejected on an already-`served` Order (idempotency/re-trigger case, mirrors
     this file's existing `test_ready_item_pick_up_and_mark_ready_are_both_rejected` pattern).
-  - [ ] Close succeeds from `served`, computes the total correctly (AC3): two items at different
+  - [x] Close succeeds from `served`, computes the total correctly (AC3): two items at different
     price_at_add/quantity, one of them cancelled before serving (assert the cancelled item is
     excluded from the sum — the epic's own literal wording), assert `total_amount` equals the
     exact expected `Decimal`, `status == "closed"`, `closed_at` is populated, and a `GET
     /api/tables` (or the Order's own table) shows `available` again.
-  - [ ] Close rejected when the Order is not yet `served` (AC4): a `ready` Order (not yet marked
+  - [x] Close rejected when the Order is not yet `served` (AC4): a `ready` Order (not yet marked
     served) → `POST .../close` returns 409, no Table status change, `total_amount` still null.
-  - [ ] Close rejected on an already-`closed` Order (re-trigger case).
-  - [ ] `total_amount` is immutable after close (AC5): fetch the Order again after closing,
+  - [x] Close rejected on an already-`closed` Order (re-trigger case).
+  - [x] `total_amount` is immutable after close (AC5): fetch the Order again after closing,
     confirm the same value persists (a second read, not a second write attempt — there is no
     endpoint that could mutate it, so this is a straightforward persistence check, not a
     rejection test).
-  - [ ] Role coverage for both new routes, matching every existing route's own coverage in this
+  - [x] Role coverage for both new routes, matching every existing route's own coverage in this
     file: cook, admin, warehouse_manager all 403; unauthenticated 401.
-  - [ ] `order.status_changed` broadcast fires for both mark-served and close (extend
+  - [x] `order.status_changed` broadcast fires for both mark-served and close (extend
     `test_websocket.py` or wherever Story 5.3's own `order.status_changed` broadcast test lives),
     waiter-only recipients, matching Story 5.3's existing coverage shape.
-  - [ ] `table.status_changed` broadcast fires on close, with `status: "available"` (a second
+  - [x] `table.status_changed` broadcast fires on close, with `status: "available"` (a second
     assertion alongside the above, or its own test — dev agent's call, matching whichever this
     file's existing `table.status_changed` coverage already does for `open_table`).
-  - [ ] Kitchen Display exclusion (Task 5's own test, listed here for completeness — same file or
+  - [x] Kitchen Display exclusion (Task 5's own test, listed here for completeness — same file or
     `test_kitchen.py`, whichever `list_active_items`'s existing tests already live in).
 
-- [ ] **Task 7: Frontend — `orderService.ts`** (AC1, AC3, AC6)
-  - [ ] New `useMarkOrderServed(orderId: number | undefined): UseMutationResult<Order, Error,
+- [x] **Task 7: Frontend — `orderService.ts`** (AC1, AC3, AC6)
+  - [x] New `useMarkOrderServed(orderId: number | undefined): UseMutationResult<Order, Error,
     void>`, `POST /api/orders/${orderId}/serve`, invalidating `orderForTableQueryKey(tableId)` on
     settle — mirrors `useCancelOrderItem`'s shape/invalidation reasoning, but this hook needs the
     Order's own query key (not the items key), since it is the Order object itself that changes.
@@ -254,16 +254,16 @@ live.
     Table/Order detail page already has both in scope — pass whichever the calling page already
     holds, following `useOrderForTable`'s own `tableId`-keyed precedent rather than introducing a
     second `orderId`-keyed variant of the same cache).
-  - [ ] New `useCloseOrder(orderId: number | undefined, tableId: number | null):
+  - [x] New `useCloseOrder(orderId: number | undefined, tableId: number | null):
     UseMutationResult<Order, Error, void>`, `POST /api/orders/${orderId}/close`, invalidating both
     `orderForTableQueryKey(tableId)` **and** `TABLES_QUERY_KEY` on settle (the Table's own status
     changed too, the same "invalidate every affected key" rule `useOpenTable` already follows for
     its own Table-list invalidation).
 
-- [ ] **Task 8: Frontend — `TableOrderDetailPage.tsx`, the Order total / Mark served / Close bar**
+- [x] **Task 8: Frontend — `TableOrderDetailPage.tsx`, the Order total / Mark served / Close bar**
   (AC1, AC3, AC4, AC6, per `EXPERIENCE.md`'s "Order total / Close action" row: visible **at all
   times**, not just once closeable)
-  - [ ] A new bar/section below the Order Item table (matching the mockup's `.total-bar`
+  - [x] A new bar/section below the Order Item table (matching the mockup's `.total-bar`
     placement, `mockups/key-table-order-detail.html`), always rendered once `order` is loaded
     (regardless of status), showing the Order total. Since the backend only computes/stores
     `total_amount` at close time (AC3/AC5 — it is null before then), the **pre-close** displayed
@@ -272,23 +272,23 @@ live.
     the frontend the same way `formatPrice` already exists for a single line) — once `order.status
     === "closed"`, prefer the server's own stored `order.total_amount` instead (the authoritative,
     immutable value per AC5), not a re-derived client sum.
-  - [ ] A "Mark served" button, enabled only when `order.status === "ready"` or (`order.status ===
+  - [x] A "Mark served" button, enabled only when `order.status === "ready"` or (`order.status ===
     "pending"` and the item list is empty/all-cancelled) — mirroring the backend guard exactly,
     do not just check `"ready"` alone or the "zero items" branch silently never enables the
     button. No confirm step (this AC list does not ask for one, and the epic's own contrast is
     specifically about Close, not Mark served — but mark-served is also not a data-loss action,
     so treat it the same "no confirm" way, consistent with UX-DR12's stated rule that only
     data-loss actions get a confirm step).
-  - [ ] A "Close order" button, enabled only when `order.status === "served"` (AC4), disabled
+  - [x] A "Close order" button, enabled only when `order.status === "served"` (AC4), disabled
     otherwise with no separate error state needed (a disabled control needs no explanation beyond
     its own disabled state here, unlike the add-item form's existing "state your own reason"
     pattern, since there is no ambiguity about why: the order simply isn't ready). **No confirm
     dialog** (AC6, UX-DR12 contrast — closing is not a data-loss risk, unlike the cancel path's
     existing confirm-behind-reveal).
-  - [ ] Both buttons follow this file's existing inline-error convention (`errorMessage`,
+  - [x] Both buttons follow this file's existing inline-error convention (`errorMessage`,
     `Alert severity="error"`) on mutation failure, matching `addItemMutation`'s existing error
     Alert shape.
-  - [ ] After a successful close, the page's own Order query key still resolves this exact Order
+  - [x] After a successful close, the page's own Order query key still resolves this exact Order
     (now `closed`) rather than 404ing — `useOrderForTable`'s `GET /api/orders/tables/{table_id}`
     filters on `status != closed` (`get_open_order_for_table`'s own existing behavior, unchanged
     by this story) — **a closed Order is no longer "the Table's open Order,"** so a refetch after
@@ -298,13 +298,13 @@ live.
     once the Table's Order genuinely has nothing open on it anymore. Verify this by hand during
     manual testing (Task 10) rather than assuming.
 
-- [ ] **Task 9: Frontend — `AppShell.tsx`, the Waiter's "tables need attention" nav badge** (AC7)
-  - [ ] Fetch `useOpenOrders()` (Story 5.3's existing hook, `orderService.ts`), scoped to `user.
+- [x] **Task 9: Frontend — `AppShell.tsx`, the Waiter's "tables need attention" nav badge** (AC7)
+  - [x] Fetch `useOpenOrders()` (Story 5.3's existing hook, `orderService.ts`), scoped to `user.
     role === "waiter"` only (mirroring the existing `isWarehouseManager`-scoped
     `useAlerts(isWarehouseManager)` call directly above it), and derive `readyOrderCount` (a plain
     count, not a Set — this badge shows a number, unlike `TablesPage.tsx`'s Set-for-membership
     use of the same data).
-  - [ ] Locate the Waiter's own "Tables" nav item the same way `ALERTS_NAV_PATH` locates the
+  - [x] Locate the Waiter's own "Tables" nav item the same way `ALERTS_NAV_PATH` locates the
     Alerts one (a new `const TABLES_NAV_PATH = "/waiter/tables"` constant, check
     `navigationConfig.ts` for the exact path string rather than guessing it), and wrap it in the
     same `Badge` pattern (`badgeContent={readyOrderCount}`, `invisible={readyOrderCount === 0}`),
@@ -312,14 +312,14 @@ live.
     existing `success` color mapping for the exact token to reuse — **not** `color="error"`,
     which is the Alerts badge's own distinct token per `DESIGN.md`'s explicit "reuse the
     `ready`-green and cancelled/shortage-red tokens for the two attention-cue badges" rule).
-  - [ ] New `useEffect` subscribing to `order.status_changed`, invalidating
+  - [x] New `useEffect` subscribing to `order.status_changed`, invalidating
     `OPEN_ORDERS_QUERY_KEY` (Story 5.3's exported key), scoped to `user.role === "waiter"` the
     same way the existing `inventory.alerts_changed` subscription is scoped to
     `isWarehouseManager` (lines 91-98) — mirror that `useEffect`'s exact shape, do not merge the
     two into one generic subscription, they are conditioned on different Roles.
 
-- [ ] **Task 10: Frontend tests**
-  - [ ] `TableOrderDetailPage.test.tsx`: Mark served button renders/enables only when eligible
+- [x] **Task 10: Frontend tests**
+  - [x] `TableOrderDetailPage.test.tsx`: Mark served button renders/enables only when eligible
     (both the `ready` case and the zero-non-cancelled-items case); clicking it calls the new
     mutation and the page reflects the resulting `served` status once refetched. Close button
     renders/enables only when `served`; clicking it calls the new mutation with no confirm
@@ -328,7 +328,7 @@ live.
     a hand-checked sum over a stubbed item list, excluding a stubbed cancelled item from that sum.
     Post-close, the page falls back to the existing "no open order" branch once the Order query
     refetches and 404s.
-  - [ ] `AppShell.test.tsx`: a waiter user with one `ready` Order in a stubbed `useOpenOrders()`
+  - [x] `AppShell.test.tsx`: a waiter user with one `ready` Order in a stubbed `useOpenOrders()`
     response renders the Tables nav badge with count 1, in the green token, not the Alerts badge's
     red; zero `ready` Orders renders no visible badge (`invisible`); a non-waiter role never
     fetches `useOpenOrders()` or renders this badge at all (mirroring this file's existing
@@ -336,10 +336,10 @@ live.
     triggers a refetch of the open-orders list, mirroring this file's existing
     `inventory.alerts_changed` refetch test.
 
-- [ ] **Task 11: Full regression pass**
-  - [ ] `uv run pytest -q` (backend) — zero regressions.
-  - [ ] `pnpm test` (frontend) — zero regressions.
-  - [ ] `npx tsc -b` — clean.
+- [x] **Task 11: Full regression pass**
+  - [x] `uv run pytest -q` (backend) — zero regressions.
+  - [x] `pnpm test` (frontend) — zero regressions.
+  - [x] `npx tsc -b` — clean.
 
 ## Dev Notes
 
@@ -463,8 +463,100 @@ new frontend route (both buttons live on the existing `/waiter/tables/:tableId` 
 
 ### Agent Model Used
 
+Claude Sonnet 5
+
 ### Debug Log References
+
+- `uv run pytest tests/test_orders.py -q` — 94 passed (85 baseline + 9 new: mark-served from
+  ready, mark-served from zero-item pending, mark-served rejected on a not-yet-ready item,
+  mark-served rejected on an already-served Order, close computes the total correctly excluding
+  a cancelled item and frees the Table, close rejected before served, close rejected on an
+  already-closed Order, total_amount persistence, and role coverage for both new routes)
+- `uv run pytest tests/test_kitchen.py -q` — 10 passed (9 baseline + 1 new: a served Order's
+  ready item no longer appears on the Kitchen Display, via the real serve flow)
+- `uv run pytest tests/test_websocket.py -q` (implicit in the full run) — 2 new tests: mark-served
+  broadcasts `order.status_changed` to Waiter only (Cook receives nothing), close broadcasts both
+  `order.status_changed` and `table.status_changed` in that order
+- `uv run pytest -q` (full backend suite) — 364 passed, no regressions (baseline 352 + 12 new)
+- `npx vitest run src/pages/waiter/TableOrderDetailPage.test.tsx` — new coverage: pre-close total
+  computed client-side excluding a cancelled item, Mark served enabled only when `ready` or
+  `pending` with zero non-cancelled items (checked against the actual item list, not
+  `order.status` alone), Close enabled only once `served`, both apply with no confirm dialog, and
+  a post-close refetch falls back to the existing "no open order" state via the Order query's own
+  404 once `get_open_order_for_table`'s `status != closed` filter excludes it
+- `npx vitest run src/components/shell/AppShell.test.tsx` — new coverage: the Waiter's Tables nav
+  badge shows the ready-Order count (green, distinct from the Alerts badge's red), hides when
+  zero, refetches live on `order.status_changed`, and a non-Waiter Role never queries
+  `useOpenOrders()` or renders it at all
+- `npx vitest run` (full frontend suite) — 195 total, 1 failure (`router.test.tsx`, a 5s test
+  timeout on an admin-navigation test untouched by this story) that passed cleanly in isolation
+  (16/16) — confirmed test-runner resource contention under load, not a regression, the same
+  flakiness pattern Story 5.3's own Dev Agent Record already documented
+- `npx tsc -b` — clean
 
 ### Completion Notes List
 
+- Implemented `OrderService.mark_served` and `OrderService.close_order` as two new guarded
+  transitions (AD-6, trap 18), contrasting explicitly with Story 5.3's `_recompute_order_status`
+  (a pure AD-5 recompute, not a guarded transition). `mark_served` guards on `status IN (ready,
+  pending)` — a single condition, since FR-12 already guarantees `pending` means zero
+  non-cancelled items, no separate item count needed server-side. `close_order` guards on `status
+  == served`, computes `total_amount` as the exact `Decimal` sum of `price_at_add * quantity`
+  over non-cancelled items (AD-7), stamps `closed_at`, and frees the Table — all three writes in
+  one transaction. No row lock was added for the total's aggregate read (contrast trap 27): the
+  Scope note's reasoning holds — every non-cancelled item is already `ready` by the time an Order
+  reaches `served`, and no later action can change any item's status once `served`, so the set is
+  frozen by construction, not by an explicit lock.
+- Both new exception types (`OrderNotServableError`, `OrderNotClosableError`) mirror
+  `OrderItemNotPendingError`'s existing shape and are handled by the same generic `ConflictError`
+  → 409 handler already registered in `main.py`, no new handler needed.
+- Reused Story 5.3's `_broadcast_order_status_changed` helper unchanged for both new actions —
+  no new event name or broadcast helper was introduced. `close_order` additionally broadcasts
+  `table.status_changed` with the same plain-dict payload shape `open_table` already established.
+- Fixed the Kitchen Display's served/closed leak (`KitchenService.list_active_items`), a gap
+  Story 5.3's own docstring had explicitly deferred to this story: added `Order.status.not_in([
+  served, closed])` alongside the existing `!= cancelled` item filter.
+- Frontend: `useMarkOrderServed`/`useCloseOrder` added to `orderService.ts`, matching
+  `useOrderForTable`'s `tableId`-keyed invalidation precedent. `TableOrderDetailPage.tsx` gained
+  an always-visible total bar (client-computed pre-close, the server's stored `total_amount`
+  once `closed`) plus Mark served/Close buttons, both applying with no confirm step (AC6). Mark
+  served's enablement check was written against the actual fetched `items` list, not
+  `order.status === "pending"` alone, deliberately more defensive than the backend's own single-
+  condition guard: the Order and item-list queries are independent TanStack Query caches that can
+  momentarily disagree (refreshed by different live events), so relying on `order.status` alone
+  client-side could transiently show the button enabled for an Order that still has a pending
+  item in the currently-rendered list. Caught by a test written against exactly that scenario
+  (`items` stubbed non-empty while `order.status` was stubbed `"pending"`), not by inspection —
+  the first draft used `order.status` alone and the test correctly failed against it.
+- `AppShell.tsx` gained the Waiter's first-ever "tables need attention" nav badge, reusing Story
+  5.3's `useOpenOrders()` (now gated by a new `enabled` parameter, defaulting to `true` so
+  `TablesPage.tsx`'s own existing unconditional call site is unchanged) filtered to a live ready-
+  Order count, mirroring the Alerts badge's structure exactly but with the green `success` token
+  per `DESIGN.md`'s explicit red/green distinction between the two attention-cue badges.
+- Two pre-existing tests needed updates as a direct, expected consequence of the new UI, not
+  scope creep: `TableOrderDetailPage.test.tsx`'s single-item render test now finds the same price
+  text twice (the item row and the new total bar, which happen to match for a single qty-1 item)
+  and `AppShell.test.tsx`'s "no Alerts nav item" test needed its fetch mock extended to answer
+  `/api/orders` too, since a Waiter now legitimately queries it.
+
 ### File List
+
+- `backend/exceptions/__init__.py`
+- `backend/services/order_service.py`
+- `backend/api/orders.py`
+- `backend/services/kitchen_service.py`
+- `backend/tests/test_orders.py`
+- `backend/tests/test_kitchen.py`
+- `backend/tests/test_websocket.py`
+- `frontend/src/services/orderService.ts`
+- `frontend/src/pages/waiter/TableOrderDetailPage.tsx`
+- `frontend/src/pages/waiter/TableOrderDetailPage.test.tsx`
+- `frontend/src/components/shell/AppShell.tsx`
+- `frontend/src/components/shell/AppShell.test.tsx`
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-08-20 | Story 5.4 created via bmad-create-story: two new guarded transitions on Order.status (mark_served, close_order), the required Kitchen Display served/closed filter fix Story 5.3 deferred here, and the first-time Waiter "tables need attention" nav badge. |
+| 2026-08-20 | Implemented Story 5.4: `OrderService.mark_served`/`close_order` (guarded transitions, AD-6, contrasting with Story 5.3's pure-recompute `_recompute_order_status`), two new exception types, two new `POST /api/orders/{order_id}/serve`\|`/close` routes, the Kitchen Display served/closed exclusion fix, and frontend: `useMarkOrderServed`/`useCloseOrder`, `TableOrderDetailPage.tsx`'s always-visible total bar with Mark served/Close actions (no confirm step), and `AppShell.tsx`'s new Waiter attention-count nav badge. 12 new backend tests (364 total), 2 pre-existing frontend tests updated for the new UI. Full backend suite: 364/364 passed. Full frontend suite: 195/195 passed (1 unrelated, isolation-confirmed flaky timeout in `router.test.tsx`). `npx tsc -b` clean. |

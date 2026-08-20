@@ -1802,3 +1802,204 @@ async def test_concurrent_mark_ready_on_sibling_items_converges_order_to_ready(
     assert second_response.status_code == 200
     db_session.expire_all()
     assert (await db_session.get(Order, order["id"])).status is OrderStatus.ready
+
+
+@pytest.mark.asyncio
+async def test_marking_a_ready_order_served_succeeds(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Serve Ready Dish")
+    order, waiter, _table = await _open_table(client, db_session, table_number=80)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "serve-ready-cook")
+    assert (await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")).status_code == 200
+    assert (await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")).status_code == 200
+    await _login(client, waiter.username)
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/serve")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["status"] == "served"
+
+
+@pytest.mark.asyncio
+async def test_marking_a_zero_item_order_served_succeeds(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: a freshly opened Order, no items added — per FR-12, status is `pending` if and
+    # only if there are zero non-cancelled items, so this is the AC1 "or zero items" branch.
+    order, _waiter, _table = await _open_table(client, db_session, table_number=81)
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/serve")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["status"] == "served"
+
+
+@pytest.mark.asyncio
+async def test_marking_served_rejected_when_an_item_is_not_yet_ready(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Serve Not Ready Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=82)
+    await _add_item(client, order["id"], dish["id"])
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/serve")
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, order is not ready to be served"
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.in_preparation
+
+
+@pytest.mark.asyncio
+async def test_marking_an_already_served_order_served_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=83)
+    first = await client.post(f"/api/orders/{order['id']}/serve")
+    assert first.status_code == 200
+
+    # Act
+    second = await client.post(f"/api/orders/{order['id']}/serve")
+
+    # Assert
+    assert second.status_code == 409
+    assert second.json()["detail"] == "Rejected, order is not ready to be served"
+
+
+@pytest.mark.asyncio
+async def test_closing_a_served_order_computes_the_total_and_frees_the_table(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: two items that end up ready (different price/quantity, so the sum is only correct
+    # if both are actually included), plus a third item cancelled before serving, which must be
+    # excluded from the total (AD-7, the epic's own literal wording).
+    dish_a = await _create_available_dish(client, db_session, name="Close Total Dish A", price="12.50")
+    dish_b = await _create_available_dish(client, db_session, name="Close Total Dish B", price="20.00")
+    order, waiter, table = await _open_table(client, db_session, table_number=84)
+    item_a = await _add_item(client, order["id"], dish_a["id"], quantity=2)
+    item_b = await _add_item(client, order["id"], dish_b["id"], quantity=1)
+    cancelled_item = await _add_item(client, order["id"], dish_a["id"], quantity=5)
+    cancel_response = await client.post(f"/api/orders/{order['id']}/items/{cancelled_item['id']}/cancel")
+    assert cancel_response.status_code == 200
+
+    await _login_as_cook(client, db_session, "close-total-cook")
+    for item in (item_a, item_b):
+        assert (await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")).status_code == 200
+        assert (await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")).status_code == 200
+
+    await _login(client, waiter.username)
+    serve_response = await client.post(f"/api/orders/{order['id']}/serve")
+    assert serve_response.status_code == 200
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/close")
+
+    # Assert
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "closed"
+    assert Decimal(body["total_amount"]) == Decimal("12.50") * 2 + Decimal("20.00") * 1
+    assert body["closed_at"] is not None
+
+    db_session.expire_all()
+    updated_table = await db_session.get(RestaurantTable, table["id"])
+    assert updated_table.status is TableStatus.available
+
+
+@pytest.mark.asyncio
+async def test_closing_an_order_that_is_not_yet_served_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: a ready Order (not yet marked served).
+    dish = await _create_available_dish(client, db_session, name="Close Not Served Dish")
+    order, waiter, table = await _open_table(client, db_session, table_number=85)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "close-not-served-cook")
+    assert (await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")).status_code == 200
+    assert (await client.post(f"/api/orders/{order['id']}/items/{item['id']}/mark-ready")).status_code == 200
+    await _login(client, waiter.username)
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/close")
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, order is not served yet"
+    db_session.expire_all()
+    assert (await db_session.get(Order, order["id"])).total_amount is None
+    updated_table = await db_session.get(RestaurantTable, table["id"])
+    assert updated_table.status is TableStatus.occupied
+
+
+@pytest.mark.asyncio
+async def test_closing_an_already_closed_order_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=86)
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 200
+    first = await client.post(f"/api/orders/{order['id']}/close")
+    assert first.status_code == 200
+
+    # Act
+    second = await client.post(f"/api/orders/{order['id']}/close")
+
+    # Assert
+    assert second.status_code == 409
+    assert second.json()["detail"] == "Rejected, order is not served yet"
+
+
+@pytest.mark.asyncio
+async def test_total_amount_persists_unchanged_after_close(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange (AC5): closing computes and stores total_amount; a second, later read must still
+    # show the same value — there is no endpoint that could mutate it afterward, so this is a
+    # persistence check, not a rejection test.
+    order, _waiter, _table = await _open_table(client, db_session, table_number=87)
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 200
+    close_response = await client.post(f"/api/orders/{order['id']}/close")
+    assert close_response.status_code == 200
+    first_total = close_response.json()["total_amount"]
+
+    # Act
+    db_session.expire_all()
+    reread = await db_session.get(Order, order["id"])
+
+    # Assert
+    assert str(reread.total_amount) == first_total or reread.total_amount == Decimal(first_total)
+
+
+@pytest.mark.asyncio
+async def test_serve_and_close_role_coverage(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, waiter, _table = await _open_table(client, db_session, table_number=88)
+
+    # Act/Assert: cook, admin, warehouse_manager all 403 on both routes (OrdersDep is
+    # Waiter-only, no Admin fallback, matching every other route in this file gated on it).
+    await _create_user(db_session, "serve-close-cook", UserRole.cook)
+    await _login(client, "serve-close-cook")
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 403
+    assert (await client.post(f"/api/orders/{order['id']}/close")).status_code == 403
+
+    await _login_as_admin(client, db_session, "serve-close-admin")
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 403
+    assert (await client.post(f"/api/orders/{order['id']}/close")).status_code == 403
+
+    await _create_user(db_session, "serve-close-wm", UserRole.warehouse_manager)
+    await _login(client, "serve-close-wm")
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 403
+    assert (await client.post(f"/api/orders/{order['id']}/close")).status_code == 403
+
+    # Act/Assert: unauthenticated is rejected.
+    client.cookies.clear()
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 401
+    assert (await client.post(f"/api/orders/{order['id']}/close")).status_code == 401
+
+    # Act/Assert: the Waiter who owns the Order can still serve/close it.
+    await _login(client, waiter.username)
+    assert (await client.post(f"/api/orders/{order['id']}/serve")).status_code == 200
+    assert (await client.post(f"/api/orders/{order['id']}/close")).status_code == 200

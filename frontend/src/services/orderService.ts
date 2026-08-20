@@ -107,14 +107,19 @@ export const OPEN_ORDERS_QUERY_KEY = ["orders", "open"] as const;
  *
  * Backs the Tables grid's need to know, across every occupied Table at once, whether that
  * Table's Order is `ready`, to render the attention-state tile treatment — one bulk query
- * resolved client-side into a table_id -> status lookup, not a per-tile request.
+ * resolved client-side into a table_id -> status lookup, not a per-tile request. `enabled`
+ * defaults to true (TablesPage.tsx's own unconditional call site, unchanged); AppShell.tsx
+ * (Story 5.4) passes `isWaiter` explicitly, mirroring `useAlerts`'s own Role-gating shape — the
+ * backing route is Waiter-only, so an ungated call from a non-Waiter role would 403.
  *
+ * @param enabled - Whether the query should run at all.
  * @returns The TanStack Query result for every open Order.
  */
-export function useOpenOrders(): UseQueryResult<Order[], Error> {
+export function useOpenOrders(enabled = true): UseQueryResult<Order[], Error> {
   return useQuery({
     queryKey: OPEN_ORDERS_QUERY_KEY,
     queryFn: () => apiRequest<Order[]>("/api/orders"),
+    enabled,
     retry: false,
   });
 }
@@ -258,5 +263,53 @@ export function useMarkItemReady(): UseMutationResult<OrderItem, Error, PickUpOr
     mutationFn: ({ orderId, itemId }: PickUpOrMarkReadyVariables) =>
       apiRequest<OrderItem>(`/api/orders/${orderId}/items/${itemId}/mark-ready`, { method: "POST" }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY }),
+  });
+}
+
+/**
+ * Marks a ready (or zero-item) Order served, a pure status change (Story 5.4, AC1, AC2).
+ *
+ * Invalidates `orderForTableQueryKey(tableId)` on settle — it is the Order object itself that
+ * changes here, not its item list, mirroring `useOrderForTable`'s own tableId-keyed cache
+ * precedent rather than introducing a second orderId-keyed variant of the same data.
+ *
+ * @param orderId - The Order to mark served, or undefined before it is known.
+ * @param tableId - The Table this Order belongs to, or null if not yet known.
+ * @returns The TanStack Query mutation for marking an Order served.
+ */
+export function useMarkOrderServed(
+  orderId: number | undefined,
+  tableId: number | null,
+): UseMutationResult<Order, Error, void> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => apiRequest<Order>(`/api/orders/${orderId}/serve`, { method: "POST" }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: orderForTableQueryKey(tableId) }),
+  });
+}
+
+/**
+ * Closes a served Order, computing its total and freeing its Table (Story 5.4, AC3, AC4, AC5).
+ *
+ * Invalidates both the Order key and the Table list on settle — the Table's own status changed
+ * too, the same "invalidate every affected key" rule `useOpenTable` already follows.
+ *
+ * @param orderId - The Order to close, or undefined before it is known.
+ * @param tableId - The Table this Order belongs to, or null if not yet known.
+ * @returns The TanStack Query mutation for closing an Order.
+ */
+export function useCloseOrder(
+  orderId: number | undefined,
+  tableId: number | null,
+): UseMutationResult<Order, Error, void> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => apiRequest<Order>(`/api/orders/${orderId}/close`, { method: "POST" }),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: orderForTableQueryKey(tableId) });
+      await queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY });
+    },
   });
 }

@@ -101,7 +101,7 @@ development_status:
   5-1-view-incoming-orders-in-real-time-kitchen-display: done
   5-2-pick-up-and-progress-an-order-item-with-atomic-stock-deduction: done
   5-3-order-status-derives-from-its-items: done
-  5-4-mark-an-order-served-and-close-the-table: ready-for-dev
+  5-4-mark-an-order-served-and-close-the-table: review
   5-5-live-update-the-kitchen-display-and-waiter-screen-on-cancel-edit: backlog
   epic-5-retrospective: optional
 

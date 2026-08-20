@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import Ingredient, OrderItem, OrderItemStatus, Unit, User, UserRole
+from data_models import Ingredient, Order, OrderItem, OrderItemStatus, OrderStatus, Unit, User, UserRole
 from services.auth_service import AuthService
 
 _PASSWORD = "correct-horse-battery-staple"
@@ -194,6 +194,33 @@ async def test_in_preparation_and_ready_items_are_included(
     # Assert
     ids = {row["id"] for row in response.json()}
     assert ids == {pending_item["id"], in_prep_item["id"], ready_item["id"]}
+
+
+@pytest.mark.asyncio
+async def test_a_served_orders_ready_item_is_excluded(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: a ready item whose Order is then marked served via the real serve flow (Story
+    # 5.4), not a direct DB write — this is the gap Story 5.3's own docstring flagged: a served
+    # Order's items keep their own ready status and would otherwise leak onto this board forever.
+    order, _table = await _open_table(client, db_session, table_number=1)
+    dish = await _create_available_dish(client, db_session, "Served Leak Dish")
+    await _login(client, "waiter-1")
+    item = await _add_item(client, order["id"], dish["id"])
+    ready_row = await db_session.get(OrderItem, item["id"])
+    ready_row.status = OrderItemStatus.ready
+    order_row = await db_session.get(Order, order["id"])
+    order_row.status = OrderStatus.ready
+    await db_session.commit()
+
+    serve_response = await client.post(f"/api/orders/{order['id']}/serve")
+    assert serve_response.status_code == 200
+
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.get("/api/kitchen/items")
+
+    # Assert
+    assert response.json() == []
 
 
 @pytest.mark.asyncio
