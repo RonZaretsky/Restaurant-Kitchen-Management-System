@@ -139,7 +139,7 @@ function computeClientSideTotal(items: OrderItem[]): string {
 function OrderTotalBar({ order, items }: { order: Order; items: OrderItem[] }) {
   const navigate = useNavigate();
   const markServedMutation = useMarkOrderServed(order.id, order.table_id);
-  const closeMutation = useCloseOrder(order.id, order.table_id);
+  const closeMutation = useCloseOrder(order.id);
 
   const canMarkServed =
     order.status === "ready" ||

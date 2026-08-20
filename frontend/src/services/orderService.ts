@@ -292,24 +292,22 @@ export function useMarkOrderServed(
 /**
  * Closes a served Order, computing its total and freeing its Table (Story 5.4, AC3, AC4, AC5).
  *
- * Invalidates both the Order key and the Table list on settle — the Table's own status changed
- * too, the same "invalidate every affected key" rule `useOpenTable` already follows.
+ * Invalidates only the Table list on settle, deliberately not this Order's own key: a successful
+ * close means there is no longer anything open on this Table, and the caller navigates away from
+ * this Order's page immediately on success (manual test finding — invalidating
+ * `orderForTableQueryKey` here raced the navigation, letting the "no open order" banner flash
+ * before the route change committed). `TABLES_QUERY_KEY` still needs invalidating: the Table's
+ * own status changed, and the grid the caller navigates to depends on it, the same
+ * "invalidate every affected key" rule `useOpenTable` already follows.
  *
  * @param orderId - The Order to close, or undefined before it is known.
- * @param tableId - The Table this Order belongs to, or null if not yet known.
  * @returns The TanStack Query mutation for closing an Order.
  */
-export function useCloseOrder(
-  orderId: number | undefined,
-  tableId: number | null,
-): UseMutationResult<Order, Error, void> {
+export function useCloseOrder(orderId: number | undefined): UseMutationResult<Order, Error, void> {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: () => apiRequest<Order>(`/api/orders/${orderId}/close`, { method: "POST" }),
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: orderForTableQueryKey(tableId) });
-      await queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY });
-    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: TABLES_QUERY_KEY }),
   });
 }
