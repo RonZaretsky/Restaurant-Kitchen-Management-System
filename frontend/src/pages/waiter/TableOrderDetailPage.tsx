@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link as RouterLink, useParams } from "react-router";
+import { Link as RouterLink, useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
@@ -24,12 +24,14 @@ import {
   orderItemsQueryKey,
   useAddOrderItem,
   useCancelOrderItem,
+  useCloseOrder,
   useEditOrderItem,
+  useMarkOrderServed,
   useOrderForTable,
   useOrderItems,
 } from "../../services/orderService";
 import { useTables } from "../../services/tableService";
-import { MAX_ORDER_ITEM_QUANTITY, type OrderItem } from "../../types/order";
+import { MAX_ORDER_ITEM_QUANTITY, type Order, type OrderItem } from "../../types/order";
 
 /** Shown when a request fails for a reason that carries no user-safe message of its own. */
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
@@ -98,6 +100,104 @@ function parseQuantity(raw: string): number | null {
  */
 function formatPrice(priceAtAdd: string): string {
   return `${priceAtAdd} ₪`;
+}
+
+/**
+ * Computes the Order total client-side, from the already-fetched item list (Story 5.4, AD-7).
+ *
+ * The backend only computes/stores `total_amount` at close time (it is null before then), so the
+ * pre-close total shown here is derived the same way the server will eventually compute it: the
+ * sum of `price_at_add x quantity` over non-cancelled items only.
+ *
+ * @param items - The Order's current item list.
+ * @returns The computed total, formatted with two decimal places (no currency symbol).
+ */
+function computeClientSideTotal(items: OrderItem[]): string {
+  const total = items
+    .filter((item) => item.status !== "cancelled")
+    .reduce((sum, item) => sum + Number(item.price_at_add) * item.quantity, 0);
+  return total.toFixed(2);
+}
+
+/**
+ * The Order total / Mark served / Close bar (Story 5.4), always visible once the Order is
+ * loaded, per `EXPERIENCE.md`'s "Order total / Close action" row.
+ *
+ * The displayed total is the server's own stored `total_amount` once the Order is `closed` (the
+ * authoritative, immutable value, AC5); before that it is computed client-side from `items`
+ * (AD-7). Mark served mirrors the backend's own guard (`ready`, or `pending` with zero
+ * non-cancelled items, AC1/AC2) — checked against the already-fetched `items` list directly
+ * rather than trusting `order.status === "pending"` alone, since the Order and item-list queries
+ * can momentarily disagree (independent TanStack Query caches, refreshed by different live
+ * events). Close is enabled only once `served` (AC4) and applies immediately with no confirm step
+ * (AC6, UX-DR12 contrast — unlike the cancel path above, this is not a data-loss risk).
+ *
+ * @param order - The Order this bar describes.
+ * @param items - The Order's current item list, used for the pre-close total.
+ * @returns The total bar with its Mark served / Close actions.
+ */
+function OrderTotalBar({ order, items }: { order: Order; items: OrderItem[] }) {
+  const navigate = useNavigate();
+  const markServedMutation = useMarkOrderServed(order.id, order.table_id);
+  const closeMutation = useCloseOrder(order.id);
+
+  const canMarkServed =
+    order.status === "ready" ||
+    (order.status === "pending" && items.every((item) => item.status === "cancelled"));
+  const canClose = order.status === "served";
+  const displayedTotal = order.status === "closed" && order.total_amount !== null
+    ? order.total_amount
+    : computeClientSideTotal(items);
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 2,
+        marginTop: 3,
+        padding: 2,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      <Box>
+        <Typography variant="caption" color="text.secondary">
+          Order total
+        </Typography>
+        <Typography variant="h6">{formatPrice(displayedTotal)}</Typography>
+      </Box>
+      <Box sx={{ display: "flex", gap: 1 }}>
+        <Button
+          variant="outlined"
+          onClick={() => markServedMutation.mutate()}
+          disabled={!canMarkServed || markServedMutation.isPending}
+        >
+          Mark served
+        </Button>
+        <Button
+          variant="contained"
+          onClick={() => closeMutation.mutate(undefined, { onSuccess: () => navigate("/waiter/tables") })}
+          disabled={!canClose || closeMutation.isPending}
+        >
+          Close order
+        </Button>
+      </Box>
+      {markServedMutation.isError && (
+        <Alert severity="error" sx={{ width: "100%" }}>
+          {errorMessage(markServedMutation.error)}
+        </Alert>
+      )}
+      {closeMutation.isError && (
+        <Alert severity="error" sx={{ width: "100%" }}>
+          {errorMessage(closeMutation.error)}
+        </Alert>
+      )}
+    </Box>
+  );
 }
 
 /**
@@ -495,7 +595,7 @@ export function TableOrderDetailPage() {
         </Alert>
       )}
 
-      {!isLoading && !isError && order && dishes && (
+      {!isLoading && !isError && !hasNoOpenOrder && order && dishes && (
         <>
           {!hasDishes && (
             <Alert severity="info" sx={{ marginBottom: 2 }}>
@@ -580,6 +680,8 @@ export function TableOrderDetailPage() {
               </TableBody>
             </Table>
           )}
+
+          <OrderTotalBar order={order} items={items ?? []} />
         </>
       )}
     </>

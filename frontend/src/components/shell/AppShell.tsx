@@ -14,16 +14,19 @@ import { NavLink, Outlet } from "react-router";
 import { ALERTS_QUERY_KEY, useAlerts } from "../../services/inventoryService";
 import { useLogout } from "../../services/authService";
 import { ApiError } from "../../services/httpClient";
+import { OPEN_ORDERS_QUERY_KEY, useOpenOrders } from "../../services/orderService";
 import type { CurrentUser, UserRole } from "../../types/user";
 import { useRealtime } from "./RealtimeProvider";
 import { ReconnectingBanner } from "./ReconnectingBanner";
 import { ThemeToggle } from "./ThemeToggle";
 import { ROLE_NAV_ITEMS } from "./navigationConfig";
 
-// The one nav item that carries a live count badge today (Story 4.2). A
-// per-path badge-lookup map would be premature abstraction: no second nav
-// badge exists anywhere in this codebase yet to justify it.
+// The Warehouse Manager's live count badge (Story 4.2, red, an unresolved problem).
 const ALERTS_NAV_PATH = "/warehouse/alerts";
+
+// The Waiter's "tables need attention" live count badge (Story 5.4, green, a positive/actionable
+// state per DESIGN.md's nav-badge-attention token — deliberately not the Alerts badge's red).
+const TABLES_NAV_PATH = "/waiter/tables";
 
 const ROLE_LABELS: Record<UserRole, string> = {
   admin: "Admin",
@@ -97,6 +100,25 @@ export function AppShell({ user }: { user: CurrentUser }) {
     });
   }, [isWarehouseManager, subscribe, queryClient]);
 
+  // Story 5.4: only a waiter has a Tables nav item, same scoping shape as the Alerts badge
+  // above. useOpenOrders() (Story 5.3) is shared via TanStack Query's own cache with
+  // TablesPage.tsx's own call to the same hook, so this is not a duplicate network request.
+  // "Clears automatically" (FR-11) falls out for free: once mark-served's order.status_changed
+  // broadcast lands, this query refetches and the now-served Order simply drops out of the
+  // ready count, no explicit "clear" logic needed.
+  const isWaiter = user.role === "waiter";
+  const { data: openOrders } = useOpenOrders(isWaiter);
+  const readyOrderCount = openOrders?.filter((order) => order.status === "ready").length ?? 0;
+
+  useEffect(() => {
+    if (!isWaiter) {
+      return;
+    }
+    return subscribe("order.status_changed", () => {
+      void queryClient.invalidateQueries({ queryKey: OPEN_ORDERS_QUERY_KEY });
+    });
+  }, [isWaiter, subscribe, queryClient]);
+
   return (
     <>
       <AppBar position="static">
@@ -108,6 +130,15 @@ export function AppShell({ user }: { user: CurrentUser }) {
             {navItems.map((item) =>
               item.path === ALERTS_NAV_PATH ? (
                 <Badge key={item.path} badgeContent={alertCount} color="error" invisible={alertCount === 0}>
+                  <NavItem to={item.path}>{item.label}</NavItem>
+                </Badge>
+              ) : item.path === TABLES_NAV_PATH ? (
+                <Badge
+                  key={item.path}
+                  badgeContent={readyOrderCount}
+                  color="success"
+                  invisible={readyOrderCount === 0}
+                >
                   <NavItem to={item.path}>{item.label}</NavItem>
                 </Badge>
               ) : (

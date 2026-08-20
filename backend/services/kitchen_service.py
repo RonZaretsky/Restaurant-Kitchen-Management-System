@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import KitchenItemResponse, Order, OrderItem, OrderItemStatus
+from data_models import KitchenItemResponse, Order, OrderItem, OrderItemStatus, OrderStatus
 
 
 class KitchenService:
@@ -34,24 +34,26 @@ class KitchenService:
         table_id of its own, only order_id, and the Kitchen Display's whole point is grouping by
         Table, so Order.table_id is joined in rather than resolved via a second per-item request.
 
-        Filter scope: OrderItem.status != cancelled only, no filter on the owning Order's own
-        status. Nothing in this codebase can move an Order to served/closed yet (Stories 5.3/5.4),
-        so this is not a gap today; once those ship, this query will need
-        Order.status not in (served, closed) added too, since a served Order's items keep their
-        own ready status and would otherwise leak onto this board forever (see the story's Scope
-        note point 4).
+        Filter scope: OrderItem.status != cancelled, plus (Story 5.4) Order.status not in (served,
+        closed) — a served/closed Order's items keep their own ready status and would otherwise
+        leak onto this board forever, now that Story 5.4 makes served/closed Orders reachable for
+        the first time.
 
         Args:
             db: The active database session.
 
         Returns:
-            Every non-cancelled Order Item, ordered by table_id then item id (oldest-added first
-            within a table), each carrying its own resolved table_id.
+            Every non-cancelled Order Item belonging to a not-yet-served Order, ordered by
+            table_id then item id (oldest-added first within a table), each carrying its own
+            resolved table_id.
         """
         result = await db.execute(
             select(OrderItem, Order.table_id)
             .join(Order, OrderItem.order_id == Order.id)
-            .where(OrderItem.status != OrderItemStatus.cancelled)
+            .where(
+                OrderItem.status != OrderItemStatus.cancelled,
+                Order.status.not_in([OrderStatus.served, OrderStatus.closed]),
+            )
             .order_by(Order.table_id, OrderItem.id)
         )
         return [KitchenItemResponse.from_item(item, table_id) for item, table_id in result.all()]

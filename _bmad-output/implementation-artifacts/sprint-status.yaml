@@ -1,5 +1,5 @@
 # generated: 2026-08-08
-# last_updated: 2026-08-16
+# last_updated: 2026-08-20
 # project: Restaurant-Kitchen-Management-System
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 #     all emit over its channel and depend on the {domain}.{event} naming it fixes.
 
 generated: 2026-08-08
-last_updated: 2026-08-16
+last_updated: 2026-08-20
 project: Restaurant-Kitchen-Management-System
 project_key: NOKEY
 tracking_system: file-system
@@ -101,7 +101,7 @@ development_status:
   5-1-view-incoming-orders-in-real-time-kitchen-display: done
   5-2-pick-up-and-progress-an-order-item-with-atomic-stock-deduction: done
   5-3-order-status-derives-from-its-items: done
-  5-4-mark-an-order-served-and-close-the-table: backlog
+  5-4-mark-an-order-served-and-close-the-table: done
   5-5-live-update-the-kitchen-display-and-waiter-screen-on-cancel-edit: backlog
   epic-5-retrospective: optional
 

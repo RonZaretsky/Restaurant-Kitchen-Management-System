@@ -262,6 +262,30 @@ class OrderItemNotInPreparationError(ConflictError):
     detail = "Rejected, item not in preparation"
 
 
+class OrderNotServableError(ConflictError):
+    """Raised when marking an Order served that is not currently ready or pending-with-zero-items
+    (AC2, Story 5.4).
+
+    Covers an Order with a non-cancelled item still short of ready, an already-served/closed
+    Order re-triggering the transition, and the race where a second transition lands between this
+    request's read and its guarded UPDATE. `pending` is included in the guard because, per FR-12,
+    an Order is `pending` if and only if it currently has zero non-cancelled Order Items — the
+    status column already encodes the "zero items" case, no separate count is needed.
+    """
+
+    detail = "Rejected, order is not ready to be served"
+
+
+class OrderNotClosableError(ConflictError):
+    """Raised when closing an Order that is not currently served (AC4, Story 5.4).
+
+    Covers an Order not yet served and an already-closed Order re-triggering the transition, plus
+    the race where a second transition lands between this request's read and its guarded UPDATE.
+    """
+
+    detail = "Rejected, order is not served yet"
+
+
 class UnitMismatchError(ConflictError):
     """Raised when a Recipe Ingredient line's unit differs from its Ingredient's own unit.
 

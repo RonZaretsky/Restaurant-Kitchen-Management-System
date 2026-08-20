@@ -139,7 +139,10 @@ describe("AppShell", () => {
 
   it("does not query alerts at all for a Role with no Alerts nav item", () => {
     // Arrange
-    const fetchMock = vi.fn((_url: string) => Promise.reject(new Error("should not be called")));
+    const fetchMock = vi.fn((url: string) => {
+      if (String(url).includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.reject(new Error("should not be called"));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     // Act
@@ -148,6 +151,90 @@ describe("AppShell", () => {
     // Assert
     expect(screen.queryByText("Alerts")).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/inventory/alerts"))).toBe(false);
+  });
+
+  it("does not query open orders at all for a Role with no Tables nav item", () => {
+    // Arrange
+    const fetchMock = vi.fn((url: string) => {
+      if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.reject(new Error("should not be called"));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Act
+    renderShell(WAREHOUSE_MANAGER);
+
+    // Assert
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/orders"))).toBe(false);
+  });
+
+  it("shows the Tables nav badge with the ready-order count for a waiter", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/orders")) {
+          return Promise.resolve(
+            jsonResponse(200, [
+              { id: 1, table_id: 1, waiter_id: 2, status: "ready", created_at: "2026-01-01T00:00:00Z", closed_at: null, total_amount: null },
+              { id: 2, table_id: 2, waiter_id: 2, status: "in_preparation", created_at: "2026-01-01T00:00:00Z", closed_at: null, total_amount: null },
+            ]),
+          );
+        }
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+
+    // Act
+    renderShell(WAITER);
+
+    // Assert
+    expect(await screen.findByText("1")).toBeInTheDocument();
+  });
+
+  it("hides the Tables nav badge when no Order is ready", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+
+    // Act
+    renderShell(WAITER);
+    await screen.findByText("Tables");
+
+    // Assert: MUI Badge renders badgeContent as invisible, not absent.
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+  });
+
+  it("refetches the ready-order count when a live order.status_changed event arrives", async () => {
+    // Arrange
+    let openOrders: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/orders")) return Promise.resolve(jsonResponse(200, openOrders));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+
+    // Act
+    renderShell(WAITER);
+    await screen.findByText("Tables");
+    openOrders = [
+      { id: 1, table_id: 1, waiter_id: 2, status: "ready", created_at: "2026-01-01T00:00:00Z", closed_at: null, total_amount: null },
+    ];
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    socket.onmessage?.({
+      data: JSON.stringify({ event: "order.status_changed", payload: openOrders[0] }),
+    });
+
+    // Assert
+    expect(await screen.findByText("1")).toBeInTheDocument();
   });
 
   it("refetches the alert count when a live inventory.alerts_changed event arrives", async () => {

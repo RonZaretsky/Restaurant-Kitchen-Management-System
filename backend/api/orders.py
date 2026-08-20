@@ -102,6 +102,20 @@ _MARK_READY_ITEM_ERROR_DESCRIPTIONS = {
     409: "The item is not in_preparation",
 }
 
+_SERVE_ERROR_DESCRIPTIONS = {
+    401: _ERROR_DESCRIPTIONS[401],
+    403: _ERROR_DESCRIPTIONS[403],
+    404: "No matching Order was found",
+    409: "The order is not ready to be served",
+}
+
+_CLOSE_ERROR_DESCRIPTIONS = {
+    401: _ERROR_DESCRIPTIONS[401],
+    403: _ERROR_DESCRIPTIONS[403],
+    404: "No matching Order was found",
+    409: "The order is not served yet",
+}
+
 
 @router.get(
     "",
@@ -406,3 +420,69 @@ async def mark_order_item_ready(
             in_preparation at the moment of the write.
     """
     return await order_service.mark_item_ready(db, actor, order_id, item_id)
+
+
+@router.post(
+    "/{order_id}/serve",
+    response_model=OrderResponse,
+    responses=error_responses(_SERVE_ERROR_DESCRIPTIONS, 401, 403, 404, 409),
+)
+@inject
+async def serve_order(
+    order_id: OrderIdPath,
+    actor: OrdersDep,
+    db: SessionDep,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+) -> Order:
+    """Mark a ready (or zero-item) Order served, a pure status change (AC1, AC2, FR-11).
+
+    Args:
+        order_id: The id of the Order to mark served.
+        actor: The authenticated Waiter making the request.
+        db: The active database session.
+        order_service: Injected service handling the transition.
+
+    Returns:
+        The now-served Order.
+
+    Raises:
+        OrderNotFoundError: Propagated from order_service, handled globally
+            as a 404, if no Order matches order_id.
+        OrderNotServableError: Propagated from order_service, handled
+            globally as a 409, if the Order's status is not ready or pending
+            at the moment of the write.
+    """
+    return await order_service.mark_served(db, actor, order_id)
+
+
+@router.post(
+    "/{order_id}/close",
+    response_model=OrderResponse,
+    responses=error_responses(_CLOSE_ERROR_DESCRIPTIONS, 401, 403, 404, 409),
+)
+@inject
+async def close_order(
+    order_id: OrderIdPath,
+    actor: OrdersDep,
+    db: SessionDep,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+) -> Order:
+    """Close a served Order, computing its total and freeing its Table (AC3, AC4, AC5, FR-8).
+
+    Args:
+        order_id: The id of the Order to close.
+        actor: The authenticated Waiter making the request.
+        db: The active database session.
+        order_service: Injected service handling the close.
+
+    Returns:
+        The now-closed Order, with total_amount populated.
+
+    Raises:
+        OrderNotFoundError: Propagated from order_service, handled globally
+            as a 404, if no Order matches order_id.
+        OrderNotClosableError: Propagated from order_service, handled
+            globally as a 409, if the Order's status is not served at the
+            moment of the write.
+    """
+    return await order_service.close_order(db, actor, order_id)
