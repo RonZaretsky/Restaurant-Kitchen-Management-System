@@ -6,7 +6,7 @@ story: 5
 
 # Story 5.5: Live-Update the Kitchen Display and Waiter Screen on Cancel/Edit
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -66,9 +66,13 @@ dedicated `test_broadcast_delivered_within_two_seconds` covering the transport i
 for pick-up/mark-ready. This story's own tests only need to prove the **two new call sites** fire
 it, not re-prove the transport or the timing.
 
-**One existing test must be updated, not just extended** — flagged by name in `deferred-work.md`'s
-own story-3-4 entry as anticipating exactly this: `test_websocket.py::
-test_cancelling_one_of_several_pending_items_broadcasts_nothing` currently asserts a connected
+**One existing test must be updated, not just extended** — anticipated in spirit, though not by
+name (the test itself did not exist yet), by `deferred-work.md`'s own story-3-4 entry: *"the story
+that eventually adds live updates for order-item transitions... should also add a negative test
+proving edit_item/cancel_item stay silent unless that story explicitly changes that."*
+`test_websocket.py::test_cancelling_one_of_several_pending_items_broadcasts_nothing` (added later,
+by Story 5.3) is that negative test, and this story is exactly the one deferred-work.md predicted
+would need to revisit it. It currently asserts a connected
 Waiter receives **nothing at all** after a cancel that leaves the Order's aggregate status
 unchanged (two pending items, cancel one, aggregate stays `in_preparation` both before and after —
 the no-op-recompute case Story 5.3 added this test for). Once `cancel_item` broadcasts
@@ -112,7 +116,7 @@ No-op-order-status-changed coverage; only its top-level "broadcasts nothing" cla
     second).
   - [x] Update the method's docstring the same way as Task 1.
 
-- [x] **Task 3: Backend tests** (`backend/tests/test_orders.py`, extend existing file — reuse
+- [x] **Task 3: Backend tests** (`backend/tests/test_websocket.py`, extend existing file — reuse
   existing helpers, follow this file's established `test_*` naming)
   - [x] `edit_item` broadcast content/recipients (AC2): a connected Waiter and a connected Cook
     both receive `order.item_status_changed` after an edit, payload matches the edited item
@@ -135,7 +139,8 @@ No-op-order-status-changed coverage; only its top-level "broadcasts nothing" cla
 
 - [x] **Task 4: Full regression pass**
   - [x] `uv run pytest -q` (backend) — zero regressions.
-  - [x] `pnpm test` (frontend) — zero regressions (no frontend files are touched by this story;
+  - [x] `pnpm test` (equivalently, `npx vitest run` — `package.json`'s `test` script is a bare
+    `vitest run`, confirmed identical) (frontend) — zero regressions (no frontend files are touched by this story;
     this run is to confirm that remains true, not because any change is expected).
   - [x] `npx tsc -b` — clean.
 
@@ -181,7 +186,7 @@ Files touched:
 - `backend/services/order_service.py` — **UPDATE**, two new broadcast calls (`edit_item`,
   `cancel_item`), no new methods, no new imports needed (`OrderItemResponse`, `UserRole` already
   imported).
-- `backend/tests/test_orders.py` and/or `backend/tests/test_websocket.py` — **UPDATE**, new
+- `backend/tests/test_websocket.py` — **UPDATE**, new
   broadcast-content coverage for both methods (place wherever this file's existing
   `pick_up_item`/`mark_item_ready` broadcast-content tests already live, to keep sibling coverage
   together), plus the required rewrite of the now-false no-broadcast test.
@@ -264,9 +269,69 @@ Claude Sonnet 5
 - `backend/services/order_service.py`
 - `backend/tests/test_websocket.py`
 
+## Review Findings
+
+Reviewed by three parallel agents (Blind Hunter, Edge Case Hunter, Acceptance Auditor) against
+this story's 3 ACs and `_bmad-output/project-context.md`.
+
+- [x] [Review][Patch] The two new broadcast-content tests (`test_cancelling_an_order_item_
+  broadcasts_order_item_status_changed`, `test_editing_an_order_item_broadcasts_order_item_status_
+  changed`) claimed to mirror `test_picking_up_an_order_item_broadcasts_order_item_status_changed`'s
+  "exact structure," but omitted that template's `warehouse_manager` negative-recipient check. Both
+  now open a `wm_ws` connection and assert nothing arrives on it — `backend/tests/test_websocket.py`
+- [x] [Review][Patch] The cancel test's `order.status_changed` follow-up assertion only checked
+  the event name, not `payload["id"]`/`payload["status"]`, unlike the template it was modeled on.
+  Strengthened to assert both — `backend/tests/test_websocket.py`
+- [x] [Review][Patch] The edit test asserted only the Waiter's channel goes idle after the
+  exchange, not the Cook's or a warehouse_manager's — added both missing idle-channel checks for
+  symmetry — `backend/tests/test_websocket.py`
+- [x] [Review][Patch] No test pinned that `edit_item`/`cancel_item`'s existing guards still run
+  before the new broadcast call — a future refactor moving the broadcast earlier could ship
+  silently. Added `test_rejected_edit_broadcasts_nothing`/`test_rejected_cancel_broadcasts_nothing`
+  — `backend/tests/test_websocket.py`
+- [x] [Review][Patch] This story file's own Task 3/Project Structure Notes named the wrong test
+  file (`test_orders.py`) as the target, while the File List and actual diff correctly used
+  `test_websocket.py`. Corrected both references in this file.
+- [x] [Review][Patch] This story file's Scope note overclaimed that `deferred-work.md` named the
+  specific test `test_cancelling_one_of_several_pending_items_broadcasts_nothing` "by name" — that
+  test did not exist when the story-3-4 deferred-work entry was written (Story 5.3 added it
+  later). Corrected to describe the entry as anticipating this fix in spirit, quoting its actual
+  text, not by name.
+- [x] [Review][Patch] Task 4's checklist said `pnpm test`, while the Debug Log cited `npx vitest
+  run` — confirmed identical (`package.json`'s `test` script is a bare `vitest run`) and noted so
+  in the story file, rather than leaving the two claims looking inconsistent.
+- [x] [Review][Defer] Both new `broadcast()` calls run post-commit with no try/except, so a
+  WebSocket-layer failure there would turn an already-successful cancel/edit into a 500 to the
+  caller. Deferred: this is a pre-existing pattern shared by every other broadcasting method in
+  this file (`add_item`, `pick_up_item`, `mark_item_ready`, `open_table`, `mark_served`,
+  `close_order`) — fixing it here alone would be inconsistent, and fixing it project-wide is a
+  separate, unrelated change from this story's own minimal scope.
+- [x] [Review][Defer] `edit_item` now broadcasts even when the submitted `quantity`/`notes` exactly
+  match the item's current values (a genuine no-op edit), unlike the order-aggregate path which
+  explicitly suppresses no-op broadcasts. Deferred: harmless (a wasted refetch, not incorrect
+  data), and the order-level suppression exists for a different, documented reason (avoiding a
+  false "the aggregate changed" signal to many callers) that doesn't apply the same way at the
+  single-item level, where every other item-mutating broadcast is already unconditional.
+
+**Verified as non-issues:**
+
+- **Admin-initiated cancel has no dedicated WebSocket test**, though `OrderItemCancelDep` permits
+  waiter/cook/admin — the broadcast call itself has no actor-conditional logic (same recipients,
+  same payload, regardless of who cancelled), so an admin-actor test would exercise identical code
+  to the existing waiter-actor test, not new coverage.
+- **`edit_item` now fires an event literally named "item_status_changed" for a call that never
+  changes `.status`** — a deliberate, explicitly-reasoned choice (both frontend consumers already
+  treat the event generically as "refetch this Order's items," documented in this story's own
+  Scope note and the method's own docstring), not an oversight.
+- **Test-sequencing concern about the cancel test's cook-idle check running "late"** — WebSocket
+  messages queue on the connection regardless of when the test code reads them; a regression that
+  leaked `order.status_changed` to Cook would still be caught by the existing timeout check
+  regardless of its position in the test, no flakiness risk exists.
+
 ## Change Log
 
 | Date | Change |
 |---|---|
 | 2026-08-21 | Story 5.5 created via bmad-create-story: closes a gap against already-approved NFR-1 (Sprint Change Proposal 2026-08-16) — `cancel_item`/`edit_item` never broadcast `order.item_status_changed`, so an already-open Kitchen Display never reflected a cancellation or edit live. Smallest-blast-radius story in the project: two `broadcast()` calls reusing Story 5.2's existing event, no frontend changes. |
 | 2026-08-21 | Implemented Story 5.5: added the two broadcast calls to `edit_item`/`cancel_item`, updated both docstrings, added two new broadcast-content tests, and rewrote the one existing test whose "broadcasts nothing" claim this story made false (`deferred-work.md`'s story-3-4 entry had explicitly anticipated this rewrite). 2 net new backend tests (367 total). Full backend suite: 367/367 passed. Full frontend suite: 196/196 passed (sanity check, no frontend file touched). `npx tsc -b` clean. |
+| 2026-08-21 | Code review patch pass (three parallel agents): strengthened both new broadcast-content tests to also assert the warehouse_manager-negative-recipient case and full order.status_changed payload content, matching their own claimed templates exactly. Added a symmetric cook-idle check to the edit test. Added two new negative tests (`test_rejected_edit_broadcasts_nothing`, `test_rejected_cancel_broadcasts_nothing`) pinning that the existing status guards still run before the new broadcast calls. Corrected three inaccuracies in this story file itself (wrong test-file name in Task 3/Project Structure Notes, an overclaimed "named by" reference to deferred-work.md, and a `pnpm test`/`npx vitest run` wording mismatch — confirmed identical). Deferred: the two new broadcast calls remain unguarded against a post-commit WebSocket failure, matching every other broadcasting method in this file; `edit_item` broadcasts even on a genuine no-op edit (harmless). 2 new backend tests (369 total). |
