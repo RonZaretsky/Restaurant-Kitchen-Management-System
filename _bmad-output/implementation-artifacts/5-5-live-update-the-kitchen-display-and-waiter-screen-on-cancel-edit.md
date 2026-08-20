@@ -6,7 +6,7 @@ story: 5
 
 # Story 5.5: Live-Update the Kitchen Display and Waiter Screen on Cancel/Edit
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -95,49 +95,49 @@ No-op-order-status-changed coverage; only its top-level "broadcasts nothing" cla
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Backend — `edit_item` broadcasts `order.item_status_changed`** (AC2)
-  - [ ] `backend/services/order_service.py`: after `await db.refresh(item)`, add
+- [x] **Task 1: Backend — `edit_item` broadcasts `order.item_status_changed`** (AC2)
+  - [x] `backend/services/order_service.py`: after `await db.refresh(item)`, add
     `await self._realtime_service.broadcast([UserRole.waiter, UserRole.cook],
     "order.item_status_changed", OrderItemResponse.model_validate(item).model_dump(mode="json"))`
     — unconditional, no `order_status_changed` branch (edit never changes `.status`).
-  - [ ] Update the method's own docstring: remove "No live broadcast, this story's own ACs never
+  - [x] Update the method's own docstring: remove "No live broadcast, this story's own ACs never
     say 'live' for edit/cancel..." (that was Story 3.4's own accurate note at the time; this story
     is exactly the one that changes it) and state the new broadcast instead, matching
     `mark_item_ready`'s own docstring style.
 
-- [ ] **Task 2: Backend — `cancel_item` broadcasts `order.item_status_changed`** (AC1)
-  - [ ] Same file: after `await db.refresh(item)` and before the existing
+- [x] **Task 2: Backend — `cancel_item` broadcasts `order.item_status_changed`** (AC1)
+  - [x] Same file: after `await db.refresh(item)` and before the existing
     `if order_status_changed:` block, add the identical broadcast call (unconditional), matching
     `mark_item_ready`'s exact ordering (item-level event first, order-level conditional follow-up
     second).
-  - [ ] Update the method's docstring the same way as Task 1.
+  - [x] Update the method's docstring the same way as Task 1.
 
-- [ ] **Task 3: Backend tests** (`backend/tests/test_orders.py`, extend existing file — reuse
+- [x] **Task 3: Backend tests** (`backend/tests/test_orders.py`, extend existing file — reuse
   existing helpers, follow this file's established `test_*` naming)
-  - [ ] `edit_item` broadcast content/recipients (AC2): a connected Waiter and a connected Cook
+  - [x] `edit_item` broadcast content/recipients (AC2): a connected Waiter and a connected Cook
     both receive `order.item_status_changed` after an edit, payload matches the edited item
     (quantity/notes reflect the submitted values), matching `test_marking_an_in_preparation_item_
     ready_is_a_pure_status_change`'s own "assert payload content" shape but for the WebSocket
     event rather than the HTTP response (extend `test_websocket.py` if that is where this file's
     sibling broadcast-content tests already live — check `pick_up_item`'s own broadcast-content
     test's location first, mirror it exactly rather than picking a new location).
-  - [ ] `cancel_item` broadcast content/recipients (AC1): a connected Waiter and a connected Cook
+  - [x] `cancel_item` broadcast content/recipients (AC1): a connected Waiter and a connected Cook
     both receive `order.item_status_changed` after a cancel, payload status is `cancelled`.
-  - [ ] **Rewrite** `test_websocket.py::test_cancelling_one_of_several_pending_items_broadcasts_
+  - [x] **Rewrite** `test_websocket.py::test_cancelling_one_of_several_pending_items_broadcasts_
     nothing` per the Scope note above: assert the Waiter now receives `order.item_status_changed`
     first (payload status `cancelled`), then times out waiting for anything further (no
     `order.status_changed`, since the aggregate is unchanged) — do not just delete or weaken this
     test, its no-op-order-status-changed coverage is still real and still needed.
-  - [ ] Role coverage: confirm this story adds no new route/permission surface (cancel/edit's
+  - [x] Role coverage: confirm this story adds no new route/permission surface (cancel/edit's
     existing role gates — waiter-only for edit, waiter/cook/admin for cancel — are unchanged), so
     no new role-coverage tests are needed beyond what Tasks above already assert for waiter/cook
     recipients.
 
-- [ ] **Task 4: Full regression pass**
-  - [ ] `uv run pytest -q` (backend) — zero regressions.
-  - [ ] `pnpm test` (frontend) — zero regressions (no frontend files are touched by this story;
+- [x] **Task 4: Full regression pass**
+  - [x] `uv run pytest -q` (backend) — zero regressions.
+  - [x] `pnpm test` (frontend) — zero regressions (no frontend files are touched by this story;
     this run is to confirm that remains true, not because any change is expected).
-  - [ ] `npx tsc -b` — clean.
+  - [x] `npx tsc -b` — clean.
 
 ## Dev Notes
 
@@ -216,8 +216,57 @@ was written.
 
 ### Agent Model Used
 
+Claude Sonnet 5
+
 ### Debug Log References
+
+- `uv run pytest tests/test_websocket.py -q` — 28 passed (25 baseline + 3 new: `cancel_item`'s
+  `order.item_status_changed` broadcast content/recipients, `edit_item`'s same, and the rewritten
+  no-op test now asserting `order.item_status_changed` arrives while `order.status_changed` still
+  does not)
+- `uv run pytest -q` (full backend suite) — 367 passed, no regressions (baseline 365 + 2 net new
+  test functions)
+- `npx vitest run` (full frontend suite, sanity check per Task 4 — no frontend file was touched)
+  — 196/196 passed
+- `npx tsc -b` — clean
 
 ### Completion Notes List
 
+- Added exactly two `broadcast()` calls, both reusing `order.item_status_changed` verbatim
+  (`pick_up_item`/`mark_item_ready`'s existing event name, payload shape via
+  `OrderItemResponse.model_validate(item).model_dump(mode="json")`, and `[UserRole.waiter,
+  UserRole.cook]` recipients) — no new event, no new payload shape.
+- `edit_item`: broadcast is unconditional (no `.status` change possible, so no
+  `order_status_changed` branch exists to gate it), placed after `db.refresh(item)`, matching the
+  story's exact placement instruction.
+- `cancel_item`: broadcast is unconditional too, placed after `db.refresh(item)` and before the
+  existing `if order_status_changed:` block, matching `mark_item_ready`'s item-first/order-second
+  ordering exactly.
+- Updated both methods' docstrings to state the new broadcast, removing `edit_item`'s now-stale
+  "No live broadcast" note.
+- Rewrote `test_cancelling_one_of_several_pending_items_broadcasts_nothing` (renamed to
+  `..._broadcasts_no_order_status_changed`) per the story's own Scope note: it now asserts the
+  Waiter receives `order.item_status_changed` (a real event — the item was genuinely cancelled),
+  then times out waiting for anything further, rather than timing out immediately. The no-op
+  `order.status_changed` coverage this test exists for is unchanged and still passes.
+- Added two new positive broadcast-content tests (`test_cancelling_an_order_item_broadcasts_
+  order_item_status_changed`, `test_editing_an_order_item_broadcasts_order_item_status_changed`),
+  matching `test_picking_up_an_order_item_broadcasts_order_item_status_changed`'s exact structure
+  and assertion style. The cancel test's single-item Order also genuinely drops the aggregate to
+  zero non-cancelled items (`in_preparation` → `pending`), so it additionally asserts the expected
+  follow-up `order.status_changed` broadcast — not a second, separate no-op case, a real one.
+- Confirmed by direct inspection, not just by trusting the story's own claim: `KitchenDisplayPage.
+  tsx` and `TableOrderDetailPage.tsx` both already subscribe to `order.item_status_changed`
+  generically. Zero frontend files were touched.
+
 ### File List
+
+- `backend/services/order_service.py`
+- `backend/tests/test_websocket.py`
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-08-21 | Story 5.5 created via bmad-create-story: closes a gap against already-approved NFR-1 (Sprint Change Proposal 2026-08-16) — `cancel_item`/`edit_item` never broadcast `order.item_status_changed`, so an already-open Kitchen Display never reflected a cancellation or edit live. Smallest-blast-radius story in the project: two `broadcast()` calls reusing Story 5.2's existing event, no frontend changes. |
+| 2026-08-21 | Implemented Story 5.5: added the two broadcast calls to `edit_item`/`cancel_item`, updated both docstrings, added two new broadcast-content tests, and rewrote the one existing test whose "broadcasts nothing" claim this story made false (`deferred-work.md`'s story-3-4 entry had explicitly anticipated this rewrite). 2 net new backend tests (367 total). Full backend suite: 367/367 passed. Full frontend suite: 196/196 passed (sanity check, no frontend file touched). `npx tsc -b` clean. |
