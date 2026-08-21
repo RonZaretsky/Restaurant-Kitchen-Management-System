@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is under way: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design at the time — both gained one later, Story 5.5). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is under way: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event.**
 
 ```
 backend/
@@ -195,10 +195,14 @@ backend/
                      WHERE status IN (pending, in_preparation)), the 5th/6th guarded-UPDATE
                      application; a private _get_item seam (mirrors _get_order/_get_table) is the
                      first _get_* seam in this service checking two ids (item id, and that it
-                     belongs to the given order). Deliberately NOT added: no compensating
-                     StockMovement on cancel (AD-11 is a prohibition, not a feature), and no
-                     realtime_service.broadcast() call from either method (no AC asks for live
-                     here, unlike 3.3's two producers). Story 5.2 added pick_up_item (7th/8th
+                     belongs to the given order). Deliberately NOT added at the time: no
+                     compensating StockMovement on cancel (AD-11 is a prohibition, not a feature,
+                     still true), and no realtime_service.broadcast() call from either method (no
+                     AC asked for live at the time — Story 5.5 later added one to each,
+                     unconditional order.item_status_changed, [waiter, cook], reusing pick_up_item/
+                     mark_item_ready's exact event/payload shape, placed after db.refresh(item)
+                     and, in cancel_item's case, before the existing order_status_changed
+                     conditional). Story 5.2 added pick_up_item (7th/8th
                      guarded-UPDATE application counting mark_item_ready below; WHERE status ==
                      pending, sets cook_id, then loops each RecipeIngredient calling the new
                      InventoryService.apply_consumption inside the same transaction, one
@@ -2062,5 +2066,52 @@ trap 28, added this story). Fixed in two passes: first, mutual exclusion plus th
 itself; then, dropping the invalidation of the closed Order's own query key entirely, since a
 caller that navigates away on success has nothing left on that page to refresh anyway. Suites are
 now **365 backend and 196 frontend tests**.
+
+**2026-08-21 patch (Story 5.5, Live-Update the Kitchen Display and Waiter Screen on Cancel/Edit,
+plus its code review):** Closes a gap against already-approved NFR-1, surfaced by a Sprint Change
+Proposal (2026-08-16) after manual testing of Story 5.2 found that cancelling an Order Item never
+updated an already-open Kitchen Display. Root cause: `edit_item`/`cancel_item` (Story 3.4) never
+called `realtime_service.broadcast(...)` — correct at the time (no live consumer existed for
+either yet), stale once Story 5.1/5.2 made the Kitchen Display a live, always-foregrounded second
+consumer. **The smallest-blast-radius story so far**: two `broadcast()` calls added to two
+already-existing, already-guarded methods, reusing `order.item_status_changed` verbatim (same
+event name, payload shape via `OrderItemResponse.model_validate(item).model_dump(mode="json")`,
+same `[UserRole.waiter, UserRole.cook]` recipients Story 5.2 already established for
+`pick_up_item`/`mark_item_ready`) — no new event, no new endpoint, no schema change, no migration,
+**and no frontend code changes at all**, confirmed by reading both consumers
+(`KitchenDisplayPage.tsx`, `TableOrderDetailPage.tsx`) before writing the story: both already
+subscribe to `order.item_status_changed` generically and just invalidate-and-refetch, regardless
+of which backend transition triggered it.
+
+`edit_item`'s broadcast is unconditional (edit never changes `.status`, so there is no
+`order_status_changed` branch to gate it around, unlike the other three item-mutating methods).
+`cancel_item`'s broadcast is also unconditional, placed after `db.refresh(item)` and before the
+existing `order_status_changed` conditional — item-level event first, order-level conditional
+follow-up second, matching every other method's established ordering.
+
+**One existing test had to be rewritten, not just extended** — `test_websocket.py::
+test_cancelling_one_of_several_pending_items_broadcasts_nothing` (added by Story 5.3) asserted a
+connected Waiter receives nothing after a cancel that leaves the Order's aggregate unchanged. Once
+`cancel_item` broadcasts unconditionally, that top-level claim became false: the Waiter now
+correctly receives `order.item_status_changed` (a real event) but still correctly does not receive
+`order.status_changed` (the aggregate genuinely didn't change) — renamed to
+`..._broadcasts_no_order_status_changed` and rewritten to assert receive-then-timeout instead of
+timeout-immediately, preserving its original no-op-recompute coverage. This is exactly the
+rewrite `deferred-work.md`'s own story-3-4 entry anticipated, in spirit if not by name (that test
+didn't exist yet when the entry was written).
+
+**Code review, all cheap test-coverage strengthening, no production-code changes needed beyond
+the original two broadcast calls**: the two new broadcast-content tests were missing the
+`warehouse_manager`-negative-recipient check their own claimed template has (added); the cancel
+test's `order.status_changed` follow-up only checked the event name, not payload content (added
+`id`/`status` assertions); the edit test only checked the Waiter's channel goes idle afterward, not
+Cook's or a warehouse_manager's (added both); and nothing pinned that the existing status guards
+still run *before* the new broadcast calls, so two new negative tests
+(`test_rejected_edit_broadcasts_nothing`/`test_rejected_cancel_broadcasts_nothing`) assert a
+rejected edit/cancel broadcasts nothing at all. Deferred, not fixed: both new broadcast calls run
+post-commit with no try/except (matches every other broadcasting method in this file — fixing it
+here alone would be inconsistent, fixing it project-wide is a separate change); `edit_item`
+broadcasts even on a genuine no-op edit (harmless, a wasted refetch, not incorrect data). Suites
+are now **369 backend and 196 frontend tests**.
 
 Last Updated: 2026-08-21

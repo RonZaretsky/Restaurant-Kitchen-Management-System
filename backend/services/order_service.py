@@ -306,8 +306,11 @@ class OrderService:
 
         Guarded on status = 'pending' at the moment of the write (AD-6): an item that has already
         moved to in_preparation between this request's read and write must reject the edit, not
-        silently apply it (AC4). No live broadcast, this story's own ACs never say "live" for
-        edit/cancel the way Story 3.3's did for open/add.
+        silently apply it (AC4). Broadcasts order.item_status_changed to [waiter, cook] after
+        commit (Story 5.5, NFR-1) — the same event/payload/recipients pick_up_item/mark_item_ready
+        already use, reused here even though the item's status itself did not change, since both
+        live consumers (Kitchen Display, Table/Order Detail) already treat this event generically
+        as "refetch this Order's items," not as a status-specific signal.
 
         Args:
             db: The active database session.
@@ -349,6 +352,11 @@ class OrderService:
             item_id,
             payload.quantity,
         )
+        await self._realtime_service.broadcast(
+            [UserRole.waiter, UserRole.cook],
+            "order.item_status_changed",
+            OrderItemResponse.model_validate(item).model_dump(mode="json"),
+        )
         return item
 
     async def cancel_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
@@ -359,7 +367,11 @@ class OrderService:
         reverses a prior stock deduction (AD-11), no compensating StockMovement is inserted here
         or anywhere else; the frontend's confirm dialog for an in_preparation item is what tells
         the actor this before they commit to it (AC3, UX-DR12), the backend enforces no stock rule
-        because there is none to enforce, only the state transition itself.
+        because there is none to enforce, only the state transition itself. Broadcasts
+        order.item_status_changed to [waiter, cook] after commit (Story 5.5, NFR-1), unconditional
+        and placed before the existing order.status_changed conditional below — the item-level
+        event is the primary signal, the order-level one a secondary, conditional follow-up
+        (Story 5.3's own ordering convention).
 
         Args:
             db: The active database session.
@@ -403,6 +415,11 @@ class OrderService:
             actor.id,
             order_id,
             item_id,
+        )
+        await self._realtime_service.broadcast(
+            [UserRole.waiter, UserRole.cook],
+            "order.item_status_changed",
+            OrderItemResponse.model_validate(item).model_dump(mode="json"),
         )
         if order_status_changed:
             assert updated_order is not None  # order_status_changed is only True when it isn't
