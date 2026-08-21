@@ -97,7 +97,7 @@ development_status:
   epic-4-retrospective: optional
 
   # Epic 5: Kitchen Fulfillment, Automatic Stock Deduction & Close-Out
-  epic-5: in-progress
+  epic-5: done
   5-1-view-incoming-orders-in-real-time-kitchen-display: done
   5-2-pick-up-and-progress-an-order-item-with-atomic-stock-deduction: done
   5-3-order-status-derives-from-its-items: done
