@@ -6,7 +6,7 @@ story: 2
 
 # Story 6.2: Confirm a Recipe Suggestion into a Live Dish
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -342,6 +342,82 @@ endpoints/models (Story 6.3's scope).
 - [Source: `_bmad-output/project-context.md`, trap 22, trap 23] — the nullable-column-add-is-safe
   lesson this story's migration follows, and the provider-declaration-ordering rule (not directly
   applicable here, no new container provider, noted for completeness).
+
+## Review Findings
+
+Reviewed by three parallel agents (Blind Hunter, Edge Case Hunter, Acceptance Auditor) against
+this story's ACs and `_bmad-output/project-context.md`. Several findings from all three agents
+converged on the same underlying issues; consolidated below.
+
+- [x] [Review][Patch] The generated Alembic downgrade for `f9cbd3ff5b87` was broken:
+  `op.create_foreign_key(None, ...)` leaves the FK constraint unnamed, and
+  `op.drop_constraint(None, 'dishes', type_='foreignkey')` cannot target an unnamed constraint —
+  confirmed via `alembic downgrade --sql`, which raised `CompileError: Can't emit DROP CONSTRAINT
+  ... it has no name`. Named the constraint explicitly (matching the name Postgres itself had
+  already assigned, so no live database needed a rename) —
+  `backend/alembic/versions/f9cbd3ff5b87_add_dish_source_suggestion_id_and_ai_.py`
+- [x] [Review][Patch] No DB-level uniqueness on `Dish.source_suggestion_id` — a plain,
+  unlocked `SELECT` in `MenuService._validate_source_suggestion` let two concurrent
+  `POST /api/menu/dishes` requests citing the same suggestion both pass the "not already
+  confirmed" check before either committed, giving one suggestion two confirming Dishes (FR-19's
+  "at most one" cardinality). Added a `UNIQUE` constraint on `dishes.source_suggestion_id`
+  (Postgres permits multiple NULLs under a plain unique constraint, so ordinary Dishes are
+  unaffected), added `unique=True` to the ORM column to keep the model/migration in sync, and
+  caught the resulting `IntegrityError` in `create_dish` to translate the losing request's 409
+  rather than letting it surface as a 500. Added
+  `test_two_concurrent_confirms_of_the_same_suggestion_only_one_succeeds` (two real concurrent
+  requests via `asyncio.gather`, not sequential) to prove it —
+  `backend/data_models/menu.py`, `backend/services/menu_service.py`,
+  `backend/alembic/versions/f9cbd3ff5b87_add_dish_source_suggestion_id_and_ai_.py`,
+  `backend/tests/test_ai.py`
+- [x] [Review][Patch] `AIService.dismiss_suggestion` hardcoded `confirmed_dish_id=None` on its
+  response instead of reusing the `confirmed_dish_id` its own guard already computed — correct
+  only by proximity to that guard, so a future reorder/relaxation of it would silently start
+  returning a wrong `null`. Reused the already-computed value — `backend/services/ai_service.py`
+- [x] [Review][Patch] No test proved `confirmed_dish_id` is populated with the real Dish id once
+  a suggestion is actually confirmed — only the null (awaiting/dismissed) cases were covered,
+  leaving the headline behavior this story adds unverified. Added
+  `test_list_suggestions_reports_the_real_dish_id_once_confirmed` — `backend/tests/test_ai.py`
+- [x] [Review][Patch] The Confirm button read "Confirm into dish"; AC5/Task 9 specify "Confirm
+  into Dish". Corrected the label and its two test assertions —
+  `frontend/src/pages/admin/RecipeSuggestionsPage.tsx`,
+  `frontend/src/pages/admin/RecipeSuggestionsPage.test.tsx`
+- [x] [Review][Defer] Concurrent dismiss-vs-dismiss race (two simultaneous dismiss requests for
+  the same suggestion could both read `dismissed=False` before either commits, both succeeding
+  with 200 instead of the second getting 409) — deferred, pre-existing class of race this story's
+  design doesn't newly introduce risk from: the end state is still correctly `dismissed=True`
+  either way, no data corruption, just a lost 409 in an already-narrow window.
+- [x] [Review][Dismiss] Concurrent dismiss-vs-confirm race (a suggestion ending up both
+  `dismissed=True` and referenced by a confirmed Dish) — the story's own Scope note explicitly
+  accepts this: "not enforced against each other at the DB level beyond normal application
+  logic," a documented tradeoff, not a gap.
+- [x] [Review][Dismiss] Cross-module import of `_INT4_MAX` (a leading-underscore name) in
+  `api/smart_chef.py` — verified this is the codebase's own pre-existing, documented convention
+  (`order.py`/`recipe.py`/`api/tables.py`/`api/inventory.py`/`api/orders.py` all already import it
+  the same way), not something this story diverges from.
+- [x] [Review][Dismiss] `MultipleResultsFound` risk in `scalar_one_or_none()` call sites if
+  duplicate confirming Dishes ever existed — moot once the unique constraint above makes that
+  state unreachable.
+- [x] [Review][Dismiss] Duplicated "does a Dish cite this suggestion" query logic between
+  `AIService._get_confirmed_dish_id` and `MenuService._validate_source_suggestion` — two lines
+  each, and consolidating would require a new cross-service dependency for a trivial query;
+  not worth the coupling.
+- [x] [Review][Dismiss] "Dismiss is reversible in spirit" framing (no undo path exists) —
+  matches the story's own stated Task 9 intent (audit retention, not actual reversibility), a
+  rationale critique rather than a code defect.
+- [x] [Review][Dismiss] Error alert on a failed Dismiss can unmount with the card on refetch —
+  matches this codebase's established "invalidate onSettled" convention used everywhere else;
+  not a regression specific to this story.
+- [x] [Review][Dismiss] Brittle exact `toEqual` assertion on the create-Dish request body in the
+  new frontend tests — matches the same pattern already used by this file's pre-existing "creates
+  a dish and clears the form" test.
+- [x] [Review][Dismiss] `useState` lazy-initializer prefill assumes `MenuManagementPage` remounts
+  on navigation — verified against `router.tsx`: each path maps to a distinct element with no
+  keep-alive mechanism, so the assumption holds.
+- [x] [Review][Dismiss] Missing regression test asserting `update_dish` never accepts
+  `source_suggestion_id` — verified `UpdateDishRequest` has no such field at all (Pydantic
+  silently ignores unknown fields by default), so this is structurally impossible, not merely
+  untested.
 
 ## Dev Agent Record
 

@@ -271,7 +271,10 @@ class AIService:
             actor.id,
             suggestion_id,
         )
-        return AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=None)
+        # Reuses the same lookup rather than hardcoding None (code review finding): the guard
+        # above already rejects the confirmed case, but computing it here instead of assuming it
+        # removes a fragile coupling to that guard never being reordered or relaxed later.
+        return AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=confirmed_dish_id)
 
     @staticmethod
     async def _get_confirmed_dish_id(db: AsyncSession, suggestion_id: int) -> int | None:

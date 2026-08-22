@@ -64,7 +64,7 @@ function ReviewableSuggestionCard({ suggestion }: { suggestion: AIRecipeSuggesti
 
       <Box sx={{ display: "flex", gap: 1, marginTop: 2 }}>
         <Button variant="contained" size="small" onClick={handleConfirm}>
-          Confirm into dish
+          Confirm into Dish
         </Button>
         <Button
           variant="outlined"

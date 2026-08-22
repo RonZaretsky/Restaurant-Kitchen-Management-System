@@ -43,8 +43,12 @@ class Dish(Base):
     # RecipeIngredient, since there is no single row representing "the recipe" as a whole — a
     # Dish's recipe is its set of RecipeIngredient rows, and one Dish has at most one originating
     # suggestion.
+    # unique=True (code review finding): closes a TOCTOU race where two concurrent Dish
+    # creations citing the same suggestion could both pass the service-level check before either
+    # commits, giving one suggestion two confirming Dishes. Postgres permits multiple NULLs
+    # under a plain UNIQUE constraint, so ordinary (non-AI-sourced) Dishes are unaffected.
     source_suggestion_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("ai_recipe_suggestions.id"), nullable=True
+        Integer, ForeignKey("ai_recipe_suggestions.id"), nullable=True, unique=True
     )
 
 

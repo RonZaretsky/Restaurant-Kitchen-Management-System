@@ -103,7 +103,7 @@ describe("RecipeSuggestionsPage", () => {
 
     // Assert
     expect(await screen.findByText("Roasted Zucchini Flatbread")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirm into dish" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm into Dish" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
   });
 
@@ -115,7 +115,7 @@ describe("RecipeSuggestionsPage", () => {
     // Act
     renderPage();
     await screen.findByText("Roasted Zucchini Flatbread");
-    await user.click(screen.getByRole("button", { name: "Confirm into dish" }));
+    await user.click(screen.getByRole("button", { name: "Confirm into Dish" }));
 
     // Assert
     expect(navigateMock).toHaveBeenCalledWith("/admin/menu", {

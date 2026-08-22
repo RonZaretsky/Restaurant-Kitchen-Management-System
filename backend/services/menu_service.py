@@ -160,7 +160,22 @@ class MenuService:
             source_suggestion_id=payload.source_suggestion_id,
         )
         db.add(dish)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            # The pre-check above loses to a concurrent create_dish citing the same
+            # suggestion_id: uq_dishes_source_suggestion_id (code review finding) is the real
+            # arbiter, so translate its violation into the same 409 rather than letting it
+            # surface as a 500. Logging before rollback, not after: rollback() expires every
+            # object bound to this session, actor included, so reading actor.id afterward raises
+            # an unhandled MissingGreenlet.
+            self._logger.warning(
+                "Dish creation rejected by user_id={}: suggestion_id={} already confirmed (lost the race)",
+                actor.id,
+                payload.source_suggestion_id,
+            )
+            await db.rollback()
+            raise SuggestionAlreadyConfirmedError() from exc
         await db.refresh(dish)
         self._logger.info(
             "Dish created by user_id={}: dish_id={} name={} category_id={} source_suggestion_id={}",
