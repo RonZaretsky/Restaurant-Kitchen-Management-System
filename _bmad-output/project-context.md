@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design at the time — both gained one later, Story 5.5). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is **complete**: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event. Story 5.3 made `Order.status` derive live from its items. Story 5.4 added the guarded `mark_served`/`close_order` transitions and Order total computation. Story 5.5 closed the live-update gap on cancel/edit. Epic 6 (Smart Chef, Recipe Suggestions & Assistant Chat) is under way: Story 6.1 added the project's first external-API integration — `backend/clients/llm.py` (the only place `openai` is imported, AD-12), `AIService` (a deliberate `Singleton`, not `Factory`, for its in-process concurrency guard), and `POST`/`GET /api/smart-chef/suggestions`, letting a Cook generate an AI recipe suggestion from current stock.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design at the time — both gained one later, Story 5.5). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is **complete**: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event. Story 5.3 made `Order.status` derive live from its items. Story 5.4 added the guarded `mark_served`/`close_order` transitions and Order total computation. Story 5.5 closed the live-update gap on cancel/edit. Epic 6 (Smart Chef, Recipe Suggestions & Assistant Chat) is under way: Story 6.1 added the project's first external-API integration — `backend/clients/llm.py` (the only place `openai` is imported, AD-12), `AIService` (a deliberate `Singleton`, not `Factory`, for its in-process concurrency guard), and `POST`/`GET /api/smart-chef/suggestions`, letting a Cook generate an AI recipe suggestion from current stock. Story 6.2 let an Admin confirm a Recipe Suggestion into a live Dish (or dismiss it): `Dish.source_suggestion_id` is a nullable, **unique** FK (closes a double-confirm race — two concurrent creates citing the same suggestion, one loses to an `IntegrityError` translated to a 409) and `AIRecipeSuggestion.dismissed` is the one new stored column; "confirmed" stays derived (a suggestion is confirmed iff some `Dish.source_suggestion_id` matches it, resolved via `AIService.list_suggestions`'s outerjoin), never a stored flag. `POST /api/smart-chef/suggestions/{id}/dismiss` is Admin-only. The frontend design changed twice during this story's own manual testing: the original "navigate to Menu Management with prefilled fields" hand-off was reworked into an in-place `ConfirmSuggestionDialog` (creates the Dish AND its Recipe Ingredient lines together, composing the same two existing endpoints, no new backend action), and a follow-up fix made the dialog PATCH the Dish available immediately once a recipe line lands, reusing `update_dish`'s existing `EmptyRecipeError`/AD-8 guard as the safety net rather than leaving the Admin to flip it by hand.**
 
 ```
 backend/
@@ -122,8 +122,10 @@ backend/
                      read in this file
   api/smart_chef.py   Story 6.1 (new domain, Epic 6): POST /api/smart-chef/suggestions
                      (SmartChefWriteDep = cook only, no admin fallback) and GET (SmartChefReadDep =
-                     cook + admin, shared with Story 6.2's future Admin review page). First router
-                     to reach an external service indirectly (via ai_service -> llm_client)
+                     cook + admin, shared with Story 6.2's Admin review page). First router
+                     to reach an external service indirectly (via ai_service -> llm_client).
+                     Story 6.2 added POST /suggestions/{id}/dismiss on a new SmartChefAdminDep
+                     (admin only, narrower than SmartChefReadDep)
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -183,7 +185,17 @@ backend/
   services/menu_service.py  Story 2.2: Category/Dish creation and edits, AD-8's availability gate.
                      Story 2.3 added list_categories/list_dishes, Recipe Ingredient CRUD, AD-8's
                      second half, a unit-mismatch guard, and _lock_dish (see trap 9, now joined by
-                     InventoryService._lock_ingredient, Story 4.1, as the pattern's third instance)
+                     InventoryService._lock_ingredient, Story 4.1, as the pattern's third instance).
+                     Story 6.2 added an optional source_suggestion_id to create_dish (validated by
+                     a new _validate_source_suggestion: 404 if the suggestion doesn't exist, 409 if
+                     already dismissed or already confirmed by another Dish) — still the only Dish
+                     creation path (FR-19), no second "confirm" mutation. The pre-check's own
+                     SELECT loses a TOCTOU race to a genuinely concurrent create_dish citing the
+                     same suggestion; dishes.source_suggestion_id carries a DB-level UNIQUE
+                     constraint (ORM: unique=True) as the real arbiter, with the resulting
+                     IntegrityError caught and translated into the same 409 rather than a 500 —
+                     a genuine double-confirm race, caught by code review, not by either of the
+                     two sequential-only tests that shipped with the first draft
   services/table_service.py  Story 2.4: Table creation/listing and the guarded-UPDATE edit path
                      (see trap 18)
   services/order_service.py  Story 3.1: open_table, the second guarded-UPDATE application (AD-6),
@@ -279,12 +291,22 @@ backend/
                      falling back to a raw, differently-scaled quantity) — the "prioritize
                      at-risk-of-waste ingredients" heuristic (FR-18), since nothing in this schema
                      tracks expiry/usage-rate. Validates the parsed OpenAI response's shape
-                     (name/ingredients/plating present) before persisting
+                     (name/ingredients/plating present) before persisting. Story 6.2 changed
+                     generate_suggestion/list_suggestions to return AIRecipeSuggestionResponse
+                     (not the raw ORM row): list_suggestions now does an outerjoin against Dish on
+                     Dish.source_suggestion_id to resolve confirmed_dish_id per row (null if
+                     unconfirmed), the derived-state read side of "confirmed." Added
+                     dismiss_suggestion (404 if missing, 409 if already dismissed or already
+                     confirmed, via a private _get_confirmed_dish_id helper reused by both the
+                     guard and the response so the two can never drift apart)
   exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409),
                      NotFoundError family (404, one shared base since Story 2.3, see trap 17).
                      Story 6.1 added a fifth family, ExternalServiceError (502) — the first
                      handler added since the original four, for a third-party service call
-                     failure (AIGenerationFailedError)
+                     failure (AIGenerationFailedError). Story 6.2 added three NotFoundError/
+                     ConflictError subclasses (SuggestionNotFoundError,
+                     SuggestionAlreadyDismissedError, SuggestionAlreadyConfirmedError), no new
+                     handler needed since both families already have one
   exceptions/handlers.py    register_exception_handlers(app); five handlers as of Story 6.1, one
                      per family
 ```
@@ -305,7 +327,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and nine real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, the Warehouse Ingredient detail page, the Warehouse Alerts page, and the Cook's Kitchen Display). The other 4 IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and eleven real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, the Warehouse Ingredient detail page, the Warehouse Alerts page, the Cook's Kitchen Display, the Cook's Smart Chef page (Story 6.1), and the Admin's Recipe Suggestions review page (Story 6.2)). The remaining IA surfaces are still placeholders.**
 
 ```
 frontend/src/
@@ -339,7 +361,10 @@ frontend/src/
                         it (50s), every other call site keeps the 5s default
   services/smartChefService.ts  Story 6.1 (new, Epic 6): useSuggestions/useGenerateSuggestion.
                         The first call site to pass a non-default timeout to apiRequest (50s,
-                        matching LLMClient's own 45s server-side budget plus margin)
+                        matching LLMClient's own 45s server-side budget plus margin). Story 6.2
+                        added useDismissSuggestion (POST .../dismiss, invalidates
+                        SUGGESTIONS_QUERY_KEY on settle, same reasoning as useGenerateSuggestion's
+                        own settle-not-success invalidation)
   services/authService.ts  useCurrentUser / useLogin / useLogout (Story 1.7: invalidates
                         CURRENT_USER_QUERY_KEY on success, the mirror of useLogin's own
                         invalidation; no manual navigate(), RequireAuth's existing 401-redirect
@@ -349,7 +374,10 @@ frontend/src/
                         matching tableService.ts's precedent). Story 3.2 exports DISHES_QUERY_KEY
                         (was module-private) so orderService.ts's add-item mutation can invalidate
                         it on a stale-dish 409, the same TABLES_QUERY_KEY cross-service export
-                        tableService.ts already set the precedent for
+                        tableService.ts already set the precedent for. Story 6.2 added an optional
+                        source_suggestion_id to CreateDishPayload (the only wiring this file needed
+                        for Story 6.2 in its final design — the create-Dish request itself is still
+                        the one path a suggestion gets confirmed through)
   services/inventoryService.ts  Story 2.3: useIngredients; Story 2.6: useCreateIngredient
                         (INGREDIENTS_QUERY_KEY promoted to a module constant). Story 4.1 added
                         useIngredient, useStockMovements, and useRecordStockMovement, the last of
@@ -400,6 +428,25 @@ frontend/src/
                         drive the attention-state tile treatment
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
+  components/ai/SuggestionSummary.tsx  Story 6.2 (new folder): the read-only Recipe Suggestion
+                        card content (name, ingredients drawn on, plating), extracted out of
+                        SmartChefPage.tsx's original SuggestionCard so RecipeSuggestionsPage.tsx
+                        could wrap the same content with its own Confirm/Dismiss actions instead
+                        of duplicating the markup
+  components/ai/ConfirmSuggestionDialog.tsx  Story 6.2: opened from RecipeSuggestionsPage.tsx's
+                        "Confirm into Dish" button (revised mid-story from an original
+                        navigate-to-Menu-Management design per manual-test feedback — see that
+                        story's own Change Log). Asks only for Category/Price/Prep-time, with one
+                        best-effort-prefilled, always-editable row per suggested ingredient
+                        (case-insensitive name match against the real Ingredient list for id+unit,
+                        parsed leading numeric amount for quantity). Composes
+                        POST /api/menu/dishes (carrying source_suggestion_id) then one
+                        POST .../recipe-ingredients per row — no new backend endpoint — and, once
+                        at least one line succeeds, PATCHes is_available: true so the Admin never
+                        has to flip it manually for a Dish whose recipe was just attached in the
+                        same flow. A per-row add failure (or the availability PATCH itself failing)
+                        does not roll back the created Dish; it is reported inline for the Admin to
+                        finish from Menu Management's existing recipe editor
   components/orders/OrderItemStatusBadge.tsx  Story 3.2: the shared Order Item status badge
                         (UX-DR1, MUI Chip + icon + spelled label), built as its own file rather
                         than inlined so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can
@@ -530,7 +577,20 @@ frontend/src/
                         derived from the shared mutation's own .variables field (review fix: that
                         field only ever reflects the most recent call, so two rapid clicks on
                         different rows could leave an earlier row's button incorrectly re-enabled
-                        mid-flight))
+                        mid-flight)),
+                        cook/SmartChefPage.tsx (Story 6.1: a request bar (optional free-text
+                        direction) plus the Cook's own persisted Recipe Suggestions, newest first,
+                        each card via the shared SuggestionSummary component. Deliberately no
+                        Confirm/Dismiss and no chat panel here, both out of scope for that story),
+                        and
+                        admin/RecipeSuggestionsPage.tsx (Story 6.2, replacing the placeholder:
+                        useSuggestions() filtered client-side to "awaiting review"
+                        (!dismissed && confirmed_dish_id === null, AD-9's convention), each card
+                        wrapping SuggestionSummary with Confirm into Dish/Dismiss actions. Confirm
+                        opens ConfirmSuggestionDialog in place (see components/ai/ above for the
+                        full design and its mid-story revision); Dismiss calls
+                        useDismissSuggestion().mutate() directly, no confirm step. Empty state:
+                        "No suggestions awaiting review.")
 frontend/
   nginx.conf            the production image's site config (see trap 13)
 ```
