@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from "react";
-import { useLocation } from "react-router";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -28,17 +27,6 @@ const INVALID_PRICE_MESSAGE = "Enter a price greater than zero";
 
 /** Shown when the prep time field holds something that is not a non-negative whole number. */
 const INVALID_PREP_TIME_MESSAGE = "Enter a whole number, zero or greater";
-
-/**
- * The `navigate(path, { state })` payload `RecipeSuggestionsPage.tsx`'s "Confirm into dish"
- * action hands off (Story 6.2, AC1). Ephemeral, one-shot data — deliberately not a URL query
- * param, since it is not meant to be bookmarked or shared.
- */
-interface RecipeSuggestionNavigationState {
-  prefillName?: string;
-  prefillDescription?: string;
-  sourceSuggestionId?: number;
-}
 
 /**
  * Reads the human-readable message off a failed request.
@@ -108,20 +96,13 @@ function parseNonNegativeInteger(raw: string): number | null {
 export function MenuManagementPage() {
   const [expandedDishId, setExpandedDishId] = useState<number | null>(null);
 
-  // Lazy initializers so a Confirm-into-dish handoff prefills the form only once, on mount —
-  // re-rendering (e.g. the Admin clearing the field) must not re-apply navigation state that is
-  // still sitting on the same location object.
-  const location = useLocation();
-  const navigationState = location.state as RecipeSuggestionNavigationState | null;
-
-  const [name, setName] = useState(() => navigationState?.prefillName ?? "");
-  const [description, setDescription] = useState(() => navigationState?.prefillDescription ?? "");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [prepTime, setPrepTime] = useState("");
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
-  const [sourceSuggestionId, setSourceSuggestionId] = useState(() => navigationState?.sourceSuggestionId);
 
   const dishesQuery = useDishes();
   const categoriesQuery = useCategories();
@@ -174,7 +155,6 @@ export function MenuManagementPage() {
         price: parsedPrice,
         category_id: Number(categoryId),
         prep_time_minutes: prepTimeTrimmed === "" ? undefined : (parsedPrepTime ?? undefined),
-        source_suggestion_id: sourceSuggestionId ?? undefined,
       },
       {
         onSuccess: () => {
@@ -183,7 +163,6 @@ export function MenuManagementPage() {
           setPrice("");
           setCategoryId("");
           setPrepTime("");
-          setSourceSuggestionId(undefined);
         },
       },
     );

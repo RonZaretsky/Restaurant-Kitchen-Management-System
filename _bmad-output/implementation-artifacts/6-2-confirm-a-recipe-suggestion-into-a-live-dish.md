@@ -45,21 +45,27 @@ dismissed suggestion should not also be confirmable (guard it), and a confirmed 
 also be dismissible (guard it) — both are plain business-rule checks in `AIService`, not schema
 constraints.
 
-**"Confirm into Dish" is a hand-off to the existing Menu Management page, not a new one-shot
-backend action.** The AI's `generated_recipe` JSON has no `category_id` or `price` (Dish's two
-required-but-AI-unknowable fields), and its `ingredients` are free-text names/quantities, not
-validated `Ingredient` ids + `Unit`s the way `RecipeIngredient` requires (`UnitMismatchError`
-already guards this elsewhere) — there is no safe way to auto-create a complete, valid Dish+Recipe
-from AI output alone. The Admin must still choose a category and price, and must still map each
-suggested ingredient to a real `Ingredient` record with a real quantity/unit, **exactly the same
-manual steps every other new Dish already requires**. "Confirm into Dish" therefore means: clicking
-it navigates to `/admin/menu` with the suggestion's `name` and a description built from its
-`plating` text pre-filled into the **existing** create-Dish form (via React Router's
-`navigate(path, { state })`, read once on mount — ephemeral hand-off data, not a URL param meant to
-be bookmarked or shared), plus the `source_suggestion_id` carried invisibly so the eventual
-`POST /api/menu/dishes` call includes it. The Admin still fills in category/price and still adds
-Recipe Ingredient lines afterward exactly as they already do today — **no change to
-`add_recipe_ingredient`/`MenuManagementPage.tsx`'s recipe-ingredient UI at all.**
+**"Confirm into Dish" is an in-place dialog on `RecipeSuggestionsPage.tsx`, not a hand-off to
+Menu Management (revised post-manual-test-feedback — see Change Log).** The original design
+navigated to `/admin/menu` with `name`/`description` pre-filled via router state, leaving the
+Admin to separately re-add every Recipe Ingredient line by hand afterward; manual testing found
+this an unacceptable extra step. The AI's `generated_recipe` JSON still has no `category_id` or
+`price` (Dish's two required-but-AI-unknowable fields), and its `ingredients` are still free-text
+names/quantities, not validated `Ingredient` ids + `Unit`s the way `RecipeIngredient` requires
+(`UnitMismatchError` still guards this) — there remains no safe way to blindly auto-create a
+complete, valid Dish+Recipe from AI output alone. Instead, `ConfirmSuggestionDialog.tsx` opens in
+place and asks the Admin for exactly the fields AI output can't supply (category, price, prep
+time), while **best-effort prefilling** each suggested ingredient's row via a case-insensitive
+name match against the real Ingredient list (for the id + its fixed `unit`) and a parsed leading
+numeric amount off the AI's free-text quantity string — every field stays editable, and an
+unmatched/unparseable row is left blank rather than guessed. Confirming composes the two existing
+endpoints already used everywhere else in this codebase: `POST /api/menu/dishes` (carrying
+`source_suggestion_id`), then `POST /api/menu/dishes/{id}/recipe-ingredients` once per row — no
+new backend action, `MenuService.create_dish`/`add_recipe_ingredient` remain the only paths for
+either (AC2). A per-row `add_recipe_ingredient` failure (e.g. a genuine `UnitMismatchError`) does
+not roll back the already-created Dish; it is reported inline, and the Admin can still finish that
+line from Menu Management's existing recipe editor, matching how a Recipe Ingredient edit failure
+is already surfaced everywhere else in this app.
 
 **What this story does NOT include:** no chat UI (`AIChatSession`/`AIChatMessage`, Story 6.3's
 scope, still untouched). No change to `SmartChefPage.tsx`'s own generation flow (Story 6.1) beyond
@@ -195,48 +201,40 @@ still show no Confirm/Dismiss actions, those remain Admin-only, rendered only on
   - [x] `CreateDishPayload` (or wherever the create-Dish request type lives) gains
     `source_suggestion_id?: number` — optional, every existing call site unaffected.
 
-- [x] **Task 9: Frontend — `RecipeSuggestionsPage.tsx`** (AC4, AC5, AC6)
-  - [x] Replace the placeholder. Fetch `useSuggestions()` (Story 6.1's existing hook, already
-    Admin-accessible via `SmartChefReadDep`), filter client-side to "awaiting review": `!dismissed
-    && confirmed_dish_id === null` (AD-9's client-side-filter convention — no new backend query
-    param).
-  - [x] Each card (reusing the same content layout `SmartChefPage.tsx`'s `SuggestionCard`
-    establishes — name, ingredients drawn on, plating; consider extracting a shared component if
-    the dev agent judges the duplication significant, dev agent's call) additionally renders two
-    actions this story adds: **Confirm into Dish** (`variant="contained"`, the accent-primary
-    button) and **Dismiss** (`variant="outlined"`).
-  - [x] Confirm into Dish: `navigate("/admin/menu", { state: { prefillName:
-    suggestion.generated_recipe.name, prefillDescription: suggestion.generated_recipe.plating,
-    sourceSuggestionId: suggestion.id } })`.
-  - [x] Dismiss: calls `useDismissSuggestion().mutate(suggestion.id)` directly, no confirm step (no
-    AC asks for one here, and losing a suggestion to dismissal is reversible in spirit — the row is
-    retained for audit per AC4 itself, matching the "no confirm unless it's a data-loss risk"
-    convention `close_order`/`mark_served` already established, though dev agent should re-check
-    this against `UX-DR11`'s referenced wording if more specific guidance is found there).
-  - [x] Empty state: "No suggestions awaiting review." (AC6, exact copy) when the filtered list is
-    empty — even if `useSuggestions()`'s raw list is not (i.e. every suggestion is
-    dismissed/confirmed already).
+- [x] **Task 9 (revised): Frontend — `RecipeSuggestionsPage.tsx` + `ConfirmSuggestionDialog.tsx`**
+  (AC1, AC4, AC5, AC6)
+  - [x] `RecipeSuggestionsPage.tsx`: fetch `useSuggestions()`, filter client-side to "awaiting
+    review": `!dismissed && confirmed_dish_id === null` (AD-9's client-side-filter convention).
+    Each card (`SuggestionSummary`, extracted from `SmartChefPage.tsx`'s original card so both
+    pages share the read-only content) renders **Confirm into Dish** (`variant="contained"`) and
+    **Dismiss** (`variant="outlined"`).
+  - [x] Confirm into Dish opens `ConfirmSuggestionDialog` in place (no navigation) — revised from
+    the original navigate-to-Menu-Management design per manual-test feedback: the Admin wanted
+    Confirm to also add the Recipe Ingredient lines, not just create a bare Dish. The dialog asks
+    for Category, Price, Prep time (the fields AI output can't supply), with `name`/`description`
+    prefilled and editable, and one row per suggested ingredient — each row best-effort matched
+    (case-insensitive name match against the real Ingredient list for its id + fixed `unit`) and
+    best-effort quantity-parsed, but always editable, since an unmatched/unparseable row is left
+    blank rather than guessed. Confirm composes `POST /api/menu/dishes` (with
+    `source_suggestion_id`) then one `POST /api/menu/dishes/{id}/recipe-ingredients` per row — no
+    new backend endpoint, both remain the sole paths for either action (AC2).
+  - [x] Dismiss: calls `useDismissSuggestion().mutate(suggestion.id)` directly, no confirm step
+    (unchanged from the original design).
+  - [x] Empty state: "No suggestions awaiting review." (AC6, exact copy).
 
-- [x] **Task 10: Frontend — `MenuManagementPage.tsx` prefill** (AC1)
-  - [x] Read `useLocation().state` once on mount (a `useEffect` with an empty-ish dependency guard,
-    or a `useState` lazy initializer reading `history.state`/`location.state` directly — dev
-    agent's call on the exact React idiom, but it must only apply once, not re-prefill if the
-    Admin clears the field and the component re-renders). If present, prefill `name`/`description`
-    from `prefillName`/`prefillDescription`, and hold `sourceSuggestionId` in a new piece of state
-    threaded into the existing `handleCreateDish`'s `createDishMutation.mutate({...,
-    source_suggestion_id: sourceSuggestionId ?? undefined})` call.
-  - [x] No visible UI change beyond the pre-filled fields — the Admin still manually picks a
-    category and confirms/edits the price exactly as they already do for any new Dish.
+- [x] ~~Task 10: Frontend — `MenuManagementPage.tsx` prefill~~ (superseded — removed, see Change
+  Log). The navigation-state prefill this task added was reverted entirely once Task 9 was
+  revised to confirm in-place; `MenuManagementPage.tsx` has no Story 6.2 involvement at all in the
+  final design.
 
 - [x] **Task 11: Frontend tests**
-  - [x] `RecipeSuggestionsPage.test.tsx` (new): empty-state copy; a card renders Confirm/Dismiss
-    (contrast with `SmartChefPage.test.tsx`'s own assertion that those buttons are *absent* there);
-    clicking Confirm navigates to `/admin/menu` with the expected state payload; clicking Dismiss
-    calls the dismiss endpoint; a dismissed or already-confirmed suggestion is excluded from the
-    rendered list even though `useSuggestions()`'s raw response still includes it.
-  - [x] `MenuManagementPage.test.tsx` (extend): arriving with navigation state pre-fills
-    name/description; submitting the create form in that state includes `source_suggestion_id` in
-    the request body; arriving with no state behaves exactly as today (regression check).
+  - [x] `RecipeSuggestionsPage.test.tsx`: empty-state copy; a card renders Confirm/Dismiss
+    (contrast with `SmartChefPage.test.tsx`'s own assertion that those buttons are *absent*
+    there); a dismissed or already-confirmed suggestion is excluded from the rendered list even
+    though `useSuggestions()`'s raw response still includes it; clicking Confirm opens the dialog
+    with name/description prefilled and an ingredient row matched to a real Ingredient; confirming
+    the dialog creates the Dish (carrying `source_suggestion_id`) and its Recipe Ingredient line
+    together, using the matched Ingredient's real id/unit rather than the AI's free-text name/unit.
 
 - [x] **Task 12: Full regression pass**
   - [x] `uv run pytest -q` (backend) — zero regressions.
@@ -478,5 +476,20 @@ Claude Sonnet 5
 - `frontend/src/pages/cook/SmartChefPage.tsx` (modified)
 - `frontend/src/pages/admin/RecipeSuggestionsPage.tsx` (modified)
 - `frontend/src/pages/admin/RecipeSuggestionsPage.test.tsx` (new)
-- `frontend/src/pages/admin/MenuManagementPage.tsx` (modified)
-- `frontend/src/pages/admin/MenuManagementPage.test.tsx` (modified)
+- `frontend/src/components/ai/ConfirmSuggestionDialog.tsx` (new)
+- `frontend/src/pages/admin/MenuManagementPage.tsx` (modified, then reverted to its pre-Story-6.2
+  state — see Change Log)
+- `frontend/src/pages/admin/MenuManagementPage.test.tsx` (modified, then reverted alongside it)
+
+## Change Log
+
+- **Post-code-review, during manual testing**: the Admin found the original "Confirm into Dish"
+  design (navigate to Menu Management with `name`/`description` pre-filled, Admin re-adds every
+  Recipe Ingredient line by hand) an unacceptable extra step — Confirm should create the Dish
+  *and* its Recipe Ingredient lines together, in one place. Reworked Task 9 into an in-place
+  `ConfirmSuggestionDialog.tsx` on `RecipeSuggestionsPage.tsx` (Category/Price/Prep-time fields
+  plus one best-effort-prefilled, always-editable row per suggested ingredient) and fully removed
+  Task 10's `MenuManagementPage.tsx` navigation-state prefill, since nothing routes through it
+  anymore. No backend change was needed for this rework: the dialog composes the same two
+  existing endpoints (`POST /api/menu/dishes`, `POST .../recipe-ingredients`) already used
+  everywhere else. See the Scope note and Task 9/10 above for the full reasoning.

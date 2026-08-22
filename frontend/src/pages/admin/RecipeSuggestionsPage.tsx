@@ -1,10 +1,11 @@
-import { useNavigate } from "react-router";
+import { useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import Typography from "@mui/material/Typography";
 
+import { ConfirmSuggestionDialog } from "../../components/ai/ConfirmSuggestionDialog";
 import { SuggestionSummary } from "../../components/ai/SuggestionSummary";
 import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
@@ -27,30 +28,18 @@ function errorMessage(error: Error): string {
 /**
  * One "awaiting review" Recipe Suggestion card (Story 6.2, AC4-AC6).
  *
- * Wraps `SuggestionSummary`'s read-only content with the two actions this
- * story adds. Confirm hands off to the existing Menu Management create-Dish
- * form via navigation state (AC1) rather than building a second, parallel
- * Dish-creation UI — AI-generated ingredients are free-text and still need
- * an Admin to map them to real Ingredient records with real quantities/units.
- * Dismiss fires immediately, no confirm step: the row is retained for audit
- * (AC4), so dismissing is not a data-loss action.
+ * Wraps `SuggestionSummary`'s read-only content with the two actions this story adds. Confirm
+ * opens `ConfirmSuggestionDialog` in place (manual-test finding: the original navigate-to-Menu-
+ * Management design left every Recipe Ingredient line to be re-added by hand afterward; the
+ * dialog creates the Dish and its Recipe Ingredient lines together). Dismiss fires immediately,
+ * no confirm step: the row is retained for audit (AC4), so dismissing is not a data-loss action.
  *
  * @param suggestion - The Recipe Suggestion this card describes.
  * @returns The suggestion card with its Confirm/Dismiss actions.
  */
 function ReviewableSuggestionCard({ suggestion }: { suggestion: AIRecipeSuggestion }) {
-  const navigate = useNavigate();
+  const [isConfirming, setIsConfirming] = useState(false);
   const dismissMutation = useDismissSuggestion();
-
-  const handleConfirm = () => {
-    navigate("/admin/menu", {
-      state: {
-        prefillName: suggestion.generated_recipe.name,
-        prefillDescription: suggestion.generated_recipe.plating,
-        sourceSuggestionId: suggestion.id,
-      },
-    });
-  };
 
   return (
     <Card variant="outlined" sx={{ padding: 2, marginBottom: 2 }}>
@@ -63,7 +52,7 @@ function ReviewableSuggestionCard({ suggestion }: { suggestion: AIRecipeSuggesti
       )}
 
       <Box sx={{ display: "flex", gap: 1, marginTop: 2 }}>
-        <Button variant="contained" size="small" onClick={handleConfirm}>
+        <Button variant="contained" size="small" onClick={() => setIsConfirming(true)}>
           Confirm into Dish
         </Button>
         <Button
@@ -75,6 +64,10 @@ function ReviewableSuggestionCard({ suggestion }: { suggestion: AIRecipeSuggesti
           Dismiss
         </Button>
       </Box>
+
+      {isConfirming && (
+        <ConfirmSuggestionDialog suggestion={suggestion} onClose={() => setIsConfirming(false)} />
+      )}
     </Card>
   );
 }
