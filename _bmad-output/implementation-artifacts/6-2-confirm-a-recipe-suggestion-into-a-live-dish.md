@@ -6,7 +6,7 @@ story: 2
 
 # Story 6.2: Confirm a Recipe Suggestion into a Live Dish
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -91,31 +91,31 @@ still show no Confirm/Dismiss actions, those remain Admin-only, rendered only on
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Backend — `Dish.source_suggestion_id` + `AIRecipeSuggestion.dismissed` (AC1, AC3,
+- [x] **Task 1: Backend — `Dish.source_suggestion_id` + `AIRecipeSuggestion.dismissed` (AC1, AC3,
   AC4, AC7)**
-  - [ ] `backend/data_models/menu.py`: add `source_suggestion_id: Mapped[int | None] =
+  - [x] `backend/data_models/menu.py`: add `source_suggestion_id: Mapped[int | None] =
     mapped_column(Integer, ForeignKey("ai_recipe_suggestions.id"), nullable=True)` to `Dish`.
     Nullable, no default needed beyond `None` (AC3: a manually-defined Dish's reference is null by
     construction, nothing to enforce).
-  - [ ] `backend/data_models/ai.py`: add `dismissed: Mapped[bool] = mapped_column(Boolean,
+  - [x] `backend/data_models/ai.py`: add `dismissed: Mapped[bool] = mapped_column(Boolean,
     nullable=False, default=False)` to `AIRecipeSuggestion`.
-  - [ ] Generate the Alembic revision: `uv run alembic revision --autogenerate -m "add dish
+  - [x] Generate the Alembic revision: `uv run alembic revision --autogenerate -m "add dish
     source_suggestion_id and ai_recipe_suggestions dismissed"` (AC7, AD-4). **Inspect the
     generated script before committing** — confirm it only adds the one column + one FK per table,
     no unrelated autogenerate noise, matching trap 22's "a nullable-with-no-default column add
     doesn't break existing rows" lesson (both new columns here are nullable or have a plain
     default, so no backfill step is needed, but verify the generated script doesn't add a
     server-side default that would).
-  - [ ] `DishResponse` (`data_models/menu.py`) gains `source_suggestion_id: int | None`.
-  - [ ] `AIRecipeSuggestionResponse` (`data_models/ai.py`) gains `dismissed: bool` and
+  - [x] `DishResponse` (`data_models/menu.py`) gains `source_suggestion_id: int | None`.
+  - [x] `AIRecipeSuggestionResponse` (`data_models/ai.py`) gains `dismissed: bool` and
     `confirmed_dish_id: int | None` (the derived-confirmation signal the frontend filters on — see
     Task 3).
 
-- [ ] **Task 2: Backend — `CreateDishRequest` gains `source_suggestion_id` (AC1, AC2)**
-  - [ ] `backend/data_models/menu.py`: add `source_suggestion_id: int | None = Field(default=None,
+- [x] **Task 2: Backend — `CreateDishRequest` gains `source_suggestion_id` (AC1, AC2)**
+  - [x] `backend/data_models/menu.py`: add `source_suggestion_id: int | None = Field(default=None,
     gt=0, le=_INT4_MAX)` to `CreateDishRequest`. Optional, defaults to `None` — every existing
     manual Dish-creation call site is unaffected (AC3).
-  - [ ] `backend/services/menu_service.py::create_dish`: when `payload.source_suggestion_id` is
+  - [x] `backend/services/menu_service.py::create_dish`: when `payload.source_suggestion_id` is
     provided, validate before inserting: the suggestion exists (`SuggestionNotFoundError`, 404, new
     exception type mirroring `DishNotFoundError`'s shape); it is not `dismissed`
     (`SuggestionAlreadyDismissedError`, 409, new); and no other Dish already references it
@@ -124,21 +124,21 @@ still show no Confirm/Dismiss actions, those remain Admin-only, rendered only on
     all three checks pass, set `dish.source_suggestion_id = payload.source_suggestion_id` on the
     same insert already in progress — **do not** add a second commit or a second code path; this
     is one more field on the existing insert, not a new method.
-  - [ ] No change to `update_dish` for this story — epics AC1 says "created or updated," but
+  - [x] No change to `update_dish` for this story — epics AC1 says "created or updated," but
     nothing in this story's own UX flow ever confirms into an *existing* Dish (Confirm into Dish
     always creates a new one via the create form); leave `update_dish` unable to set
     `source_suggestion_id` for now, there is no caller that would use it and no AC that requires it
     — do not speculatively add an unused parameter.
 
-- [ ] **Task 3: Backend — `AIService` dismiss + confirmed-status derivation (AC4, AC6)**
-  - [ ] `backend/services/ai_service.py`: new `async def dismiss_suggestion(self, db: AsyncSession,
+- [x] **Task 3: Backend — `AIService` dismiss + confirmed-status derivation (AC4, AC6)**
+  - [x] `backend/services/ai_service.py`: new `async def dismiss_suggestion(self, db: AsyncSession,
     actor: User, suggestion_id: int) -> AIRecipeSuggestion`. Fetch the suggestion
     (`SuggestionNotFoundError` if missing, reusing Task 2's new exception type). Reject if already
     `dismissed` (`SuggestionAlreadyDismissedError`) or already confirmed (has a referencing Dish,
     `SuggestionAlreadyConfirmedError`) — the same two guards Task 2's `create_dish` path checks,
     now checked here in the opposite direction. Set `dismissed = True`, commit, refresh, log at
     `INFO`, return it.
-  - [ ] `list_suggestions`: extend the query to a `LEFT JOIN Dish ON Dish.source_suggestion_id ==
+  - [x] `list_suggestions`: extend the query to a `LEFT JOIN Dish ON Dish.source_suggestion_id ==
     AIRecipeSuggestion.id`, selecting `Dish.id` alongside each suggestion row (`select(
     AIRecipeSuggestion, Dish.id).outerjoin(...)`), so the response can carry `confirmed_dish_id`
     without a second per-row query (N+1). No `dismissed` filter here — same as Story 6.1's own
@@ -147,101 +147,101 @@ still show no Confirm/Dismiss actions, those remain Admin-only, rendered only on
     client-side-filter convention and Story 6.1's own "no dismissed filter, that's this story's job"
     note.
 
-- [ ] **Task 4: Backend — new exception types** (AC1, AC2, AC4)
-  - [ ] `backend/exceptions/__init__.py`: `SuggestionNotFoundError(NotFoundError)`, detail
+- [x] **Task 4: Backend — new exception types** (AC1, AC2, AC4)
+  - [x] `backend/exceptions/__init__.py`: `SuggestionNotFoundError(NotFoundError)`, detail
     `"Recipe suggestion not found"`. `SuggestionAlreadyDismissedError(ConflictError)`, detail
     `"Rejected, suggestion is already dismissed"`. `SuggestionAlreadyConfirmedError(ConflictError)`,
     detail `"Rejected, suggestion is already confirmed"`. No new handler needed — all three
     subclass an existing family (`NotFoundError`/`ConflictError`), already handled.
 
-- [ ] **Task 5: Backend — `POST /api/smart-chef/suggestions/{id}/dismiss`** (AC4)
-  - [ ] `backend/api/smart_chef.py`: new `SmartChefAdminDep = Annotated[User,
+- [x] **Task 5: Backend — `POST /api/smart-chef/suggestions/{id}/dismiss`** (AC4)
+  - [x] `backend/api/smart_chef.py`: new `SmartChefAdminDep = Annotated[User,
     Depends(require_role(UserRole.admin))]` (dismissing is Admin-only, distinct from the existing
     Cook-only `SmartChefWriteDep` and the Cook+Admin `SmartChefReadDep`).
-  - [ ] `@router.post("/suggestions/{suggestion_id}/dismiss", response_model=
+  - [x] `@router.post("/suggestions/{suggestion_id}/dismiss", response_model=
     AIRecipeSuggestionResponse)`, calling `ai_service.dismiss_suggestion(db, actor,
     suggestion_id)`. New `_DISMISS_ERROR_DESCRIPTIONS` dict (401/403, 404 "no matching suggestion",
     409 "already dismissed or already confirmed"), following this file's existing per-route dict
     convention.
 
-- [ ] **Task 6: Backend tests** (`backend/tests/test_ai.py`, extend; `backend/tests/test_menu.py`,
+- [x] **Task 6: Backend tests** (`backend/tests/test_ai.py`, extend; `backend/tests/test_menu.py`,
   extend if it exists — check the file list first)
-  - [ ] AC1/AC3: creating a Dish with `source_suggestion_id` persists the back-reference; creating
+  - [x] AC1/AC3: creating a Dish with `source_suggestion_id` persists the back-reference; creating
     a Dish without it (every existing call site) leaves it `None`.
-  - [ ] AC1/AC2: confirming a suggestion (`POST /api/menu/dishes` with `source_suggestion_id` set)
+  - [x] AC1/AC2: confirming a suggestion (`POST /api/menu/dishes` with `source_suggestion_id` set)
     is the *only* path exercised — no new endpoint bypasses `create_dish`'s own validation
     (category existence, price bounds, etc. all still apply unchanged).
-  - [ ] Confirming an already-confirmed suggestion (a second Dish citing the same
+  - [x] Confirming an already-confirmed suggestion (a second Dish citing the same
     `source_suggestion_id`) is rejected with 409.
-  - [ ] Confirming a dismissed suggestion is rejected with 409.
-  - [ ] Confirming a nonexistent `source_suggestion_id` is rejected with 404.
-  - [ ] AC4: dismissing a suggestion sets `dismissed = True`; dismissing an already-dismissed one
+  - [x] Confirming a dismissed suggestion is rejected with 409.
+  - [x] Confirming a nonexistent `source_suggestion_id` is rejected with 404.
+  - [x] AC4: dismissing a suggestion sets `dismissed = True`; dismissing an already-dismissed one
     is rejected with 409; dismissing an already-confirmed one is rejected with 409; dismissing a
     nonexistent id is rejected with 404.
-  - [ ] `GET /api/smart-chef/suggestions` includes `dismissed` and `confirmed_dish_id` (null when
+  - [x] `GET /api/smart-chef/suggestions` includes `dismissed` and `confirmed_dish_id` (null when
     neither, the real Dish id once confirmed) in every row.
-  - [ ] Role coverage for `POST .../dismiss`: cook, waiter, warehouse_manager all 403 (Admin-only,
+  - [x] Role coverage for `POST .../dismiss`: cook, waiter, warehouse_manager all 403 (Admin-only,
     no Cook fallback — unlike the existing `SmartChefReadDep`); unauthenticated 401.
 
-- [ ] **Task 7: Frontend — `smartChefService.ts` gains dismiss** (AC4)
-  - [ ] New `useDismissSuggestion(): UseMutationResult<AIRecipeSuggestion, Error, number>`, `POST
+- [x] **Task 7: Frontend — `smartChefService.ts` gains dismiss** (AC4)
+  - [x] New `useDismissSuggestion(): UseMutationResult<AIRecipeSuggestion, Error, number>`, `POST
     /api/smart-chef/suggestions/${id}/dismiss`, invalidating `SUGGESTIONS_QUERY_KEY` on settle
     (matches `useGenerateSuggestion`'s own "invalidate on settle" reasoning — a 409 means the
     client's view of this suggestion's state is already stale).
-  - [ ] `frontend/src/types/ai.ts`: `AIRecipeSuggestion` gains `dismissed: boolean` and
+  - [x] `frontend/src/types/ai.ts`: `AIRecipeSuggestion` gains `dismissed: boolean` and
     `confirmed_dish_id: number | null`.
 
-- [ ] **Task 8: Frontend — `menuService.ts`/`types/menu.ts`** (AC1)
-  - [ ] `CreateDishPayload` (or wherever the create-Dish request type lives) gains
+- [x] **Task 8: Frontend — `menuService.ts`/`types/menu.ts`** (AC1)
+  - [x] `CreateDishPayload` (or wherever the create-Dish request type lives) gains
     `source_suggestion_id?: number` — optional, every existing call site unaffected.
 
-- [ ] **Task 9: Frontend — `RecipeSuggestionsPage.tsx`** (AC4, AC5, AC6)
-  - [ ] Replace the placeholder. Fetch `useSuggestions()` (Story 6.1's existing hook, already
+- [x] **Task 9: Frontend — `RecipeSuggestionsPage.tsx`** (AC4, AC5, AC6)
+  - [x] Replace the placeholder. Fetch `useSuggestions()` (Story 6.1's existing hook, already
     Admin-accessible via `SmartChefReadDep`), filter client-side to "awaiting review": `!dismissed
     && confirmed_dish_id === null` (AD-9's client-side-filter convention — no new backend query
     param).
-  - [ ] Each card (reusing the same content layout `SmartChefPage.tsx`'s `SuggestionCard`
+  - [x] Each card (reusing the same content layout `SmartChefPage.tsx`'s `SuggestionCard`
     establishes — name, ingredients drawn on, plating; consider extracting a shared component if
     the dev agent judges the duplication significant, dev agent's call) additionally renders two
     actions this story adds: **Confirm into Dish** (`variant="contained"`, the accent-primary
     button) and **Dismiss** (`variant="outlined"`).
-  - [ ] Confirm into Dish: `navigate("/admin/menu", { state: { prefillName:
+  - [x] Confirm into Dish: `navigate("/admin/menu", { state: { prefillName:
     suggestion.generated_recipe.name, prefillDescription: suggestion.generated_recipe.plating,
     sourceSuggestionId: suggestion.id } })`.
-  - [ ] Dismiss: calls `useDismissSuggestion().mutate(suggestion.id)` directly, no confirm step (no
+  - [x] Dismiss: calls `useDismissSuggestion().mutate(suggestion.id)` directly, no confirm step (no
     AC asks for one here, and losing a suggestion to dismissal is reversible in spirit — the row is
     retained for audit per AC4 itself, matching the "no confirm unless it's a data-loss risk"
     convention `close_order`/`mark_served` already established, though dev agent should re-check
     this against `UX-DR11`'s referenced wording if more specific guidance is found there).
-  - [ ] Empty state: "No suggestions awaiting review." (AC6, exact copy) when the filtered list is
+  - [x] Empty state: "No suggestions awaiting review." (AC6, exact copy) when the filtered list is
     empty — even if `useSuggestions()`'s raw list is not (i.e. every suggestion is
     dismissed/confirmed already).
 
-- [ ] **Task 10: Frontend — `MenuManagementPage.tsx` prefill** (AC1)
-  - [ ] Read `useLocation().state` once on mount (a `useEffect` with an empty-ish dependency guard,
+- [x] **Task 10: Frontend — `MenuManagementPage.tsx` prefill** (AC1)
+  - [x] Read `useLocation().state` once on mount (a `useEffect` with an empty-ish dependency guard,
     or a `useState` lazy initializer reading `history.state`/`location.state` directly — dev
     agent's call on the exact React idiom, but it must only apply once, not re-prefill if the
     Admin clears the field and the component re-renders). If present, prefill `name`/`description`
     from `prefillName`/`prefillDescription`, and hold `sourceSuggestionId` in a new piece of state
     threaded into the existing `handleCreateDish`'s `createDishMutation.mutate({...,
     source_suggestion_id: sourceSuggestionId ?? undefined})` call.
-  - [ ] No visible UI change beyond the pre-filled fields — the Admin still manually picks a
+  - [x] No visible UI change beyond the pre-filled fields — the Admin still manually picks a
     category and confirms/edits the price exactly as they already do for any new Dish.
 
-- [ ] **Task 11: Frontend tests**
-  - [ ] `RecipeSuggestionsPage.test.tsx` (new): empty-state copy; a card renders Confirm/Dismiss
+- [x] **Task 11: Frontend tests**
+  - [x] `RecipeSuggestionsPage.test.tsx` (new): empty-state copy; a card renders Confirm/Dismiss
     (contrast with `SmartChefPage.test.tsx`'s own assertion that those buttons are *absent* there);
     clicking Confirm navigates to `/admin/menu` with the expected state payload; clicking Dismiss
     calls the dismiss endpoint; a dismissed or already-confirmed suggestion is excluded from the
     rendered list even though `useSuggestions()`'s raw response still includes it.
-  - [ ] `MenuManagementPage.test.tsx` (extend): arriving with navigation state pre-fills
+  - [x] `MenuManagementPage.test.tsx` (extend): arriving with navigation state pre-fills
     name/description; submitting the create form in that state includes `source_suggestion_id` in
     the request body; arriving with no state behaves exactly as today (regression check).
 
-- [ ] **Task 12: Full regression pass**
-  - [ ] `uv run pytest -q` (backend) — zero regressions.
-  - [ ] `pnpm test` (frontend) — zero regressions.
-  - [ ] `npx tsc -b` — clean.
+- [x] **Task 12: Full regression pass**
+  - [x] `uv run pytest -q` (backend) — zero regressions.
+  - [x] `pnpm test` (frontend) — zero regressions.
+  - [x] `npx tsc -b` — clean.
 
 ## Dev Notes
 
@@ -347,8 +347,60 @@ endpoints/models (Story 6.3's scope).
 
 ### Agent Model Used
 
+Claude Sonnet 5
+
 ### Debug Log References
+
+- Alembic autogenerate for `f9cbd3ff5b87` omitted `server_default` on the new NOT NULL
+  `ai_recipe_suggestions.dismissed` column — trap 22 (nullable/no-default NOT NULL add against a
+  table with existing rows). Verified 6 pre-existing rows via `psql` against the running dev
+  container, added `server_default=sa.text('false')` manually, re-ran `alembic upgrade head`, and
+  confirmed all 6 rows backfilled to `dismissed = f`.
+- A backend test (`test_dismissing_a_suggestion_sets_dismissed_true`) initially failed with
+  `sqlalchemy.exc.MissingGreenlet`: `db_session.expire_all()` expired the `suggestion` ORM object
+  itself, so the later `suggestion.id` access (evaluated synchronously as a call argument) tried a
+  lazy DB reload outside the awaited call. Fixed by capturing `suggestion.id` into a local before
+  calling `expire_all()`.
 
 ### Completion Notes List
 
+- `Dish.source_suggestion_id` is the nullable provenance FK (no separate "Recipe" entity exists in
+  this schema); `AIRecipeSuggestion.dismissed` is the one new stored column. "Confirmed" remains
+  derived — a suggestion is confirmed iff some `Dish.source_suggestion_id` matches its id, resolved
+  via an outerjoin in `AIService.list_suggestions`, never a stored flag.
+- `MenuService.create_dish` is still the only Dish-creation path; Story 6.2 adds one optional,
+  validated field to it (`_validate_source_suggestion`) rather than a second path, satisfying AC2
+  structurally.
+- `POST /api/smart-chef/suggestions/{id}/dismiss` is Admin-only (`SmartChefAdminDep`), rejecting an
+  already-dismissed or already-confirmed suggestion with a 409, and a nonexistent one with a 404.
+- Frontend: extracted `SuggestionSummary` (in `components/ai/`) out of `SmartChefPage.tsx`'s
+  original `SuggestionCard` so `RecipeSuggestionsPage.tsx` could reuse the same read-only content
+  without duplicating it, wrapping it with this story's own Confirm/Dismiss actions.
+  `RecipeSuggestionsPage.tsx` filters `useSuggestions()` client-side to "awaiting review"
+  (`!dismissed && confirmed_dish_id === null`), per AD-9. "Confirm into dish" hands off to
+  `MenuManagementPage.tsx` via `navigate(path, { state })`, read once via a lazy `useState`
+  initializer so it only prefills on the initial mount.
+- Full regression pass: 394 backend tests pass (`uv run pytest -q`), 209 frontend tests pass
+  (`pnpm test` / vitest), `npx tsc -b` clean.
+
 ### File List
+
+- `backend/data_models/menu.py` (modified)
+- `backend/data_models/ai.py` (modified)
+- `backend/exceptions/__init__.py` (modified)
+- `backend/services/ai_service.py` (modified)
+- `backend/services/menu_service.py` (modified)
+- `backend/api/smart_chef.py` (modified)
+- `backend/alembic/versions/f9cbd3ff5b87_add_dish_source_suggestion_id_and_ai_.py` (new)
+- `backend/tests/test_ai.py` (modified)
+- `backend/tests/test_menu.py` (modified)
+- `frontend/src/types/ai.ts` (modified)
+- `frontend/src/types/menu.ts` (modified)
+- `frontend/src/services/smartChefService.ts` (modified)
+- `frontend/src/services/menuService.ts` (modified)
+- `frontend/src/components/ai/SuggestionSummary.tsx` (new)
+- `frontend/src/pages/cook/SmartChefPage.tsx` (modified)
+- `frontend/src/pages/admin/RecipeSuggestionsPage.tsx` (modified)
+- `frontend/src/pages/admin/RecipeSuggestionsPage.test.tsx` (new)
+- `frontend/src/pages/admin/MenuManagementPage.tsx` (modified)
+- `frontend/src/pages/admin/MenuManagementPage.test.tsx` (modified)

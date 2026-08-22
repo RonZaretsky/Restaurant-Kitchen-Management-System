@@ -34,6 +34,7 @@ interface CreateDishPayload {
   price: string;
   category_id: number;
   prep_time_minutes?: number | null;
+  source_suggestion_id?: number;
 }
 
 const CATEGORIES_QUERY_KEY = ["menu", "categories"] as const;

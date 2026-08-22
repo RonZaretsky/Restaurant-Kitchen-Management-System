@@ -328,3 +328,28 @@ class AIGenerationFailedError(ExternalServiceError):
     """
 
     detail = "Couldn't generate a suggestion right now"
+
+
+class SuggestionNotFoundError(NotFoundError):
+    """Raised when a request references a Recipe Suggestion id that does not exist (Story 6.2)."""
+
+    detail = "Recipe suggestion not found"
+
+
+class SuggestionAlreadyDismissedError(ConflictError):
+    """Raised when confirming or dismissing a Recipe Suggestion that is already dismissed
+    (Story 6.2, AC4).
+    """
+
+    detail = "Rejected, suggestion is already dismissed"
+
+
+class SuggestionAlreadyConfirmedError(ConflictError):
+    """Raised when confirming or dismissing a Recipe Suggestion that already has a Dish citing
+    it as its source (Story 6.2, AC1/AC4).
+
+    "Confirmed" is derived — this fires whenever a Dish with a matching source_suggestion_id
+    already exists, not from a stored status column.
+    """
+
+    detail = "Rejected, suggestion is already confirmed"

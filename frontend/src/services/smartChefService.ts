@@ -63,3 +63,22 @@ export function useGenerateSuggestion(): UseMutationResult<AIRecipeSuggestion, E
     onSettled: () => queryClient.invalidateQueries({ queryKey: SUGGESTIONS_QUERY_KEY }),
   });
 }
+
+/**
+ * Dismisses a Recipe Suggestion, retaining it for audit (Story 6.2, AC4).
+ *
+ * Invalidates the suggestion list on settle, not only on success: a 409 (already dismissed or
+ * already confirmed) means the client's view of this suggestion's state is already stale,
+ * matching `useGenerateSuggestion`'s own "invalidate on settle" reasoning.
+ *
+ * @returns The TanStack Query mutation for dismissing a suggestion.
+ */
+export function useDismissSuggestion(): UseMutationResult<AIRecipeSuggestion, Error, number> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (suggestionId: number) =>
+      apiRequest<AIRecipeSuggestion>(`/api/smart-chef/suggestions/${suggestionId}/dismiss`, { method: "POST" }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: SUGGESTIONS_QUERY_KEY }),
+  });
+}

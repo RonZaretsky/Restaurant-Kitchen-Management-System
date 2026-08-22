@@ -3,11 +3,11 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
-import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
+import { SuggestionSummary } from "../../components/ai/SuggestionSummary";
 import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
 import { useGenerateSuggestion, useSuggestions } from "../../services/smartChefService";
@@ -44,26 +44,7 @@ function errorMessage(error: Error): string {
 function SuggestionCard({ suggestion }: { suggestion: AIRecipeSuggestion }) {
   return (
     <Card variant="outlined" sx={{ padding: 2, marginBottom: 2 }}>
-      <Typography variant="h6">{suggestion.generated_recipe.name}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ marginBottom: 1 }}>
-        {`Requested by User #${suggestion.requested_by} · generated ${new Date(suggestion.created_at).toLocaleString()}`}
-      </Typography>
-
-      <Typography variant="subtitle2" sx={{ marginTop: 1 }}>
-        Ingredients drawn on
-      </Typography>
-      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, marginTop: 0.5, marginBottom: 1 }}>
-        {suggestion.generated_recipe.ingredients.map((ingredient, index) => (
-          <Chip
-            key={`${ingredient.name}-${index}`}
-            size="small"
-            label={`${ingredient.name}, ${ingredient.quantity}`}
-          />
-        ))}
-      </Box>
-
-      <Typography variant="subtitle2">Suggested plating</Typography>
-      <Typography variant="body2">{suggestion.generated_recipe.plating}</Typography>
+      <SuggestionSummary suggestion={suggestion} />
     </Card>
   );
 }

@@ -352,6 +352,135 @@ async def test_list_suggestions_role_coverage(client: AsyncClient, db_session: A
     assert (await client.get("/api/smart-chef/suggestions")).status_code == 401
 
 
+async def _create_suggestion(db_session: AsyncSession, requested_by: int, dismissed: bool = False) -> AIRecipeSuggestion:
+    suggestion = AIRecipeSuggestion(
+        requested_by=requested_by,
+        prompt_used="...",
+        generated_recipe={
+            "name": "Roasted Zucchini Flatbread",
+            "ingredients": [{"name": "Zucchini", "quantity": "1.2 kg"}],
+            "plating": "Sliced thin, served on a wooden board.",
+        },
+        ingredients_snapshot=[{"name": "Zucchini", "unit": "kg", "current_stock": "5.000"}],
+        dismissed=dismissed,
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+    await db_session.refresh(suggestion)
+    return suggestion
+
+
+@pytest.mark.asyncio
+async def test_list_suggestions_includes_dismissed_and_confirmed_dish_id(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: Story 6.2 - list_suggestions's outerjoin must surface both new fields.
+    admin = await _login_as(client, db_session, UserRole.admin, "david")
+    awaiting = await _create_suggestion(db_session, requested_by=admin.id)
+    dismissed = await _create_suggestion(db_session, requested_by=admin.id, dismissed=True)
+
+    # Act
+    response = await client.get("/api/smart-chef/suggestions")
+
+    # Assert
+    body = {item["id"]: item for item in response.json()}
+    assert body[awaiting.id]["dismissed"] is False
+    assert body[awaiting.id]["confirmed_dish_id"] is None
+    assert body[dismissed.id]["dismissed"] is True
+
+
+@pytest.mark.asyncio
+async def test_dismissing_a_suggestion_sets_dismissed_true(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    admin = await _login_as(client, db_session, UserRole.admin, "david")
+    suggestion = await _create_suggestion(db_session, requested_by=admin.id)
+    suggestion_id = suggestion.id
+
+    # Act
+    response = await client.post(f"/api/smart-chef/suggestions/{suggestion_id}/dismiss")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["dismissed"] is True
+    db_session.expire_all()
+    saved = await db_session.get(AIRecipeSuggestion, suggestion_id)
+    assert saved.dismissed is True
+
+
+@pytest.mark.asyncio
+async def test_dismissing_an_already_dismissed_suggestion_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    admin = await _login_as(client, db_session, UserRole.admin, "david")
+    suggestion = await _create_suggestion(db_session, requested_by=admin.id, dismissed=True)
+
+    # Act
+    response = await client.post(f"/api/smart-chef/suggestions/{suggestion.id}/dismiss")
+
+    # Assert
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_dismissing_an_already_confirmed_suggestion_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    admin = await _login_as(client, db_session, UserRole.admin, "david")
+    suggestion = await _create_suggestion(db_session, requested_by=admin.id)
+    category_response = await client.post("/api/menu/categories", json={"name": "Pizza"})
+    assert category_response.status_code == 201
+    dish_response = await client.post(
+        "/api/menu/dishes",
+        json={
+            "name": "Flatbread",
+            "price": "12.50",
+            "category_id": category_response.json()["id"],
+            "source_suggestion_id": suggestion.id,
+        },
+    )
+    assert dish_response.status_code == 201
+
+    # Act
+    response = await client.post(f"/api/smart-chef/suggestions/{suggestion.id}/dismiss")
+
+    # Assert
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_dismissing_a_nonexistent_suggestion_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.admin, "david")
+
+    # Act
+    response = await client.post("/api/smart-chef/suggestions/999999/dismiss")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_dismiss_suggestion_role_coverage(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange/Act/Assert: cook, waiter, warehouse_manager are all 403 (Admin-only); unauthenticated
+    # is 401.
+    admin_for_setup = await _login_as(client, db_session, UserRole.admin, "david")
+    suggestion = await _create_suggestion(db_session, requested_by=admin_for_setup.id)
+
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    assert (await client.post(f"/api/smart-chef/suggestions/{suggestion.id}/dismiss")).status_code == 403
+
+    await _login_as(client, db_session, UserRole.waiter, "maya")
+    assert (await client.post(f"/api/smart-chef/suggestions/{suggestion.id}/dismiss")).status_code == 403
+
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    assert (await client.post(f"/api/smart-chef/suggestions/{suggestion.id}/dismiss")).status_code == 403
+
+    client.cookies.clear()
+    assert (await client.post(f"/api/smart-chef/suggestions/{suggestion.id}/dismiss")).status_code == 401
+
+
 @pytest.mark.asyncio
 async def test_llm_client_raises_a_plain_error_when_no_api_key_is_configured() -> None:
     # Arrange: an empty api_key is exactly what config.yaml falls back to when OPENAI_API_KEY is

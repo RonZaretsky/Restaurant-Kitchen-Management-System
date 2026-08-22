@@ -22,6 +22,7 @@ export interface Dish {
   is_available: boolean;
   prep_time_minutes: number | null;
   created_at: string;
+  source_suggestion_id: number | null;
 }
 
 /**

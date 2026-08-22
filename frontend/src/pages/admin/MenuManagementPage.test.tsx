@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -42,11 +43,15 @@ function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-function renderPage() {
+function renderPage(navigationState?: Record<string, unknown>) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MenuManagementPage />
+      <MemoryRouter
+        initialEntries={[{ pathname: "/admin/menu", state: navigationState }]}
+      >
+        <MenuManagementPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -477,6 +482,68 @@ describe("MenuManagementPage", () => {
       expect(screen.queryByLabelText("New category name")).not.toBeInTheDocument();
     });
     expect(screen.getByRole("combobox", { name: "Category" })).toHaveTextContent("Desserts");
+  });
+
+  it("prefills name/description from Confirm-into-dish navigation state (Story 6.2)", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = String(url);
+        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
+        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.reject(new Error(`unexpected request: ${path}`));
+      }),
+    );
+
+    // Act
+    renderPage({
+      prefillName: "Roasted Zucchini Flatbread",
+      prefillDescription: "Sliced thin, served on a wooden board.",
+      sourceSuggestionId: 7,
+    });
+    await screen.findByText("No dishes yet.");
+
+    // Assert
+    expect(screen.getByLabelText("Dish name")).toHaveValue("Roasted Zucchini Flatbread");
+    expect(screen.getByLabelText("Description")).toHaveValue("Sliced thin, served on a wooden board.");
+  });
+
+  it("includes source_suggestion_id in the create request when arriving via Confirm-into-dish", async () => {
+    // Arrange
+    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
+      const path = String(url);
+      if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
+      if (path.includes("/api/menu/dishes") && init.method === "POST") {
+        return Promise.resolve(jsonResponse(201, { ...DISH, id: 55 }));
+      }
+      if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage({ prefillName: "Flatbread", prefillDescription: "Plated on a board.", sourceSuggestionId: 7 });
+    await screen.findByText("No dishes yet.");
+    await user.type(screen.getByLabelText("Price"), "9.00");
+    await user.click(screen.getByRole("combobox", { name: "Category" }));
+    await user.click(await screen.findByRole("option", { name: "Pizza" }));
+    await user.click(screen.getByRole("button", { name: "+ New dish" }));
+
+    // Assert
+    const post = fetchMock.mock.calls.find(
+      ([reqUrl, reqInit]) =>
+        String(reqUrl).includes("/api/menu/dishes") && (reqInit as RequestInit)?.method === "POST",
+    );
+    expect(post).toBeDefined();
+    expect(JSON.parse(String((post![1] as RequestInit).body))).toEqual({
+      name: "Flatbread",
+      description: "Plated on a board.",
+      price: "9.00",
+      category_id: 1,
+      source_suggestion_id: 7,
+    });
   });
 
   it("combines loading/error across dishes and categories, and Retry refetches both", async () => {
