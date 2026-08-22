@@ -296,3 +296,35 @@ class UnitMismatchError(ConflictError):
     """
 
     detail = "The line's unit must match the ingredient's own unit"
+
+
+class SuggestionGenerationInProgressError(ConflictError):
+    """Raised when a Cook requests a Recipe Suggestion while one is already generating for them
+    (AC3, Story 6.1, AD-14).
+
+    Reject, don't queue: a second concurrent request is rejected inline rather than waiting for
+    the first to finish.
+    """
+
+    detail = "Rejected, a suggestion is already generating for this Cook"
+
+
+class ExternalServiceError(Exception):
+    """Base for a failure calling a third-party service (Story 6.1, the first of its kind here).
+
+    One handler in main.py turns any subclass into a 502 carrying that subclass's `detail`,
+    mirroring AuthError/ConflictError/NotFoundError's own base-class-plus-handler shape.
+    """
+
+    detail = "An external service call failed"
+
+
+class AIGenerationFailedError(ExternalServiceError):
+    """Raised when the OpenAI call for a Recipe Suggestion fails, times out, or returns
+    unparseable content (AC4, Story 6.1, FR-21/AD-14).
+
+    No Recipe Suggestion row is ever created on this path — the insert only happens after the
+    call succeeds, so this error never leaves an orphaned row behind.
+    """
+
+    detail = "Couldn't generate a suggestion right now"

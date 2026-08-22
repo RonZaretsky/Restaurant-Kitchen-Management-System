@@ -107,15 +107,25 @@ function buildHeaders(init: RequestInit): Headers {
  * @param path - The request path, relative to the configured API base URL.
  * @param init - Standard fetch options. `method`/`body`/extra headers merge on
  *   top of this function's own defaults.
+ * @param timeoutMs - Overrides the default request budget (`config.api.timeoutMs`,
+ *   5s) for a call known to legitimately take longer than an ordinary CRUD
+ *   request — e.g. Smart Chef's OpenAI-backed generation call. Left at the
+ *   default for every other call site; do not raise the global default
+ *   instead, that would make every request wait as long to report a genuine
+ *   network failure.
  * @returns The parsed JSON response body, typed as `T`, or undefined for a
  *   response with no body.
  * @throws ApiError if the response status is not in the 2xx range, if the
  *   backend cannot be reached, or if a successful response body cannot be
  *   parsed as JSON.
  */
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = config.api.timeoutMs,
+): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.api.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
   try {

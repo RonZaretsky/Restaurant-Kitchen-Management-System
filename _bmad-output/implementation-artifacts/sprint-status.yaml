@@ -106,8 +106,8 @@ development_status:
   epic-5-retrospective: optional
 
   # Epic 6: Smart Chef, Recipe Suggestions & Assistant Chat
-  epic-6: backlog
-  6-1-generate-a-recipe-suggestion-from-current-stock: backlog
+  epic-6: in-progress
+  6-1-generate-a-recipe-suggestion-from-current-stock: done
   6-2-confirm-a-recipe-suggestion-into-a-live-dish: backlog
   6-3-consult-version-and-improve-recipes-via-smart-assistant-chat: backlog
   epic-6-retrospective: optional

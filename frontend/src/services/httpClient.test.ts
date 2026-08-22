@@ -141,4 +141,42 @@ describe("apiRequest", () => {
     // Act / Assert
     await expect(apiRequest("/api/auth/me")).rejects.toBeInstanceOf(ApiError);
   });
+
+  it("honors a longer per-call timeout instead of the 5s default", async () => {
+    // Arrange: a call whose own fetch hangs until aborted — mirroring real fetch's own behavior
+    // of rejecting with an AbortError once its signal fires, which a mock that just returns an
+    // eternally-pending Promise would not (manual-test finding, Story 6.1: Smart Chef's real
+    // OpenAI call routinely takes longer than 5s and was wrongly timing out under the default).
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              const error = new Error("The operation was aborted.");
+              error.name = "AbortError";
+              reject(error);
+            });
+          }),
+      ),
+    );
+
+    // Act
+    let settled = false;
+    const promise = apiRequest("/api/smart-chef/suggestions", { method: "POST" }, 50_000);
+    promise.catch(() => {}).finally(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(6_000); // past the 5s default, short of the 50s override
+
+    // Assert: still pending at 6s under the 50s override (the 5s default would already have
+    // aborted it by now).
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(45_000); // now past 50s total
+    await expect(promise).rejects.toMatchObject({ status: 0 });
+
+    vi.useRealTimers();
+  }, 10_000);
 });

@@ -23,3 +23,7 @@ auth:
 
 cors:
   allow_origin: ${FRONTEND_ORIGIN: "http://localhost:3000"}
+
+smart_chef:
+  api_key: ${OPENAI_API_KEY: ""}
+  model: ${OPENAI_MODEL: "gpt-4o-mini"}

@@ -6,7 +6,9 @@ from dependency_injector import containers, providers
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from clients.llm import LLMClient
 from clients.websocket import ConnectionRegistry
+from services.ai_service import AIService
 from services.auth_service import AuthService
 from services.inventory_service import InventoryService
 from services.kitchen_service import KitchenService
@@ -119,4 +121,29 @@ class Container(containers.DeclarativeContainer):
         logger=logging,
         realtime_service=realtime_service,
         inventory_service=inventory_service,
+    )
+
+    # Story 6.1: the first external-service client (AD-12). Singleton, not Factory: the
+    # underlying AsyncOpenAI client is safely reusable across requests, no need to reconstruct it
+    # per-injection the way a stateless Factory-built service is. No trap-23 ordering constraint
+    # of its own — llm_client depends only on config, not on another provider.
+    llm_client = providers.Singleton(
+        LLMClient,
+        api_key=config.smart_chef.api_key,
+        model=config.smart_chef.model,
+    )
+
+    # Singleton, not Factory (a deliberate deviation from every other service in this container):
+    # AD-14's "reject a second concurrent generation for the same Cook" guard lives in an
+    # in-process set on the AIService instance itself (see its own docstring). A Factory would
+    # hand each injected request a fresh, empty set, silently defeating the guard the first time
+    # two different requests each got their own instance — the opposite of RealtimeService's own
+    # shared-state pattern, where the state lives in a separately-injected Resource
+    # (connection_registry) rather than the Factory-built service itself; here, since AIService
+    # has no other per-request state to keep separate, making the whole service a Singleton is
+    # the simpler equivalent. Depends on llm_client, so must be declared below it (trap 23).
+    ai_service = providers.Singleton(
+        AIService,
+        logger=logging,
+        llm_client=llm_client,
     )
