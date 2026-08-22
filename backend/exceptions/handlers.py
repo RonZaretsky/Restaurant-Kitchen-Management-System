@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from exceptions import (
     AuthError,
     ConflictError,
+    ExternalServiceError,
     ForbiddenError,
     NotFoundError,
 )
@@ -80,6 +81,22 @@ async def _not_found_error_handler(request: Request, exc: NotFoundError) -> JSON
     return JSONResponse(status_code=404, content={"detail": exc.detail})
 
 
+async def _external_service_error_handler(request: Request, exc: ExternalServiceError) -> JSONResponse:
+    """Turn a third-party service call failure into a 502 carrying its message.
+
+    One handler for the whole ExternalServiceError family (Story 6.1's AIGenerationFailedError is
+    the first member), mirroring _not_found_error_handler's exact shape.
+
+    Args:
+        request: The incoming request that triggered the error.
+        exc: The raised ExternalServiceError subclass, whose detail becomes the response body.
+
+    Returns:
+        A 502 JSON response.
+    """
+    return JSONResponse(status_code=502, content={"detail": exc.detail})
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register every domain exception's handler on the given app.
 
@@ -97,3 +114,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ForbiddenError, _forbidden_error_handler)
     app.add_exception_handler(ConflictError, _conflict_error_handler)
     app.add_exception_handler(NotFoundError, _not_found_error_handler)
+    app.add_exception_handler(ExternalServiceError, _external_service_error_handler)

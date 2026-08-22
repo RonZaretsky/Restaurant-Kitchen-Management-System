@@ -1,6 +1,8 @@
 import enum
 from datetime import datetime
+from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,3 +42,26 @@ class AIChatMessage(Base):
     role: Mapped[ChatRole] = mapped_column(Enum(ChatRole), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class CreateRecipeSuggestionRequest(BaseModel):
+    """Body of a Cook's request to generate a Recipe Suggestion (Story 6.1, FR-18).
+
+    `direction` steers the suggestion but never overrides the stock-availability constraint, and
+    is folded into the persisted `prompt_used` rather than stored as its own field (AC2).
+    """
+
+    direction: str | None = None
+
+
+class AIRecipeSuggestionResponse(BaseModel):
+    """Body of any smart-chef endpoint response describing a Recipe Suggestion."""
+
+    model_config = {"from_attributes": True}
+
+    id: int
+    requested_by: int
+    prompt_used: str
+    generated_recipe: dict[str, Any]
+    ingredients_snapshot: list[dict[str, Any]]
+    created_at: datetime

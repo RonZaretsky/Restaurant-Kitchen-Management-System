@@ -46,7 +46,14 @@ from .order import (
     UpdateTableRequest,
 )
 from .inventory import StockMovement, MovementType, CreateStockMovementRequest, StockMovementResponse
-from .ai import AIRecipeSuggestion, AIChatSession, AIChatMessage, ChatRole
+from .ai import (
+    AIRecipeSuggestion,
+    AIChatSession,
+    AIChatMessage,
+    ChatRole,
+    CreateRecipeSuggestionRequest,
+    AIRecipeSuggestionResponse,
+)
 
 __all__ = [
     "Base",
@@ -62,4 +69,5 @@ __all__ = [
     "CreateOrderItemRequest", "OrderItemResponse", "UpdateOrderItemRequest", "KitchenItemResponse",
     "StockMovement", "MovementType", "CreateStockMovementRequest", "StockMovementResponse",
     "AIRecipeSuggestion", "AIChatSession", "AIChatMessage", "ChatRole",
+    "CreateRecipeSuggestionRequest", "AIRecipeSuggestionResponse",
 ]

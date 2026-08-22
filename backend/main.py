@@ -29,6 +29,7 @@ container.wire(
         "api.tables",
         "api.orders",
         "api.kitchen",
+        "api.smart_chef",
     ]
 )
 
@@ -37,6 +38,7 @@ container.wire(
 async def lifespan(app: FastAPI):
     await container.init_resources()
     _warn_if_default_secret_key()
+    _warn_if_no_openai_key()
     yield
     await container.shutdown_resources()
 
@@ -55,6 +57,25 @@ def _warn_if_default_secret_key() -> None:
     if container.config.auth.secret_key() == DEFAULT_SECRET_KEY:
         logger.warning(
             "JWT_SECRET_KEY is still the published default. Sessions are forgeable. "
+            "Set it in backend/.env (see backend/.env.example)."
+        )
+
+
+def _warn_if_no_openai_key() -> None:
+    """Log a warning if OPENAI_API_KEY is unset (Story 6.1).
+
+    Unlike JWT_SECRET_KEY there is no functional fallback to warn about
+    silently accepting: a missing key just means every Smart Chef call fails
+    at request time. Deliberately a warning rather than a hard failure,
+    mirroring _warn_if_default_secret_key, so a fresh clone with no OpenAI
+    key configured still starts for the rest of the app to be demoed.
+
+    Returns:
+        Nothing.
+    """
+    if not container.config.smart_chef.api_key():
+        logger.warning(
+            "OPENAI_API_KEY is not set. Smart Chef calls will fail. "
             "Set it in backend/.env (see backend/.env.example)."
         )
 

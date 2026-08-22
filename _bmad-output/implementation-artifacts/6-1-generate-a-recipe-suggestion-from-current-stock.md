@@ -6,7 +6,7 @@ story: 1
 
 # Story 6.1: Generate a Recipe Suggestion from Current Stock
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -123,50 +123,50 @@ handlers.py` exactly, since nothing in that file currently handles an upstream-s
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Dependency + config** (AC5)
-  - [ ] `backend/pyproject.toml`: add `"openai>=1.0.0"` to `dependencies` (the official Python SDK,
+- [x] **Task 1: Dependency + config** (AC5)
+  - [x] `backend/pyproject.toml`: add `"openai>=1.0.0"` to `dependencies` (the official Python SDK,
     exposes `openai.AsyncOpenAI`). Run `uv sync` (or `uv add openai`) to update `uv.lock`.
-  - [ ] `backend/config.yaml`: add a `smart_chef` section: `api_key: ${OPENAI_API_KEY:}` (no
+  - [x] `backend/config.yaml`: add a `smart_chef` section: `api_key: ${OPENAI_API_KEY:}` (no
     committed default — unlike `auth.secret_key`'s insecure-but-functional fallback, a fake API
     key would just fail every call, so there is nothing useful to default to) and `model:
     ${OPENAI_MODEL: gpt-4o-mini}` (a real, cheap, capable default so a contributor who sets the
     key but not the model still gets a working model name).
-  - [ ] `backend/.env.example`: add `OPENAI_API_KEY=` and `OPENAI_MODEL=gpt-4o-mini` with a short
+  - [x] `backend/.env.example`: add `OPENAI_API_KEY=` and `OPENAI_MODEL=gpt-4o-mini` with a short
     comment, matching the file's existing per-var comment convention. **HALT and ask the user for
     a real API key and model name to put in their own `backend/.env`** before attempting to run
     the app against a live OpenAI call — `.env.example`'s own values are placeholders, never a
     real key.
-  - [ ] `main.py`: add a startup warning if `OPENAI_API_KEY` is unset, mirroring
+  - [x] `main.py`: add a startup warning if `OPENAI_API_KEY` is unset, mirroring
     `_warn_if_default_secret_key`'s exact shape (a `_warn_if_no_openai_key` sibling function),
     since an unset key means every Smart Chef call will fail at request time with no earlier
     signal otherwise.
 
-- [ ] **Task 2: Backend — `backend/clients/llm.py`** (AC5, AD-12)
-  - [ ] New file, mirroring `clients/database.py`'s "the client, not `services/`, owns the
+- [x] **Task 2: Backend — `backend/clients/llm.py`** (AC5, AD-12)
+  - [x] New file, mirroring `clients/database.py`'s "the client, not `services/`, owns the
     third-party SDK" role. Define an `LLMClient` class wrapping `openai.AsyncOpenAI(api_key=...)`,
     constructed with `api_key`/`model` from config (injected via the container, not read from
     `os.environ` directly — matches `AuthService`'s own config-injected-at-construction shape).
-  - [ ] One public method, e.g. `async def generate_recipe(self, prompt: str) -> dict`: calls
+  - [x] One public method, e.g. `async def generate_recipe(self, prompt: str) -> dict`: calls
     `self._client.chat.completions.create(model=self._model, messages=[{"role": "user", "content":
     prompt}], response_format={"type": "json_object"})` (JSON mode — reliable, widely-supported,
     avoids fragile manual JSON-extraction from free text), parses the response content as JSON,
     and returns the parsed dict. Let `json.JSONDecodeError` and any `openai` SDK exception
     propagate to the caller (`AIService`, Task 3) — the client's job is the API call and parsing,
     not deciding what a failure means to the rest of the app.
-  - [ ] Include a short module docstring stating this is the first external-service client in the
+  - [x] Include a short module docstring stating this is the first external-service client in the
     project and the seam AD-12 requires — future OpenAI calls (Story 6.3's chat) extend this same
     class, they do not create a second one.
 
-- [ ] **Task 3: Backend — `backend/services/ai_service.py`** (AC1, AC2, AC3, AC4, AC6, AC7)
-  - [ ] New `AIService`, config-free aside from its `llm_client`/`logger` collaborators
+- [x] **Task 3: Backend — `backend/services/ai_service.py`** (AC1, AC2, AC3, AC4, AC6, AC7)
+  - [x] New `AIService`, config-free aside from its `llm_client`/`logger` collaborators
     (`inventory_service` is NOT a dependency — read Ingredients directly via the session, the same
     plain-`select()` shape every other read-only service method in this codebase uses, no need to
     route through `InventoryService` for a simple stock read).
-  - [ ] `__init__(self, logger, llm_client)`.
-  - [ ] A private, in-process `self._in_flight: set[int] = set()` (Cook user ids currently
+  - [x] `__init__(self, logger, llm_client)`.
+  - [x] A private, in-process `self._in_flight: set[int] = set()` (Cook user ids currently
     generating) — see Scope note. Not persisted, not shared across processes; acceptable for a
     single-process app.
-  - [ ] `async def generate_suggestion(self, db: AsyncSession, actor: User, direction: str | None)
+  - [x] `async def generate_suggestion(self, db: AsyncSession, actor: User, direction: str | None)
     -> AIRecipeSuggestion`:
     - If `actor.id in self._in_flight`: raise a new `SuggestionGenerationInProgressError`
       (`ConflictError` subclass, 409) immediately, no DB read, no OpenAI call (AC3).
@@ -191,126 +191,126 @@ handlers.py` exactly, since nothing in that file currently handles an upstream-s
     - On success: insert a new `AIRecipeSuggestion(requested_by=actor.id, prompt_used=prompt,
       generated_recipe=<parsed dict>, ingredients_snapshot=<the snapshot list built above>)`,
       commit, refresh, log at `INFO` (`actor.id`, `suggestion.id`), return it.
-  - [ ] `async def list_suggestions(self, db: AsyncSession, actor: User) -> Sequence[
+  - [x] `async def list_suggestions(self, db: AsyncSession, actor: User) -> Sequence[
     AIRecipeSuggestion]`: `select(AIRecipeSuggestion).order_by(AIRecipeSuggestion.id.desc())` — no
     actor-based filtering (AD-9), `actor` accepted for signature symmetry only, matching
     `OrderService.list_open_orders`'s own established shape and docstring wording. No `dismissed`
     filter (doesn't exist yet, Story 6.2's job).
 
-- [ ] **Task 4: Backend — new exception types** (AC3, AC4)
-  - [ ] `backend/exceptions/__init__.py`: add `SuggestionGenerationInProgressError(ConflictError)`,
+- [x] **Task 4: Backend — new exception types** (AC3, AC4)
+  - [x] `backend/exceptions/__init__.py`: add `SuggestionGenerationInProgressError(ConflictError)`,
     detail `"Rejected, a suggestion is already generating for this Cook"`.
-  - [ ] Add a new base `class ExternalServiceError(Exception): detail = "An external service call
+  - [x] Add a new base `class ExternalServiceError(Exception): detail = "An external service call
     failed"` (mirrors `AuthError`/`ConflictError`/`NotFoundError`'s own base-class shape, one
     handler for the whole family), and `AIGenerationFailedError(ExternalServiceError)`, detail
     `"Couldn't generate a suggestion right now"` (the exact copy `EXPERIENCE.md`'s State Patterns
     table specifies).
-  - [ ] `backend/exceptions/handlers.py`: add `_external_service_error_handler` (502, mirrors
+  - [x] `backend/exceptions/handlers.py`: add `_external_service_error_handler` (502, mirrors
     `_not_found_error_handler`'s exact structure/docstring shape) and register it in
     `register_exception_handlers` alongside the other three.
 
-- [ ] **Task 5: Backend — `backend/api/smart_chef.py` + container wiring** (AC5, AC8)
-  - [ ] New router, `prefix="/api/smart-chef"`, `tags=["smart-chef"]`, following every other
+- [x] **Task 5: Backend — `backend/api/smart_chef.py` + container wiring** (AC5, AC8)
+  - [x] New router, `prefix="/api/smart-chef"`, `tags=["smart-chef"]`, following every other
     domain router's file shape (`OrdersDep`-style role-scoped `Annotated` deps, an
     `_ERROR_DESCRIPTIONS` dict, `error_responses(...)` on each route).
-  - [ ] `SmartChefWriteDep = Annotated[User, Depends(require_role(UserRole.cook))]` (generating is
+  - [x] `SmartChefWriteDep = Annotated[User, Depends(require_role(UserRole.cook))]` (generating is
     Cook-only, no Admin fallback — matches the epics AC's literal "As a Cook").
-  - [ ] `SmartChefReadDep = Annotated[User, Depends(require_role(UserRole.cook, UserRole.admin))]`
+  - [x] `SmartChefReadDep = Annotated[User, Depends(require_role(UserRole.cook, UserRole.admin))]`
     (the list read, per the Scope note's "shared with Story 6.2's Admin review page" reasoning).
-  - [ ] `@router.post("/suggestions", response_model=AIRecipeSuggestionResponse, status_code=201)`
+  - [x] `@router.post("/suggestions", response_model=AIRecipeSuggestionResponse, status_code=201)`
     — body `{"direction": str | None}` (a small inline Pydantic model or reuse a request schema
     defined in `data_models/ai.py`, matching every other domain's `Create*Request` convention),
     calls `ai_service.generate_suggestion(db, actor, payload.direction)`.
-  - [ ] `@router.get("/suggestions", response_model=list[AIRecipeSuggestionResponse])` — calls
+  - [x] `@router.get("/suggestions", response_model=list[AIRecipeSuggestionResponse])` — calls
     `ai_service.list_suggestions(db, actor)`.
-  - [ ] `backend/api/router.py`: `include_router(smart_chef_router)`, alongside the existing list
+  - [x] `backend/api/router.py`: `include_router(smart_chef_router)`, alongside the existing list
     (never replacing it).
-  - [ ] `backend/main.py`: append `"api.smart_chef"` to `container.wire(modules=[...])` (AC8) —
+  - [x] `backend/main.py`: append `"api.smart_chef"` to `container.wire(modules=[...])` (AC8) —
     the exact append-only rule AD-1/trap 1 already established, do not reorder or replace existing
     entries.
-  - [ ] `backend/container.py`: add `llm_client = providers.Factory(LLMClient, api_key=config.
+  - [x] `backend/container.py`: add `llm_client = providers.Factory(LLMClient, api_key=config.
     smart_chef.api_key, model=config.smart_chef.model)` and `ai_service = providers.Factory(
     AIService, logger=logging, llm_client=llm_client)`. No provider-ordering constraint beyond the
     Python-class-body top-to-bottom rule already documented (trap 23) — `llm_client` must be
     declared above `ai_service` since `ai_service` references it.
 
-- [ ] **Task 6: Backend — `data_models/ai.py` response/request models** (AC1, AC6)
-  - [ ] Add `CreateRecipeSuggestionRequest` (`direction: str | None = None`) and
+- [x] **Task 6: Backend — `data_models/ai.py` response/request models** (AC1, AC6)
+  - [x] Add `CreateRecipeSuggestionRequest` (`direction: str | None = None`) and
     `AIRecipeSuggestionResponse` (`model_config = {"from_attributes": True}`; `id`, `requested_by`,
     `prompt_used`, `generated_recipe: dict`, `ingredients_snapshot: list | dict`, `created_at`),
     matching every other domain's `Response`-suffix/`from_attributes` convention.
-  - [ ] Export both from `data_models/__init__.py`, alongside the existing `ai.py` exports.
+  - [x] Export both from `data_models/__init__.py`, alongside the existing `ai.py` exports.
 
-- [ ] **Task 7: Backend tests** (`backend/tests/test_ai.py`, new file)
-  - [ ] Mock `LLMClient.generate_recipe` (e.g. via a test double injected through the container
+- [x] **Task 7: Backend tests** (`backend/tests/test_ai.py`, new file)
+  - [x] Mock `LLMClient.generate_recipe` (e.g. via a test double injected through the container
     override, or monkeypatching the method — check `conftest.py` for this project's established
     container-override convention for injecting test doubles before picking an approach) so no
     test makes a real network call to OpenAI.
-  - [ ] AC1/AC2: a successful generation persists `prompt_used` containing the supplied
+  - [x] AC1/AC2: a successful generation persists `prompt_used` containing the supplied
     `direction` text, `ingredients_snapshot` matching current stock, `generated_recipe` matching
     the mocked client's returned dict, `requested_by` the acting Cook's id.
-  - [ ] AC3: two rapid requests from the same Cook — the second is rejected with 409 while the
+  - [x] AC3: two rapid requests from the same Cook — the second is rejected with 409 while the
     first is still "in flight" (use a mocked client whose `generate_recipe` blocks on an
     `asyncio.Event` the test controls, so the first call's in-flight window is deterministic, not
     timing-dependent).
-  - [ ] AC4: a mocked client that raises — response is 502 with the exact `"Couldn't generate a
+  - [x] AC4: a mocked client that raises — response is 502 with the exact `"Couldn't generate a
     suggestion right now"` detail, and no `AIRecipeSuggestion` row exists afterward (query the
     table directly).
-  - [ ] AC7: after a successful generation, `AIRecipeSuggestion.requested_by` is populated (cost
+  - [x] AC7: after a successful generation, `AIRecipeSuggestion.requested_by` is populated (cost
     attribution) — a simple persistence assertion, not a new mechanism.
-  - [ ] Role coverage for both routes: waiter, warehouse_manager 403 on `POST`; unauthenticated
+  - [x] Role coverage for both routes: waiter, warehouse_manager 403 on `POST`; unauthenticated
     401; `GET` permits both cook and admin, 403 for waiter/warehouse_manager.
-  - [ ] `GET /api/smart-chef/suggestions` returns `[]` on a fresh install, not a 404.
+  - [x] `GET /api/smart-chef/suggestions` returns `[]` on a fresh install, not a 404.
 
-- [ ] **Task 8: Frontend — `smartChefService.ts`** (AC1, AC2, AC3, AC4, AC6)
-  - [ ] New file (this domain's first frontend service file), mirroring `orderService.ts`'s
+- [x] **Task 8: Frontend — `smartChefService.ts`** (AC1, AC2, AC3, AC4, AC6)
+  - [x] New file (this domain's first frontend service file), mirroring `orderService.ts`'s
     hook-per-endpoint shape: `useGenerateSuggestion(): UseMutationResult<AIRecipeSuggestion, Error,
     { direction?: string }>` (`POST /api/smart-chef/suggestions`) and `useSuggestions():
     UseQueryResult<AIRecipeSuggestion[], Error>` (`GET /api/smart-chef/suggestions`).
-  - [ ] `useGenerateSuggestion` invalidates the suggestions list query key on settle (matching
+  - [x] `useGenerateSuggestion` invalidates the suggestions list query key on settle (matching
     `useAddOrderItem`'s own "invalidate on settle, not just success" reasoning — a 409 in-flight
     rejection or a 502 generation failure both mean the client's view of "what's currently
     happening" may be stale).
-  - [ ] New `frontend/src/types/ai.ts`: `AIRecipeSuggestion` interface mirroring
+  - [x] New `frontend/src/types/ai.ts`: `AIRecipeSuggestion` interface mirroring
     `AIRecipeSuggestionResponse` field-for-field (matching every other domain's frontend-type
     mirrors-backend-response convention, e.g. `types/order.ts`).
 
-- [ ] **Task 9: Frontend — `SmartChefPage.tsx`** (AC1, AC2, AC3, AC4, AC6)
-  - [ ] Replace the placeholder body. A request bar (optional free-text "direction" field +
+- [x] **Task 9: Frontend — `SmartChefPage.tsx`** (AC1, AC2, AC3, AC4, AC6)
+  - [x] Replace the placeholder body. A request bar (optional free-text "direction" field +
     "Request suggestion" button, matching the mockup's copy/placeholder text exactly) and a list
     of suggestion cards below it (newest first, matching `list_suggestions`'s own `id.desc()`
     order).
-  - [ ] Each card shows: the suggestion's dish name, "Requested by {Cook}" (resolve the id via
+  - [x] Each card shows: the suggestion's dish name, "Requested by {Cook}" (resolve the id via
     the existing Users list the same way `OrderItemResponse.cook_id` is resolved elsewhere, or via
     a plain `#id` fallback if no per-suggestion user-name resolution exists yet — check whether a
     `GET /api/admin/users` (or similar) response is already fetched anywhere reusable before
     building a new lookup), the ingredients drawn on (name + quantity chips, per the mockup), and
     the plating description. **No Confirm/Dismiss buttons, no chat panel** (Scope note).
-  - [ ] Generating state: while the mutation is pending, an explicit "Generating suggestion..."
+  - [x] Generating state: while the mutation is pending, an explicit "Generating suggestion..."
     indicator (matching the mockup's `generating-pill`), distinguishable from both the empty list
     state and an error state (AC4). The Request button (and, per AC3, submitting again) is
     disabled while pending — this is the primary UI mechanism preventing a second in-flight
     request, the backend's 409 is the defense-in-depth backstop, not the primary UX.
-  - [ ] Error state: on a 502 (or any mutation error), an inline `Alert` showing the server's own
+  - [x] Error state: on a 502 (or any mutation error), an inline `Alert` showing the server's own
     message (`"Couldn't generate a suggestion right now"` for the 502 case, matching this
     codebase's established `error instanceof ApiError ? error.message : "Something went wrong.
     Try again."` pattern everywhere else).
-  - [ ] Empty state: `!isLoading && !isError && suggestions?.length === 0` → "No recipe
+  - [x] Empty state: `!isLoading && !isError && suggestions?.length === 0` → "No recipe
     suggestions yet." (`EXPERIENCE.md`'s exact copy).
 
-- [ ] **Task 10: Frontend tests** (`frontend/src/pages/cook/SmartChefPage.test.tsx`, new file)
-  - [ ] Empty state renders the exact copy.
-  - [ ] A successful generation renders the new card (name, ingredients, plating) with no
+- [x] **Task 10: Frontend tests** (`frontend/src/pages/cook/SmartChefPage.test.tsx`, new file)
+  - [x] Empty state renders the exact copy.
+  - [x] A successful generation renders the new card (name, ingredients, plating) with no
     Confirm/Dismiss buttons anywhere on the page.
-  - [ ] While the mutation is pending, the generating indicator shows and the Request button is
+  - [x] While the mutation is pending, the generating indicator shows and the Request button is
     disabled.
-  - [ ] A 502 mutation error shows the inline error message, not a stuck "Generating..." state.
-  - [ ] The optional direction field's text is included in the submitted request body.
+  - [x] A 502 mutation error shows the inline error message, not a stuck "Generating..." state.
+  - [x] The optional direction field's text is included in the submitted request body.
 
-- [ ] **Task 11: Full regression pass**
-  - [ ] `uv run pytest -q` (backend) — zero regressions.
-  - [ ] `pnpm test` (frontend) — zero regressions.
-  - [ ] `npx tsc -b` — clean.
+- [x] **Task 11: Full regression pass**
+  - [x] `uv run pytest -q` (backend) — zero regressions.
+  - [x] `pnpm test` (frontend) — zero regressions.
+  - [x] `npx tsc -b` — clean.
 
 ## Dev Notes
 
@@ -408,8 +408,80 @@ no chat endpoints/models — both are later stories' scope (see Scope note).
 
 ### Agent Model Used
 
+Claude Sonnet 5
+
 ### Debug Log References
+
+- `uv run pytest tests/test_ai.py -q` — 9 passed: successful generation persists prompt/snapshot/
+  recipe, direction is folded into the prompt with an explicit never-override-stock instruction,
+  a second concurrent request from the same Cook is rejected (deterministic via a
+  test-controlled `asyncio.Event`, not timing-dependent), a failed generation persists no row and
+  returns 502, the in-flight guard clears on failure too (a Cook can retry immediately), `GET`
+  returns `[]` not a 404, Admin can also list, and role coverage for both routes.
+- `uv run pytest -q` (full backend suite) — 378 passed, no regressions (baseline 369 + 9 new).
+- `npx vitest run src/pages/cook/SmartChefPage.test.tsx` — 5 passed: empty state, a rendered
+  suggestion card with no Confirm/Dismiss buttons and no chat panel present anywhere, the
+  generating indicator/disabled button while pending, the inline error on a 502 (not a stuck
+  generating state), and the direction field's text reaching the request body.
+- `npx vitest run` (full frontend suite) — 201 passed, no regressions (baseline 196 + 5 new).
+- `npx tsc -b` — clean.
 
 ### Completion Notes List
 
+- Added `openai>=3.3.1` as a new dependency. Its actual installed API surface (`openai.
+  AsyncOpenAI`, `client.chat.completions.create(model=, messages=, response_format=)`) was
+  verified by direct introspection before writing any code against it, not assumed from prior
+  knowledge — this release (and its `httpx2` dependency) postdates my training data, so I
+  confirmed the constructor and method signatures still matched the plan before relying on them.
+- `backend/clients/llm.py`'s `LLMClient` is the only place `openai` is imported anywhere in
+  `backend/` (AD-12) — `AIService` depends only on its `generate_recipe(prompt) -> dict` method.
+- **Caught and fixed a real concurrency bug before it shipped, not after**: the story's own plan
+  called for `ai_service` to be a `providers.Factory`, matching every other service in
+  `container.py`. Working through it, a Factory would hand each injected request its own fresh
+  `AIService` instance with an empty `_in_flight` set, silently defeating AC3's "reject a second
+  concurrent request" guard the moment two different requests happened to get two different
+  instances. Registered both `llm_client` and `ai_service` as `providers.Singleton` instead — a
+  deliberate, documented deviation from this container's otherwise-universal Factory pattern,
+  verified by the deterministic concurrency test in `test_ai.py` (a test-controlled
+  `asyncio.Event`, not a timing-dependent sleep).
+- `AIService.generate_suggestion`'s stock-snapshot sort (`current_stock / min_stock_threshold`
+  descending) implements the story's own "at-risk-of-waste" heuristic exactly, with the sort
+  order itself communicated to the model as a prioritization instruction in the prompt text.
+- The new `ExternalServiceError`/`AIGenerationFailedError` pair mirrors `AuthError`/
+  `ConflictError`/`NotFoundError`'s existing base-class-plus-one-handler shape in
+  `exceptions/handlers.py` exactly — one new handler function, one new registration line.
+- Frontend: `SmartChefPage.tsx` replaces the Story 1.4-era placeholder with the request bar,
+  generating/error/empty states, and a suggestion-card list — deliberately with no Confirm/
+  Dismiss actions and no chat panel, both out of this story's scope (Stories 6.2/6.3), confirmed
+  absent by an explicit negative assertion in the new test file, not just by omission.
+  `requested_by` renders as a raw `User #{id}`, matching `StockMovement`'s own existing
+  "Recorded by" precedent — no endpoint a Cook can call resolves a user id to a name.
+- `OPENAI_MODEL` was configured to `gpt-5.6-sol`, a model name outside my training data (dated
+  after my knowledge cutoff). The implementation makes no assumptions about which model is
+  configured beyond the standard Chat Completions call shape; if that specific model name
+  doesn't behave as expected against the real OpenAI API, it's a one-line config change, not a
+  code change.
+
 ### File List
+
+- `backend/pyproject.toml`, `backend/uv.lock`
+- `backend/config.yaml`, `backend/.env.example`
+- `backend/main.py`
+- `backend/clients/llm.py`
+- `backend/services/ai_service.py`
+- `backend/exceptions/__init__.py`, `backend/exceptions/handlers.py`
+- `backend/api/smart_chef.py`, `backend/api/router.py`
+- `backend/container.py`
+- `backend/data_models/ai.py`, `backend/data_models/__init__.py`
+- `backend/tests/test_ai.py`
+- `frontend/src/services/smartChefService.ts`
+- `frontend/src/types/ai.ts`
+- `frontend/src/pages/cook/SmartChefPage.tsx`
+- `frontend/src/pages/cook/SmartChefPage.test.tsx`
+
+## Change Log
+
+| Date | Change |
+|---|---|
+| 2026-08-22 | Story 6.1 created via bmad-create-story: the first external-API integration in the project. Establishes `backend/clients/`'s LLM adapter pattern (AD-12), the in-process reject-not-queue concurrency guard (AD-14), and graceful degradation (FR-21) that Stories 6.2/6.3 will reuse. Scoped tightly against the shared Smart Chef mockup: explicitly excludes Confirm/Dismiss (6.2) and chat (6.3). |
+| 2026-08-22 | Implemented Story 6.1: `backend/clients/llm.py` (`LLMClient`, AD-12), `AIService.generate_suggestion`/`list_suggestions` (the in-process `_in_flight` set for AD-14, the surplus-ratio "at-risk-of-waste" sort heuristic), two new exception types (`SuggestionGenerationInProgressError`, `AIGenerationFailedError`/`ExternalServiceError`), `POST`/`GET /api/smart-chef/suggestions`, and container wiring — caught and fixed a real bug during implementation (both new providers needed to be `Singleton`, not `Factory`, or the concurrency guard would never actually trigger). Frontend: `SmartChefPage.tsx` replaces its placeholder with the request bar and suggestion-card list, no Confirm/Dismiss or chat (out of scope). 9 new backend tests (378 total), 5 new frontend tests (201 total). Full backend suite: 378/378 passed. Full frontend suite: 201/201 passed. `npx tsc -b` clean. |
