@@ -493,3 +493,10 @@ Claude Sonnet 5
   anymore. No backend change was needed for this rework: the dialog composes the same two
   existing endpoints (`POST /api/menu/dishes`, `POST .../recipe-ingredients`) already used
   everywhere else. See the Scope note and Task 9/10 above for the full reasoning.
+- **Follow-up manual-test finding**: the confirmed Dish stayed `is_available: false`, requiring a
+  separate manual toggle even though its recipe was just attached in the same flow. Since
+  `ConfirmSuggestionDialog` already knows at least one Recipe Ingredient line succeeded, it now
+  also sends `PATCH /api/menu/dishes/{id}` with `{is_available: true}` right after — reusing
+  `MenuService.update_dish`'s own existing `EmptyRecipeError` guard (AD-8) as the safety net, not
+  a new rule. If zero lines succeeded, or the availability PATCH itself fails, the Dish is left as
+  created and the Admin finishes it from Menu Management, same as any other partial failure here.

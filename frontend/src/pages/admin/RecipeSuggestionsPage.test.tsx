@@ -160,10 +160,11 @@ describe("RecipeSuggestionsPage", () => {
     await vi.waitFor(() => expect(within(dialog).getByDisplayValue("1.2")).toBeInTheDocument());
   });
 
-  it("creates the Dish and its Recipe Ingredient line together on Confirm", async () => {
+  it("creates the Dish, its Recipe Ingredient line, and marks it available on Confirm", async () => {
     // Arrange
     let dishPostBody: Record<string, unknown> | undefined;
     let recipeIngredientPostBody: Record<string, unknown> | undefined;
+    let availabilityPatchBody: Record<string, unknown> | undefined;
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string, init: RequestInit = {}) => {
@@ -177,6 +178,11 @@ describe("RecipeSuggestionsPage", () => {
           return Promise.resolve(
             jsonResponse(201, { dish_id: 55, ingredient_id: body.ingredient_id, quantity: "1.200", unit: "kg" }),
           );
+        }
+        if (path.includes("/api/menu/dishes/55") && init.method === "PATCH") {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          availabilityPatchBody = body;
+          return Promise.resolve(jsonResponse(200, { id: 55, is_available: true }));
         }
         if (path.includes("/api/menu/dishes") && init.method === "POST") {
           const body = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -211,11 +217,14 @@ describe("RecipeSuggestionsPage", () => {
     await user.click(await screen.findByRole("option", { name: "Pizza" }));
     await user.click(within(dialog).getByRole("button", { name: "Confirm" }));
 
-    // Assert: the Dish carries source_suggestion_id, and the matched ingredient's own real id
-    // and unit reached the recipe-ingredient POST, not the AI's free-text name/unit.
+    // Assert: the Dish carries source_suggestion_id, the matched ingredient's own real id and
+    // unit reached the recipe-ingredient POST (not the AI's free-text name/unit), and the Dish
+    // is flipped available once its recipe line is in place.
     await vi.waitFor(() => expect(dishPostBody).toBeDefined());
     expect(dishPostBody!.source_suggestion_id).toBe(1);
     await vi.waitFor(() => expect(recipeIngredientPostBody).toBeDefined());
     expect(recipeIngredientPostBody).toEqual({ ingredient_id: 100, quantity: "1.2", unit: "kg" });
+    await vi.waitFor(() => expect(availabilityPatchBody).toBeDefined());
+    expect(availabilityPatchBody).toEqual({ is_available: true });
   });
 });

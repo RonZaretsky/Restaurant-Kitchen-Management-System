@@ -190,16 +190,37 @@ export function ConfirmSuggestionDialog({
         }
       }
 
+      // Marks the Dish available once it has at least one Recipe Ingredient line, matching
+      // AD-8's own rule (a Dish stays unavailable with zero lines) — unlike an ordinary new Dish,
+      // this one is being created with its recipe already attached in the same flow, so there is
+      // no separate "come back later and flip availability" step for the Admin to remember.
+      let availabilityError: string | null = null;
+      if (activeRows.length > failedIngredients.length) {
+        try {
+          await apiRequest(`/api/menu/dishes/${dish.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ is_available: true }),
+          });
+        } catch (error) {
+          availabilityError = errorMessage(error);
+        }
+      }
+
       await queryClient.invalidateQueries({ queryKey: SUGGESTIONS_QUERY_KEY });
       await queryClient.invalidateQueries({ queryKey: DISHES_QUERY_KEY });
 
-      if (failedIngredients.length > 0) {
+      if (failedIngredients.length > 0 || availabilityError) {
         // The Dish itself was created successfully (and is now confirmed), so this is not a
-        // failed confirmation — only some ingredient lines need a manual follow-up in Menu
-        // Management's existing recipe editor, same as adding any Recipe Ingredient line today.
-        setSubmitError(
-          `Dish created, but these ingredient lines were rejected and were not added: ${failedIngredients.join("; ")}. Add them from Menu Management.`,
-        );
+        // failed confirmation — only some ingredient lines (and/or the availability flip) need a
+        // manual follow-up in Menu Management's existing recipe editor, same as any rejected
+        // Recipe Ingredient edit today.
+        const parts = [
+          ...(failedIngredients.length > 0
+            ? [`these ingredient lines were rejected and were not added: ${failedIngredients.join("; ")}`]
+            : []),
+          ...(availabilityError ? [`could not mark it available (${availabilityError})`] : []),
+        ];
+        setSubmitError(`Dish created, but ${parts.join("; and ")}. Finish this from Menu Management.`);
         setSubmitting(false);
         return;
       }
