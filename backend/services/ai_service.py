@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -7,6 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from clients.llm import LLMClient
 from data_models import AIRecipeSuggestion, Ingredient, User
 from exceptions import AIGenerationFailedError, SuggestionGenerationInProgressError
+
+# A sentinel used to rank a zero-min_stock_threshold Ingredient as maximally "at risk of waste"
+# (Scope note's heuristic) rather than falling back to its raw current_stock, which would mix an
+# incomparable scale (a dimensionless ratio vs. a raw quantity) into the same sort (review
+# finding). Any zero-threshold Ingredient with stock > 0 sorts ahead of every ratio-based one.
+_ZERO_THRESHOLD_RANK = Decimal("Infinity")
 
 
 class AIService:
@@ -42,14 +49,24 @@ class AIService:
 
         Rejects a second concurrent request from the same Cook immediately, before any DB read or
         OpenAI call (AC3, AD-14). No Recipe Suggestion row is ever created unless the OpenAI call
-        actually succeeds (AC4, FR-21) — a failure leaves no orphaned or partial row.
+        actually succeeds *and* returns the expected shape (AC4, FR-21) — a failure or a
+        malformed response leaves no orphaned or partial row.
 
-        The stock snapshot is sorted by `current_stock / min_stock_threshold` descending: the
-        most defensible available proxy for "at risk of waste" (FR-18), since nothing in this
-        schema tracks expiry dates or usage rates. An Ingredient sitting at many times its own
-        minimum threshold is the one most plausibly overstocked, not necessarily the one with the
-        largest raw quantity (a staple with a big min_stock_threshold isn't "at risk" just
-        because its current_stock number happens to be large too).
+        Only Ingredients with `current_stock > 0` are snapshotted ("currently-available" stock,
+        AC1) — an out-of-stock Ingredient contributes nothing to reduce waste. If none remain
+        (nothing in stock at all), the request is rejected rather than prompting the model with an
+        empty ingredient list, which risks a hallucinated, unusable suggestion (review finding).
+
+        The stock snapshot is sorted by `_waste_risk_rank` descending: the most defensible
+        available proxy for "at risk of waste" (FR-18), since nothing in this schema tracks
+        expiry dates or usage rates. An Ingredient sitting at many times its own minimum
+        threshold is the one most plausibly overstocked, not necessarily the one with the largest
+        raw quantity.
+
+        The parsed response's shape is validated before persisting (`name`/`ingredients`/
+        `plating` present with the expected types) — a syntactically valid JSON object missing
+        these would otherwise be persisted as a "successful" suggestion and only fail later at
+        render time (review finding).
 
         Args:
             db: The active database session.
@@ -63,8 +80,8 @@ class AIService:
         Raises:
             SuggestionGenerationInProgressError: If a generation is already in flight for this
                 Cook (AC3).
-            AIGenerationFailedError: If the OpenAI call fails, times out, or returns unparseable
-                content (AC4).
+            AIGenerationFailedError: If there is nothing currently in stock, the OpenAI call
+                fails or times out, or the response is missing the expected shape (AC4).
         """
         if actor.id in self._in_flight:
             self._logger.warning(
@@ -75,17 +92,19 @@ class AIService:
 
         self._in_flight.add(actor.id)
         try:
-            result = await db.execute(select(Ingredient))
+            result = await db.execute(select(Ingredient).where(Ingredient.current_stock > 0))
             ingredients = result.scalars().all()
-            sorted_ingredients = sorted(
-                ingredients,
-                key=lambda ingredient: (
-                    ingredient.current_stock / ingredient.min_stock_threshold
-                    if ingredient.min_stock_threshold
-                    else ingredient.current_stock
-                ),
-                reverse=True,
-            )
+            if not ingredients:
+                # Nothing to build a recipe from — reject cleanly rather than sending the model
+                # an empty ingredient list and risking a hallucinated, unusable suggestion
+                # (review finding).
+                self._logger.warning(
+                    "Recipe suggestion generation rejected for user_id={}: no ingredients in stock",
+                    actor.id,
+                )
+                raise AIGenerationFailedError()
+
+            sorted_ingredients = sorted(ingredients, key=self._waste_risk_rank, reverse=True)
             snapshot = [
                 {
                     "name": ingredient.name,
@@ -99,6 +118,12 @@ class AIService:
 
             try:
                 generated_recipe = await self._llm_client.generate_recipe(prompt)
+                if not isinstance(generated_recipe, dict) or not (
+                    isinstance(generated_recipe.get("name"), str)
+                    and isinstance(generated_recipe.get("ingredients"), list)
+                    and isinstance(generated_recipe.get("plating"), str)
+                ):
+                    raise ValueError("generated_recipe missing expected name/ingredients/plating shape")
             except Exception:
                 self._logger.error(
                     "Recipe suggestion generation failed for user_id={}: OpenAI call failed",
@@ -123,6 +148,28 @@ class AIService:
             return suggestion
         finally:
             self._in_flight.discard(actor.id)
+
+    @staticmethod
+    def _waste_risk_rank(ingredient: Ingredient) -> Decimal:
+        """Rank an Ingredient by surplus relative to its own minimum threshold, descending.
+
+        `current_stock / min_stock_threshold` for the normal case. A zero threshold cannot be
+        divided by, but is not simply "current_stock" either (review finding) — mixing a
+        dimensionless ratio and a raw quantity in the same sort produces a meaningless order once
+        both kinds of Ingredient are present. A zero-threshold Ingredient with any stock at all is
+        instead ranked as maximally at-risk (there is no meaningful "normal" level for it to be
+        measured against, so any stock is surplus); one with zero stock too ranks at the bottom,
+        the same as every other empty Ingredient.
+
+        Args:
+            ingredient: The Ingredient to rank.
+
+        Returns:
+            A Decimal usable as a descending sort key.
+        """
+        if ingredient.min_stock_threshold:
+            return ingredient.current_stock / ingredient.min_stock_threshold
+        return _ZERO_THRESHOLD_RANK if ingredient.current_stock > 0 else Decimal("0")
 
     async def list_suggestions(self, db: AsyncSession, actor: User) -> Sequence[AIRecipeSuggestion]:
         """List every Recipe Suggestion, newest first.

@@ -3,6 +3,13 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+# Bounds how long a single generation can occupy AIService's in-process "in flight" slot for a
+# Cook (AD-14) — without this, a hung or very slow OpenAI call would lock that Cook out of ever
+# generating again until the process restarts, since nothing else clears the slot (review
+# finding). 45s comfortably covers a normal completion while still failing well inside any
+# reasonable request timeout on the caller's side.
+_REQUEST_TIMEOUT_SECONDS = 45.0
+
 
 class LLMClient:
     """The only place `openai` is imported in this codebase (AD-12, Story 6.1).
@@ -23,7 +30,13 @@ class LLMClient:
                 config is resolved).
             model: The model name to use for every call this client makes.
         """
-        self._client = AsyncOpenAI(api_key=api_key)
+        # `AsyncOpenAI(api_key="")` raises immediately at construction (confirmed empirically
+        # against the installed SDK) — if that ran eagerly here, a never-configured key would
+        # surface as a raw, unhandled error the first time this Singleton is constructed, not
+        # FR-21's intended graceful 502 (review finding). Deferring construction until a real
+        # call is made means the failure instead happens inside generate_recipe, which
+        # AIService already wraps and translates.
+        self._client = AsyncOpenAI(api_key=api_key) if api_key else None
         self._model = model
 
     async def generate_recipe(self, prompt: str) -> dict[str, Any]:
@@ -34,7 +47,9 @@ class LLMClient:
         parseable structured response. Any failure (network error, API error, unparseable
         content) propagates to the caller as-is — this method's job is the API call and parsing,
         not deciding what a failure means to the rest of the app; `AIService` (its only caller)
-        translates any exception here into FR-21's graceful-degradation path.
+        translates any exception here into FR-21's graceful-degradation path, and also validates
+        the parsed content's shape (this method only guarantees valid JSON, not the expected
+        keys).
 
         Args:
             prompt: The full prompt to send, already including the stock snapshot and any
@@ -45,13 +60,17 @@ class LLMClient:
             "plating" keys (not validated here — the caller validates shape).
 
         Raises:
+            RuntimeError: If no API key was configured at construction.
             Exception: Any exception raised by the OpenAI SDK (rate limit, auth, timeout, etc.),
                 or `json.JSONDecodeError` if the response content is not valid JSON.
         """
+        if self._client is None:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
         response = await self._client.chat.completions.create(
             model=self._model,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
+            timeout=_REQUEST_TIMEOUT_SECONDS,
         )
         content = response.choices[0].message.content
         return json.loads(content)

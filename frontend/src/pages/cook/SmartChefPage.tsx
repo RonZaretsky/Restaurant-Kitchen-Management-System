@@ -53,8 +53,12 @@ function SuggestionCard({ suggestion }: { suggestion: AIRecipeSuggestion }) {
         Ingredients drawn on
       </Typography>
       <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, marginTop: 0.5, marginBottom: 1 }}>
-        {suggestion.generated_recipe.ingredients.map((ingredient) => (
-          <Chip key={ingredient.name} size="small" label={`${ingredient.name}, ${ingredient.quantity}`} />
+        {suggestion.generated_recipe.ingredients.map((ingredient, index) => (
+          <Chip
+            key={`${ingredient.name}-${index}`}
+            size="small"
+            label={`${ingredient.name}, ${ingredient.quantity}`}
+          />
         ))}
       </Box>
 

@@ -3,12 +3,13 @@ import asyncio
 import pytest
 import pytest_asyncio
 from dependency_injector import providers
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from clients.llm import LLMClient
 from data_models import AIRecipeSuggestion, Ingredient, Unit, User, UserRole
-from main import container
+from main import app, container
 from services.auth_service import AuthService
 
 _PASSWORD = "correct-horse-battery-staple"
@@ -58,10 +59,26 @@ class FakeLLMClient:
         self.error: Exception | None = None
         self.block_event: asyncio.Event | None = None
         self.calls: list[str] = []
+        # Set the instant a call actually starts, i.e. after AIService's own
+        # `_in_flight.add(actor.id)` has already run — awaited by the concurrency test instead of
+        # a fixed sleep, so it never races the guard it's testing (review finding).
+        self.started = asyncio.Event()
 
     async def generate_recipe(self, prompt: str) -> dict:
         self.calls.append(prompt)
-        if self.block_event is not None:
+        is_first_call = len(self.calls) == 1
+        # Signals a test waiting to know the call has genuinely started (and, since this method
+        # only runs once `_in_flight` already holds the caller's id, that the guard's own state
+        # is already set) before it fires a second, concurrent request — replaces a fixed
+        # `asyncio.sleep` with a deterministic wait (review finding).
+        if is_first_call:
+            self.started.set()
+        # Only the first call ever blocks on block_event — a second, concurrent call (e.g. from a
+        # different Cook, who must NOT be blocked by the first Cook's in-flight generation) always
+        # proceeds immediately. Two calls sharing one block_event with no way to distinguish them
+        # would deadlock: nothing sets the event until a caller has already (successfully) awaited
+        # the second call.
+        if self.block_event is not None and is_first_call:
             await self.block_event.wait()
         if self.error is not None:
             raise self.error
@@ -139,15 +156,16 @@ async def test_a_direction_never_overrides_the_stock_constraint_in_the_prompt(
 async def test_a_second_concurrent_request_from_the_same_cook_is_rejected(
     client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
 ) -> None:
-    # Arrange: the first call blocks on an event this test controls, so the "in flight" window is
-    # deterministic rather than timing-dependent.
+    # Arrange: the first call blocks on an event this test controls, and the fake client signals
+    # `started` only once it's genuinely mid-call (i.e. after AIService's own in-flight guard is
+    # already set) — awaited deterministically below rather than a fixed sleep (review finding).
     await _create_ingredient(db_session, "Basil", "2.000", "1.000")
     await _login_as(client, db_session, UserRole.cook, "amir")
     fake_llm_client.block_event = asyncio.Event()
 
     # Act
     first_task = asyncio.create_task(client.post("/api/smart-chef/suggestions", json={}))
-    await asyncio.sleep(0.1)  # let the first request actually reach the in-flight set
+    await asyncio.wait_for(fake_llm_client.started.wait(), timeout=2)
     second_response = await client.post("/api/smart-chef/suggestions", json={})
     fake_llm_client.block_event.set()
     first_response = await first_task
@@ -156,6 +174,87 @@ async def test_a_second_concurrent_request_from_the_same_cook_is_rejected(
     assert first_response.status_code == 201
     assert second_response.status_code == 409
     assert second_response.json()["detail"] == "Rejected, a suggestion is already generating for this Cook"
+
+
+@pytest.mark.asyncio
+async def test_a_different_cook_can_generate_concurrently(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: the in-flight guard is keyed by actor.id, so a second, DIFFERENT Cook must not be
+    # blocked by the first Cook's own in-flight generation (every existing concurrency test used
+    # only one Cook, so this was previously unverified).
+    await _create_ingredient(db_session, "Basil", "2.000", "1.000")
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    fake_llm_client.block_event = asyncio.Event()
+
+    # Act
+    first_task = asyncio.create_task(client.post("/api/smart-chef/suggestions", json={}))
+    await asyncio.wait_for(fake_llm_client.started.wait(), timeout=2)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://test"
+    ) as second_client:
+        await _login_as(second_client, db_session, UserRole.cook, "noa")
+        second_response = await second_client.post("/api/smart-chef/suggestions", json={})
+
+    fake_llm_client.block_event.set()
+    first_response = await first_task
+
+    # Assert
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_no_ingredients_in_stock_is_rejected(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: no Ingredients at all — nothing to build a recipe from.
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.post("/api/smart-chef/suggestions", json={})
+
+    # Assert: rejected before ever calling the LLM client.
+    assert response.status_code == 502
+    assert fake_llm_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_out_of_stock_ingredients_are_excluded_from_the_snapshot(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: one in-stock Ingredient, one at zero (AC1's "currently-available" wording).
+    await _create_ingredient(db_session, "Basil", "2.000", "1.000")
+    await _create_ingredient(db_session, "Saffron", "0.000", "0.100")
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.post("/api/smart-chef/suggestions", json={})
+
+    # Assert
+    assert response.status_code == 201
+    snapshot_names = {item["name"] for item in response.json()["ingredients_snapshot"]}
+    assert snapshot_names == {"Basil"}
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_llm_response_is_rejected_and_persists_nothing(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: syntactically valid JSON, but missing the expected keys.
+    await _create_ingredient(db_session, "Basil", "2.000", "1.000")
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    fake_llm_client.response = {"unexpected": "shape"}
+
+    # Act
+    response = await client.post("/api/smart-chef/suggestions", json={})
+
+    # Assert
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Couldn't generate a suggestion right now"
+    result = await db_session.execute(select(AIRecipeSuggestion))
+    assert result.scalars().all() == []
 
 
 @pytest.mark.asyncio
@@ -251,3 +350,17 @@ async def test_list_suggestions_role_coverage(client: AsyncClient, db_session: A
 
     client.cookies.clear()
     assert (await client.get("/api/smart-chef/suggestions")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_llm_client_raises_a_plain_error_when_no_api_key_is_configured() -> None:
+    # Arrange: an empty api_key is exactly what config.yaml falls back to when OPENAI_API_KEY is
+    # unset — confirms this raises a plain, catchable error (which AIService already wraps into
+    # a 502) rather than the OpenAI SDK's own construction-time error propagating raw (review
+    # finding: AsyncOpenAI(api_key="") raises immediately at construction, confirmed empirically
+    # against the installed SDK).
+    client = LLMClient(api_key="", model="gpt-4o-mini")
+
+    # Act/Assert
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY is not configured"):
+        await client.generate_recipe("irrelevant prompt")

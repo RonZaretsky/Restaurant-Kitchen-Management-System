@@ -6,7 +6,7 @@ story: 1
 
 # Story 6.1: Generate a Recipe Suggestion from Current Stock
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -479,9 +479,113 @@ Claude Sonnet 5
 - `frontend/src/pages/cook/SmartChefPage.tsx`
 - `frontend/src/pages/cook/SmartChefPage.test.tsx`
 
+## Review Findings
+
+Reviewed by three parallel agents (Blind Hunter, Edge Case Hunter, Acceptance Auditor) against
+this story's 8 ACs and `_bmad-output/project-context.md`. Several findings from all three agents
+converged on the same underlying issues; consolidated below.
+
+- [x] [Review][Patch] `LLMClient.generate_recipe` had no timeout — a hung or very slow OpenAI
+  call would leave the calling Cook's `_in_flight` slot occupied indefinitely, since nothing else
+  clears it (AD-14's guard has no recovery path of its own). Added a 45s timeout on the
+  `chat.completions.create` call — `backend/clients/llm.py`
+- [x] [Review][Patch] The stock-snapshot sort mixed scales inconsistently: `current_stock /
+  min_stock_threshold` for a normal Ingredient, falling back to raw `current_stock` for a
+  zero-threshold one — comparing a small dimensionless ratio against a raw quantity in the same
+  `sorted()` call produces a meaningless order once both kinds of Ingredient are present.
+  Extracted a `_waste_risk_rank` method that ranks a zero-threshold Ingredient with any stock as
+  maximally at-risk instead — `backend/services/ai_service.py`
+- [x] [Review][Patch] The parsed OpenAI response's shape was never validated — a syntactically
+  valid JSON object missing `name`/`ingredients`/`plating` (or with the wrong types) would be
+  persisted as a "successful" suggestion and only break later at render time on the frontend
+  (`.ingredients.map(...)` on `undefined`). Added a shape check before persisting, raising
+  `AIGenerationFailedError` on a mismatch, plus a new test
+  (`test_a_malformed_llm_response_is_rejected_and_persists_nothing`) —
+  `backend/services/ai_service.py`
+- [x] [Review][Patch] No test proved the `_in_flight` guard is scoped per-Cook rather than
+  global — every existing concurrency test used a single Cook. Added
+  `test_a_different_cook_can_generate_concurrently`, which also caught and fixed a genuine
+  deadlock in the test double itself (see Completion Notes) —
+  `backend/tests/test_ai.py`
+- [x] [Review][Patch] The one concurrency test used `await asyncio.sleep(0.1)` to "let the first
+  request reach the in-flight set" — reintroducing exactly the timing-dependent flakiness the
+  story's own Task 7 said to avoid via a controlled `asyncio.Event`. Replaced with a `started`
+  event the fake client sets deterministically once its call has genuinely begun —
+  `backend/tests/test_ai.py`
+- [x] [Review][Patch] An empty ingredient list (no stock at all) was still sent to the model,
+  risking a hallucinated, unusable suggestion. Added an explicit rejection before ever calling
+  the LLM client, plus `test_no_ingredients_in_stock_is_rejected` —
+  `backend/services/ai_service.py`
+- [x] [Review][Patch] AC1 says "currently-available Ingredient stock," but the snapshot included
+  out-of-stock (`current_stock == 0`) Ingredients. Added a `current_stock > 0` filter, plus
+  `test_out_of_stock_ingredients_are_excluded_from_the_snapshot` —
+  `backend/services/ai_service.py`
+- [x] [Review][Patch] `SuggestionCard`'s ingredient `Chip` list used `key={ingredient.name}`,
+  which collides if a generated recipe names the same ingredient twice. Added the array index to
+  the key — `frontend/src/pages/cook/SmartChefPage.tsx`
+- [x] [Review][Patch] `AsyncOpenAI(api_key="")` raises immediately at construction (confirmed
+  empirically against the installed SDK) — since `llm_client` is a lazily-constructed Singleton,
+  a never-configured key would have surfaced as a raw, unhandled error on the first real request
+  rather than FR-21's intended graceful 502. `LLMClient` now defers construction until a real
+  call is made, raising a plain `RuntimeError` `AIService` already catches and converts. New test:
+  `test_llm_client_raises_a_plain_error_when_no_api_key_is_configured` —
+  `backend/clients/llm.py`
+- [x] [Review][Defer] `AIService`/`llm_client` are registered as `providers.Singleton`, which
+  assumes a single-process deployment forever — if this app were ever scaled to multiple Uvicorn
+  workers, each worker would get its own empty `_in_flight` set, silently defeating AC3's
+  guarantee. Deferred: this matches the story's own explicit, stated scope ("a single-process
+  demo app... none is warranted"); logged in `deferred-work.md` as a forward-looking note for if
+  that assumption ever changes.
+- [x] [Review][Defer] `list_suggestions` has no pagination or bound. Deferred: matches the
+  already-accepted, already-logged unpaginated-growth pattern `GET /api/orders`/`KitchenService.
+  list_active_items` established (see `deferred-work.md`'s existing entries) — not a new gap this
+  story introduces.
+
+**Verified as non-issues:**
+
+- **`openai>=3.3.1` "looks fabricated/unverifiable"** — confirmed genuinely real by direct
+  introspection of the installed package in this environment (`uv add openai` resolved and
+  installed it from PyPI; `openai.__version__` prints `3.3.1`; `AsyncOpenAI`/`chat.completions.
+  create`'s signatures were inspected directly, not assumed). This release postdates the
+  reviewing model's training data the same way it postdates mine — the verification was done
+  empirically, not from memory, precisely to guard against this.
+- **The Completion Notes' `OPENAI_MODEL=gpt-5.6-sol` mention "contradicts" `config.yaml`'s
+  `gpt-4o-mini` default** — no contradiction: `gpt-4o-mini` is the fallback used only when
+  `OPENAI_MODEL` is unset (`${OPENAI_MODEL: "gpt-4o-mini"}`), and this environment's own
+  `backend/.env` sets it explicitly, overriding the default as designed.
+- **No cross-check of the model's returned ingredients against the actual stock snapshot, no
+  prompt-injection defense on `direction`** — matches the PRD's own explicit, already-recorded
+  assumption (§9, FR-18): *"enforced by prompt construction, not independently validated
+  post-generation."* Not a gap introduced by this story.
+- **AC7's "cost auditing" only stores `requested_by`, not token counts or dollar cost** — matches
+  AC7's own literal definition of "attributable": *"carries the requesting User's id and its
+  owning Recipe Suggestion."* The AC does not ask for token/cost tracking.
+- **`llm_client`/`ai_service` registered as `Singleton` instead of the story's own literal `Task
+  5` instruction to use `Factory`** — a deliberate, necessary, already-documented deviation
+  (Completion Notes): a `Factory` would give every injected request its own empty `_in_flight`
+  set, silently defeating AC3 the first time two different requests happened to get two
+  different instances.
+- **`openai>=3.3.1` deviates from Task 1's literal `>=1.0.0`** — the task text was written before
+  implementation, without knowing the real current package version; using the actual, verified
+  installed version instead of a guessed one is correct execution, not a defect.
+- **`ingredient.unit.value` could raise if `unit` were null** — factually inapplicable:
+  `Ingredient.unit` is a `NOT NULL` column (`backend/data_models/recipe.py`), so this state cannot
+  occur.
+- **Broad `except Exception` around the OpenAI call** — a standard, defensible pattern at exactly
+  one already-isolated external-boundary call site, converting any SDK-internal exception
+  hierarchy into one well-defined domain exception; does not wrap `_build_prompt` or any other
+  internal logic.
+- **`backend/uv.lock` "not updated" despite Task 1 claiming it was** — false positive from the
+  diff scope given to reviewers (the lockfile was deliberately excluded from the reviewed diff
+  as a low-signal generated file); confirmed actually committed via `git diff --stat` against the
+  full repository history.
+- **`config.yaml`'s `${OPENAI_API_KEY: ""}` differs from Task 1's literal `${OPENAI_API_KEY:}`**
+  — functionally identical for the `_warn_if_no_openai_key()` falsy check; cosmetic only.
+
 ## Change Log
 
 | Date | Change |
 |---|---|
 | 2026-08-22 | Story 6.1 created via bmad-create-story: the first external-API integration in the project. Establishes `backend/clients/`'s LLM adapter pattern (AD-12), the in-process reject-not-queue concurrency guard (AD-14), and graceful degradation (FR-21) that Stories 6.2/6.3 will reuse. Scoped tightly against the shared Smart Chef mockup: explicitly excludes Confirm/Dismiss (6.2) and chat (6.3). |
 | 2026-08-22 | Implemented Story 6.1: `backend/clients/llm.py` (`LLMClient`, AD-12), `AIService.generate_suggestion`/`list_suggestions` (the in-process `_in_flight` set for AD-14, the surplus-ratio "at-risk-of-waste" sort heuristic), two new exception types (`SuggestionGenerationInProgressError`, `AIGenerationFailedError`/`ExternalServiceError`), `POST`/`GET /api/smart-chef/suggestions`, and container wiring — caught and fixed a real bug during implementation (both new providers needed to be `Singleton`, not `Factory`, or the concurrency guard would never actually trigger). Frontend: `SmartChefPage.tsx` replaces its placeholder with the request bar and suggestion-card list, no Confirm/Dismiss or chat (out of scope). 9 new backend tests (378 total), 5 new frontend tests (201 total). Full backend suite: 378/378 passed. Full frontend suite: 201/201 passed. `npx tsc -b` clean. |
+| 2026-08-22 | Code review patch pass (three parallel agents): added a 45s timeout on the OpenAI call (an unbounded hang would lock a Cook out of the in-flight guard indefinitely); fixed a scale-mixing bug in the stock-snapshot sort for zero-threshold Ingredients; added response-shape validation before persisting a suggestion; filtered out-of-stock Ingredients from the snapshot (AC1's "currently-available" wording) and rejected the request cleanly when nothing is in stock at all; fixed a real deadlock caught while adding a new per-Cook-scoping concurrency test (two concurrent calls sharing one blocking test double); replaced a timing-dependent `asyncio.sleep` in the existing concurrency test with a deterministic event; made a never-configured API key fail gracefully (502) instead of raising raw at first use; fixed a React key-collision risk in the ingredient chip list. Deferred: the Singleton-based in-flight guard assumes single-process deployment forever (logged for revisit if that assumption changes). 5 new backend tests (383 total). Full backend suite: 383/383 passed. Full frontend suite: unaffected (key fix only), `tsc -b` clean. |

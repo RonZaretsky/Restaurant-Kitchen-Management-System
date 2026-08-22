@@ -697,3 +697,15 @@
   test asserting the two never diverge** — both directions fail safe. **Action:** revisit only if
   this pattern (independently-derived, duplicated business logic across the stack) recurs enough
   to justify a cross-stack contract-testing convention this codebase doesn't have yet.
+
+## Deferred from: code review of story-6-1 (2026-08-22)
+
+- **`AIService`/`LLMClient` are registered as `providers.Singleton` in `container.py`, which
+  assumes a single-process deployment forever** — the in-process `_in_flight` set (AD-14's
+  reject-not-queue guard) only works because every request shares the same instance. If this app
+  were ever scaled to run multiple Uvicorn/Gunicorn workers, each worker process would get its own
+  empty `_in_flight` set, silently defeating the "reject a second concurrent generation for the
+  same Cook" guarantee (AC3) across workers. Matches the story's own explicit, stated scope (a
+  single-process demo app). **Action:** if this project is ever deployed with multiple worker
+  processes, the in-flight guard needs to move to shared state (e.g. a Redis key with a TTL, or a
+  DB row) — an in-process set will no longer be sufficient at that point.
