@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design at the time — both gained one later, Story 5.5). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is under way: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design at the time — both gained one later, Story 5.5). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is **complete**: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event. Story 5.3 made `Order.status` derive live from its items. Story 5.4 added the guarded `mark_served`/`close_order` transitions and Order total computation. Story 5.5 closed the live-update gap on cancel/edit. Epic 6 (Smart Chef, Recipe Suggestions & Assistant Chat) is under way: Story 6.1 added the project's first external-API integration — `backend/clients/llm.py` (the only place `openai` is imported, AD-12), `AIService` (a deliberate `Singleton`, not `Factory`, for its in-process concurrency guard), and `POST`/`GET /api/smart-chef/suggestions`, letting a Cook generate an AI recipe suggestion from current stock.**
 
 ```
 backend/
@@ -120,6 +120,10 @@ backend/
                      GET /api/orders (bare router prefix, @router.get("", ...)) on the existing
                      waiter-only OrdersDep, unwidened — the first bulk (not Table/Order-scoped)
                      read in this file
+  api/smart_chef.py   Story 6.1 (new domain, Epic 6): POST /api/smart-chef/suggestions
+                     (SmartChefWriteDep = cook only, no admin fallback) and GET (SmartChefReadDep =
+                     cook + admin, shared with Story 6.2's future Admin review page). First router
+                     to reach an external service indirectly (via ai_service -> llm_client)
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -130,6 +134,13 @@ backend/
   clients/websocket.py ConnectionRegistry (Story 1.5): tracks open sockets keyed by user id (not just Role),
                      closing a User's prior socket on a new one; broadcast_to_roles() targets several Roles
                      in one emission
+  clients/llm.py       Story 6.1 (new, Epic 6): LLMClient, the ONLY place `openai` is imported
+                     anywhere in backend/ (AD-12). Wraps AsyncOpenAI, one method
+                     (generate_recipe(prompt) -> dict), JSON mode
+                     (response_format={"type": "json_object"}), a 45s per-call timeout. Defers
+                     constructing the SDK client until first real use if no API key is configured,
+                     so a missing key fails inside the call (which AIService already catches),
+                     never raw at container-Singleton construction time
   data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written.
                      recipe.py, menu.py and order.py also hold their own Pydantic request/response
                      schemas colocated with their ORM class, matching user.py's shape. menu.py owns
@@ -254,9 +265,28 @@ backend/
                      **RESOLVED by Story 3.3**: OrderService is now its first producer (see above).
                      Story 4.2 made InventoryService its second: inventory.alerts_changed, to
                      UserRole.warehouse_manager only
+  services/ai_service.py  Story 6.1 (new, Epic 6): AIService.generate_suggestion/list_suggestions.
+                     Config-free aside from llm_client/logger, but registered as a
+                     providers.Singleton in container.py — the ONE deliberate exception to this
+                     container's otherwise-universal Factory pattern, since AD-14's
+                     "reject a second concurrent generation for the same Cook" guard lives in an
+                     in-process set (_in_flight) on the service instance itself; a Factory would
+                     hand each injected request its own empty set, silently defeating the guard.
+                     Reads Ingredient directly (current_stock > 0 only), no InventoryService
+                     dependency needed for a plain read. Stock snapshot sorted by
+                     _waste_risk_rank (current_stock / min_stock_threshold descending, a
+                     zero-threshold Ingredient with stock ranks maximally at-risk instead of
+                     falling back to a raw, differently-scaled quantity) — the "prioritize
+                     at-risk-of-waste ingredients" heuristic (FR-18), since nothing in this schema
+                     tracks expiry/usage-rate. Validates the parsed OpenAI response's shape
+                     (name/ingredients/plating present) before persisting
   exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409),
-                     NotFoundError family (404, one shared base since Story 2.3, see trap 17)
-  exceptions/handlers.py    register_exception_handlers(app); exactly four handlers, one per family
+                     NotFoundError family (404, one shared base since Story 2.3, see trap 17).
+                     Story 6.1 added a fifth family, ExternalServiceError (502) — the first
+                     handler added since the original four, for a third-party service call
+                     failure (AIGenerationFailedError)
+  exceptions/handlers.py    register_exception_handlers(app); five handlers as of Story 6.1, one
+                     per family
 ```
 
 - `data_models/` is complete and mirrors `docs/database-schema.md`: `user.py`, `menu.py`,
@@ -302,7 +332,14 @@ frontend/src/
                         backend's new enum value by hand, same as MAX_ORDER_ITEM_QUANTITY above
   services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
                         Every failure leaves as an ApiError, including an unreachable backend and a
-                        timeout, which carry status 0 (see trap 12)
+                        timeout, which carry status 0 (see trap 12). `apiRequest`'s global timeout
+                        (`config.api.timeoutMs`, 5s) is now overridable per call (Story 6.1,
+                        manual-test finding) — a genuine OpenAI-backed request routinely takes
+                        longer than any ordinary CRUD call; only `useGenerateSuggestion` overrides
+                        it (50s), every other call site keeps the 5s default
+  services/smartChefService.ts  Story 6.1 (new, Epic 6): useSuggestions/useGenerateSuggestion.
+                        The first call site to pass a non-default timeout to apiRequest (50s,
+                        matching LLMClient's own 45s server-side budget plus margin)
   services/authService.ts  useCurrentUser / useLogin / useLogout (Story 1.7: invalidates
                         CURRENT_USER_QUERY_KEY on success, the mirror of useLogin's own
                         invalidation; no manual navigate(), RequireAuth's existing 401-redirect
@@ -2114,4 +2151,51 @@ here alone would be inconsistent, fixing it project-wide is a separate change); 
 broadcasts even on a genuine no-op edit (harmless, a wasted refetch, not incorrect data). Suites
 are now **369 backend and 196 frontend tests**.
 
-Last Updated: 2026-08-21
+**2026-08-22 patch (Story 6.1, Generate a Recipe Suggestion from Current Stock, plus its code
+review and a manual-testing timeout fix):** Epic 6's opening story, and the project's **first
+external-API integration**. `backend/clients/llm.py`'s `LLMClient` is the only place `openai` is
+imported anywhere in `backend/` (AD-12) — one method, `generate_recipe(prompt) -> dict`, using
+Chat Completions' JSON mode, a 45s timeout, and deferred SDK-client construction so a
+never-configured API key fails inside the call (caught and converted to a 502) rather than
+raising raw at container-Singleton construction time. `AIService.generate_suggestion` reads
+Ingredient stock directly (no `InventoryService` dependency needed for a plain read, `current_
+stock > 0` only), sorts it by a `_waste_risk_rank` heuristic (surplus relative to each
+Ingredient's own minimum threshold, since nothing in this schema tracks expiry/usage-rate), and
+validates the parsed OpenAI response's shape before persisting.
+
+**A real concurrency bug caught and fixed during implementation, not after:** `AIService`/
+`LLMClient` are registered as `providers.Singleton` in `container.py`, the **one deliberate
+exception** to this container's otherwise-universal Factory pattern. AD-14's "reject a second
+concurrent generation for the same Cook" guard lives in an in-process `set` on the service
+instance itself; a `Factory` would hand each injected request its own empty set, silently
+defeating the guard the moment two different requests happened to land on two different
+instances — caught while implementing, before it ever shipped, and verified with a genuine
+concurrency test (a controlled `asyncio.Event`, not a timing sleep).
+
+**Code review found and fixed six further robustness gaps**, all before merge: a scale-mixing bug
+in the stock-sort for zero-threshold Ingredients; no response-shape validation (a malformed OpenAI
+reply would have been persisted as a "successful" suggestion); out-of-stock Ingredients still
+included in the snapshot (AC1 says "currently-available"); no rejection when nothing is in stock
+at all; a genuinely timing-dependent `asyncio.sleep` in the one existing concurrency test
+(replaced with a deterministic event); and a never-configured API key raising raw instead of a
+graceful 502. Adding a new per-Cook-scoping concurrency test also caught a real deadlock in the
+test double itself (two concurrent calls sharing one blocking mock, with nothing to unblock the
+second until the first — already-awaited — call returned).
+
+**Manual testing (against a real, live OpenAI call) found one more real bug**, after everything
+else was already verified: `httpClient.ts`'s global 5s fetch timeout is far shorter than a
+genuine generation call (observed ~9s, up to `LLMClient`'s own 45s server-side budget), producing
+a false "The server took too long to respond" even though the request had already succeeded and
+persisted. Fixed by adding an optional per-call `timeoutMs` override to `apiRequest` (`services/
+smartChefService.ts`'s `useGenerateSuggestion` is the first and only call site to use it, 50s;
+every other call site keeps the 5s default) — while writing the test for this fix, caught a
+second bug in the test's own mock `fetch`, which didn't respect the abort signal and hung for
+real rather than simulating a timeout.
+
+Deferred, not fixed (see `deferred-work.md`): the Singleton-based in-flight guard assumes
+single-process deployment forever — if this app is ever scaled to multiple worker processes, each
+would get its own empty `_in_flight` set. `list_suggestions` has no pagination, matching the
+already-accepted unbounded-growth pattern `GET /api/orders`/`KitchenService.list_active_items`
+already established. Suites are now **383 backend and 202 frontend tests**.
+
+Last Updated: 2026-08-22
