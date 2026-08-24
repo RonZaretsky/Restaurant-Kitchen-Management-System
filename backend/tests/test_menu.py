@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import Category, Dish, Ingredient, RecipeIngredient, Unit, User, UserRole
+from data_models import AIRecipeSuggestion, Category, Dish, Ingredient, RecipeIngredient, Unit, User, UserRole
 from services.auth_service import AuthService
 
 _PASSWORD = "correct-horse-battery-staple"
@@ -54,6 +54,26 @@ async def _create_ingredient(db_session: AsyncSession, name: str = "Flour") -> I
     await db_session.commit()
     await db_session.refresh(ingredient)
     return ingredient
+
+
+async def _create_suggestion(
+    db_session: AsyncSession, requested_by: int, dismissed: bool = False
+) -> AIRecipeSuggestion:
+    suggestion = AIRecipeSuggestion(
+        requested_by=requested_by,
+        prompt_used="...",
+        generated_recipe={
+            "name": "Roasted Zucchini Flatbread",
+            "ingredients": [{"name": "Zucchini", "quantity": "1.2 kg"}],
+            "plating": "Sliced thin, served on a wooden board.",
+        },
+        ingredients_snapshot=[{"name": "Zucchini", "unit": "kg", "current_stock": "5.000"}],
+        dismissed=dismissed,
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+    await db_session.refresh(suggestion)
+    return suggestion
 
 
 async def _add_recipe_ingredient(
@@ -170,6 +190,128 @@ async def test_creating_a_dish_with_a_nonexistent_category_is_rejected(
 
     # Assert
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_creating_a_dish_with_a_source_suggestion_id_confirms_it(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: Story 6.2 - Confirm into Dish. "Confirmed" is derived, not stored, so the
+    # assertion is that a Dish now cites the suggestion, not a flag on the suggestion itself.
+    admin = await _login_as_admin(client, db_session)
+    category = await _create_category(client, "Pizza")
+    suggestion = await _create_suggestion(db_session, requested_by=admin.id)
+
+    # Act
+    response = await client.post(
+        "/api/menu/dishes",
+        json={
+            "name": "Roasted Zucchini Flatbread",
+            "price": "12.50",
+            "category_id": category["id"],
+            "source_suggestion_id": suggestion.id,
+        },
+    )
+
+    # Assert
+    assert response.status_code == 201
+    assert response.json()["source_suggestion_id"] == suggestion.id
+
+
+@pytest.mark.asyncio
+async def test_creating_a_dish_without_a_source_suggestion_id_leaves_it_null(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: the ordinary, non-AI dish-creation path must be unaffected.
+    await _login_as_admin(client, db_session)
+    category = await _create_category(client, "Pizza")
+
+    # Act
+    response = await client.post(
+        "/api/menu/dishes",
+        json={"name": "Margherita", "price": "12.50", "category_id": category["id"]},
+    )
+
+    # Assert
+    assert response.status_code == 201
+    assert response.json()["source_suggestion_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_creating_a_dish_with_a_nonexistent_suggestion_id_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as_admin(client, db_session)
+    category = await _create_category(client, "Pizza")
+
+    # Act
+    response = await client.post(
+        "/api/menu/dishes",
+        json={"name": "Flatbread", "price": "12.50", "category_id": category["id"], "source_suggestion_id": 999999},
+    )
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_creating_a_dish_from_a_dismissed_suggestion_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    admin = await _login_as_admin(client, db_session)
+    category = await _create_category(client, "Pizza")
+    suggestion = await _create_suggestion(db_session, requested_by=admin.id, dismissed=True)
+
+    # Act
+    response = await client.post(
+        "/api/menu/dishes",
+        json={
+            "name": "Flatbread",
+            "price": "12.50",
+            "category_id": category["id"],
+            "source_suggestion_id": suggestion.id,
+        },
+    )
+
+    # Assert
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_creating_a_second_dish_from_an_already_confirmed_suggestion_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: FR-19 - there is only one Dish-creation path, so this confirms the
+    # already-confirmed check rather than a bypass of it.
+    admin = await _login_as_admin(client, db_session)
+    category = await _create_category(client, "Pizza")
+    suggestion = await _create_suggestion(db_session, requested_by=admin.id)
+    first = await client.post(
+        "/api/menu/dishes",
+        json={
+            "name": "Flatbread",
+            "price": "12.50",
+            "category_id": category["id"],
+            "source_suggestion_id": suggestion.id,
+        },
+    )
+    assert first.status_code == 201
+
+    # Act
+    second = await client.post(
+        "/api/menu/dishes",
+        json={
+            "name": "Flatbread Redux",
+            "price": "9.00",
+            "category_id": category["id"],
+            "source_suggestion_id": suggestion.id,
+        },
+    )
+
+    # Assert
+    assert second.status_code == 409
 
 
 @pytest.mark.asyncio

@@ -6,8 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.llm import LLMClient
-from data_models import AIRecipeSuggestion, Ingredient, User
-from exceptions import AIGenerationFailedError, SuggestionGenerationInProgressError
+from data_models import AIRecipeSuggestion, AIRecipeSuggestionResponse, Dish, Ingredient, User
+from exceptions import (
+    AIGenerationFailedError,
+    SuggestionAlreadyConfirmedError,
+    SuggestionAlreadyDismissedError,
+    SuggestionGenerationInProgressError,
+    SuggestionNotFoundError,
+)
 
 # A sentinel used to rank a zero-min_stock_threshold Ingredient as maximally "at risk of waste"
 # (Scope note's heuristic) rather than falling back to its raw current_stock, which would mix an
@@ -44,7 +50,7 @@ class AIService:
 
     async def generate_suggestion(
         self, db: AsyncSession, actor: User, direction: str | None
-    ) -> AIRecipeSuggestion:
+    ) -> AIRecipeSuggestionResponse:
         """Generate and persist a Recipe Suggestion from a snapshot of current stock (AC1, AC2).
 
         Rejects a second concurrent request from the same Cook immediately, before any DB read or
@@ -145,7 +151,9 @@ class AIService:
                 actor.id,
                 suggestion.id,
             )
-            return suggestion
+            # A freshly generated suggestion can never already be confirmed — Dish creation
+            # (Story 6.2) always happens in a later, separate request.
+            return AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=None)
         finally:
             self._in_flight.discard(actor.id)
 
@@ -171,15 +179,23 @@ class AIService:
             return ingredient.current_stock / ingredient.min_stock_threshold
         return _ZERO_THRESHOLD_RANK if ingredient.current_stock > 0 else Decimal("0")
 
-    async def list_suggestions(self, db: AsyncSession, actor: User) -> Sequence[AIRecipeSuggestion]:
-        """List every Recipe Suggestion, newest first.
+    async def list_suggestions(self, db: AsyncSession, actor: User) -> Sequence[AIRecipeSuggestionResponse]:
+        """List every Recipe Suggestion, newest first, each carrying its derived confirmed state.
 
         No actor-based filtering (AD-9) — every Cook and Admin sees every suggestion; a
         "current Cook's own items first" sort, if ever added, belongs client-side (AD-10),
         matching this exact domain's own FR-20 precedent for Chat Sessions. `actor` is accepted
         only for signature symmetry with every other method in this service, unused otherwise,
-        matching `OrderService.list_open_orders`'s own documented shape. No `dismissed` filter —
-        that column does not exist until Story 6.2's own migration adds it.
+        matching `OrderService.list_open_orders`'s own documented shape.
+
+        No `dismissed` filter here (Story 6.2) — same as before, this method returns every
+        suggestion regardless of dismissed/confirmed state; "awaiting review" filtering is a
+        client-side concern (`RecipeSuggestionsPage.tsx`), matching AD-9's established
+        client-side-filter convention.
+
+        A left join against `Dish.source_suggestion_id` resolves each row's `confirmed_dish_id`
+        in one query, not one extra query per suggestion (no N+1) — "confirmed" is derived, not a
+        stored column (see `AIRecipeSuggestion`'s own docstring).
 
         Args:
             db: The active database session.
@@ -188,8 +204,91 @@ class AIService:
         Returns:
             Every Recipe Suggestion, ordered newest first.
         """
-        result = await db.execute(select(AIRecipeSuggestion).order_by(AIRecipeSuggestion.id.desc()))
-        return result.scalars().all()
+        result = await db.execute(
+            select(AIRecipeSuggestion, Dish.id)
+            .outerjoin(Dish, Dish.source_suggestion_id == AIRecipeSuggestion.id)
+            .order_by(AIRecipeSuggestion.id.desc())
+        )
+        return [
+            AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=dish_id)
+            for suggestion, dish_id in result.all()
+        ]
+
+    async def dismiss_suggestion(self, db: AsyncSession, actor: User, suggestion_id: int) -> AIRecipeSuggestionResponse:
+        """Dismiss a Recipe Suggestion, retaining it for audit (AC4).
+
+        Rejects a suggestion that is already dismissed or already confirmed (has a Dish citing it
+        as its source) — dismissing and confirming are mutually exclusive terminal states, plain
+        business-rule checks here, not schema constraints.
+
+        Args:
+            db: The active database session.
+            actor: The Admin dismissing the suggestion.
+            suggestion_id: The id of the Recipe Suggestion to dismiss.
+
+        Returns:
+            The now-dismissed Recipe Suggestion.
+
+        Raises:
+            SuggestionNotFoundError: If no Recipe Suggestion matches suggestion_id.
+            SuggestionAlreadyDismissedError: If the suggestion is already dismissed.
+            SuggestionAlreadyConfirmedError: If a Dish already cites this suggestion as its
+                source.
+        """
+        suggestion = await db.get(AIRecipeSuggestion, suggestion_id)
+        if suggestion is None:
+            self._logger.warning(
+                "Recipe suggestion dismiss rejected for user_id={}: no suggestion_id={}",
+                actor.id,
+                suggestion_id,
+            )
+            raise SuggestionNotFoundError()
+
+        if suggestion.dismissed:
+            self._logger.warning(
+                "Recipe suggestion dismiss rejected for user_id={}: suggestion_id={} already dismissed",
+                actor.id,
+                suggestion_id,
+            )
+            raise SuggestionAlreadyDismissedError()
+
+        confirmed_dish_id = await self._get_confirmed_dish_id(db, suggestion_id)
+        if confirmed_dish_id is not None:
+            self._logger.warning(
+                "Recipe suggestion dismiss rejected for user_id={}: suggestion_id={} already confirmed"
+                " (dish_id={})",
+                actor.id,
+                suggestion_id,
+                confirmed_dish_id,
+            )
+            raise SuggestionAlreadyConfirmedError()
+
+        suggestion.dismissed = True
+        await db.commit()
+        await db.refresh(suggestion)
+        self._logger.info(
+            "Recipe suggestion dismissed by user_id={}: suggestion_id={}",
+            actor.id,
+            suggestion_id,
+        )
+        # Reuses the same lookup rather than hardcoding None (code review finding): the guard
+        # above already rejects the confirmed case, but computing it here instead of assuming it
+        # removes a fragile coupling to that guard never being reordered or relaxed later.
+        return AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=confirmed_dish_id)
+
+    @staticmethod
+    async def _get_confirmed_dish_id(db: AsyncSession, suggestion_id: int) -> int | None:
+        """Look up the Dish (if any) that cites the given Recipe Suggestion as its source.
+
+        Args:
+            db: The active database session.
+            suggestion_id: The Recipe Suggestion id to check.
+
+        Returns:
+            That Dish's id, or None if no Dish references this suggestion yet.
+        """
+        result = await db.execute(select(Dish.id).where(Dish.source_suggestion_id == suggestion_id))
+        return result.scalar_one_or_none()
 
     def _build_prompt(self, snapshot: list[dict[str, str]], direction: str | None) -> str:
         """Build the generation prompt from a stock snapshot and an optional direction (AC1, AC2).

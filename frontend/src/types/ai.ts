@@ -10,4 +10,6 @@ export interface AIRecipeSuggestion {
   };
   ingredients_snapshot: { name: string; unit: string; current_stock: string }[];
   created_at: string;
+  dismissed: boolean;
+  confirmed_dish_id: number | null;
 }

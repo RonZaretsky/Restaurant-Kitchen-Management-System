@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_models import (
+    AIRecipeSuggestion,
     Category,
     CreateCategoryRequest,
     CreateDishRequest,
@@ -27,6 +28,9 @@ from exceptions import (
     EmptyRecipeError,
     IngredientNotFoundError,
     RecipeIngredientNotFoundError,
+    SuggestionAlreadyConfirmedError,
+    SuggestionAlreadyDismissedError,
+    SuggestionNotFoundError,
     UnitMismatchError,
 )
 
@@ -117,19 +121,34 @@ class MenuService:
     async def create_dish(self, db: AsyncSession, actor: User, payload: CreateDishRequest) -> Dish:
         """Create a new Dish, unconditionally unavailable (AC2, AD-8).
 
+        Optionally confirms this Dish as originating from a Recipe Suggestion
+        (Story 6.2, FR-19) when `payload.source_suggestion_id` is set — this is the
+        *only* code path that can ever set that provenance link (AC2): there is no
+        second, separate "confirm" mutation, just this one optional field on the
+        same insert every Dish creation already goes through.
+
         Args:
             db: The active database session.
             actor: The Admin performing the creation, used only for logging.
-            payload: The submitted name, description, price, category, and
-                prep time.
+            payload: The submitted name, description, price, category, prep
+                time, and optional source Recipe Suggestion id.
 
         Returns:
             The newly created, unavailable Dish.
 
         Raises:
             CategoryNotFoundError: If category_id does not match any Category.
+            SuggestionNotFoundError: If source_suggestion_id is set but matches no
+                Recipe Suggestion.
+            SuggestionAlreadyDismissedError: If the referenced suggestion has
+                already been dismissed.
+            SuggestionAlreadyConfirmedError: If another Dish already cites the
+                referenced suggestion as its source.
         """
         await self._get_category(db, actor, payload.category_id)
+
+        if payload.source_suggestion_id is not None:
+            await self._validate_source_suggestion(db, actor, payload.source_suggestion_id)
 
         dish = Dish(
             name=payload.name,
@@ -138,18 +157,75 @@ class MenuService:
             category_id=payload.category_id,
             prep_time_minutes=payload.prep_time_minutes,
             is_available=False,
+            source_suggestion_id=payload.source_suggestion_id,
         )
         db.add(dish)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError as exc:
+            # The pre-check above loses to a concurrent create_dish citing the same
+            # suggestion_id: uq_dishes_source_suggestion_id (code review finding) is the real
+            # arbiter, so translate its violation into the same 409 rather than letting it
+            # surface as a 500. Logging before rollback, not after: rollback() expires every
+            # object bound to this session, actor included, so reading actor.id afterward raises
+            # an unhandled MissingGreenlet.
+            self._logger.warning(
+                "Dish creation rejected by user_id={}: suggestion_id={} already confirmed (lost the race)",
+                actor.id,
+                payload.source_suggestion_id,
+            )
+            await db.rollback()
+            raise SuggestionAlreadyConfirmedError() from exc
         await db.refresh(dish)
         self._logger.info(
-            "Dish created by user_id={}: dish_id={} name={} category_id={}",
+            "Dish created by user_id={}: dish_id={} name={} category_id={} source_suggestion_id={}",
             actor.id,
             dish.id,
             dish.name,
             dish.category_id,
+            dish.source_suggestion_id,
         )
         return dish
+
+    async def _validate_source_suggestion(self, db: AsyncSession, actor: User, suggestion_id: int) -> None:
+        """Validate a Recipe Suggestion id supplied on a Dish create (Story 6.2, FR-19).
+
+        Args:
+            db: The active database session.
+            actor: The Admin performing the creation, used only for logging.
+            suggestion_id: The Recipe Suggestion id to validate.
+
+        Raises:
+            SuggestionNotFoundError: If no Recipe Suggestion matches suggestion_id.
+            SuggestionAlreadyDismissedError: If the suggestion is already dismissed.
+            SuggestionAlreadyConfirmedError: If another Dish already cites this
+                suggestion as its source.
+        """
+        suggestion = await db.get(AIRecipeSuggestion, suggestion_id)
+        if suggestion is None:
+            self._logger.warning(
+                "Dish creation rejected for user_id={}: no suggestion with suggestion_id={}",
+                actor.id,
+                suggestion_id,
+            )
+            raise SuggestionNotFoundError()
+
+        if suggestion.dismissed:
+            self._logger.warning(
+                "Dish creation rejected for user_id={}: suggestion_id={} is dismissed",
+                actor.id,
+                suggestion_id,
+            )
+            raise SuggestionAlreadyDismissedError()
+
+        existing = await db.execute(select(Dish).where(Dish.source_suggestion_id == suggestion_id))
+        if existing.scalar_one_or_none() is not None:
+            self._logger.warning(
+                "Dish creation rejected for user_id={}: suggestion_id={} already confirmed",
+                actor.id,
+                suggestion_id,
+            )
+            raise SuggestionAlreadyConfirmedError()
 
     async def list_dishes(self, db: AsyncSession) -> Sequence[Dish]:
         """List every Dish.

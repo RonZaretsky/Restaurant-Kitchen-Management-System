@@ -38,6 +38,18 @@ class Dish(Base):
     prep_time_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Nullable provenance link back to the AIRecipeSuggestion this Dish was confirmed from
+    # (Story 6.2, FR-19). Null for a manually-defined Dish (AC3). Lives here, not on
+    # RecipeIngredient, since there is no single row representing "the recipe" as a whole — a
+    # Dish's recipe is its set of RecipeIngredient rows, and one Dish has at most one originating
+    # suggestion.
+    # unique=True (code review finding): closes a TOCTOU race where two concurrent Dish
+    # creations citing the same suggestion could both pass the service-level check before either
+    # commits, giving one suggestion two confirming Dishes. Postgres permits multiple NULLs
+    # under a plain UNIQUE constraint, so ordinary (non-AI-sourced) Dishes are unaffected.
+    source_suggestion_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("ai_recipe_suggestions.id"), nullable=True, unique=True
+    )
 
 
 class CreateCategoryRequest(BaseModel):
@@ -74,6 +86,9 @@ class CreateDishRequest(BaseModel):
     price: Decimal = Field(gt=0, max_digits=8, decimal_places=2)
     category_id: int = Field(gt=0, le=_INT4_MAX)
     prep_time_minutes: int | None = Field(default=None, ge=0, le=_INT4_MAX)
+    # Optional (Story 6.2, FR-19): set only when this Dish is being confirmed from a Recipe
+    # Suggestion. Every existing call site omits this and is unaffected (AC3).
+    source_suggestion_id: int | None = Field(default=None, gt=0, le=_INT4_MAX)
 
     _strip_name = field_validator("name")(_strip_and_require_content)
 
@@ -152,3 +167,4 @@ class DishResponse(BaseModel):
     is_available: bool
     prep_time_minutes: int | None
     created_at: datetime
+    source_suggestion_id: int | None
