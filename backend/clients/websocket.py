@@ -12,6 +12,15 @@ from data_models import UserRole
 # connection is dropped.
 SEND_TIMEOUT_SECONDS = 1.0
 
+# A private-use WebSocket close code (RFC 6455 §7.4.2 reserves 4000-4999 for
+# applications) for the one case in `register` below where this server closes a
+# connection deliberately, not because anything failed: a second tab (or any new
+# connection for the same User) just took the socket over. Distinct from a default
+# close so the client (frontend/src/components/shell/RealtimeProvider.tsx) can tell
+# "you were replaced" apart from "the network dropped" and not auto-retry into an
+# infinite tug-of-war with the connection that replaced it.
+CONNECTION_REPLACED_CLOSE_CODE = 4409
+
 
 @dataclass
 class _Connection:
@@ -68,7 +77,7 @@ class ConnectionRegistry:
             self._logger.info(
                 "Replacing existing WebSocket connection for user_id={}", user_id
             )
-            await self._close_quietly(existing.websocket)
+            await self._close_quietly(existing.websocket, code=CONNECTION_REPLACED_CLOSE_CODE)
 
     def unregister(self, user_id: int, websocket: WebSocket) -> None:
         """Drop a connection, e.g. once it disconnects.
@@ -177,16 +186,19 @@ class ConnectionRegistry:
             )
             self.unregister(connection.user_id, connection.websocket)
 
-    async def _close_quietly(self, websocket: WebSocket) -> None:
+    async def _close_quietly(self, websocket: WebSocket, code: int = 1000) -> None:
         """Close a socket, ignoring the error from one already closed.
 
         Args:
             websocket: The connection to close.
+            code: The WebSocket close code to send. Defaults to 1000 (normal closure),
+                used by `close_all` on shutdown; `register` passes
+                `CONNECTION_REPLACED_CLOSE_CODE` for a takeover close instead.
 
         Returns:
             Nothing.
         """
         try:
-            await websocket.close()
+            await websocket.close(code=code)
         except Exception:
             pass

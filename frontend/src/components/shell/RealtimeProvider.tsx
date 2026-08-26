@@ -46,6 +46,15 @@ const MAX_RETRY_DELAY_MS = 30000;
 const POLICY_VIOLATION_CLOSE_CODE = 1008;
 
 /**
+ * WebSocket close code the backend sends when a newer connection for the same session (typically
+ * a second browser tab) has taken this socket's place (see ConnectionRegistry.register in
+ * backend/clients/websocket.py). Also not retried: reconnecting would just steal the connection
+ * back from whichever tab now holds it, and that tab would then reconnect and steal it right
+ * back, flapping between the two forever instead of settling.
+ */
+const CONNECTION_REPLACED_CLOSE_CODE = 4409;
+
+/**
  * Reads the realtime channel's subscribe function.
  *
  * @returns The subscribe function for `{domain}.{event}` push notifications.
@@ -190,6 +199,10 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         }
         if (closeEvent.code === POLICY_VIOLATION_CLOSE_CODE) {
           setStatus("reconnecting");
+          return;
+        }
+        if (closeEvent.code === CONNECTION_REPLACED_CLOSE_CODE) {
+          setStatus("replaced");
           return;
         }
         scheduleRetry();
