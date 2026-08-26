@@ -1,5 +1,5 @@
 # generated: 2026-08-08
-# last_updated: 2026-08-22
+# last_updated: 2026-08-26
 # project: Restaurant-Kitchen-Management-System
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 #     all emit over its channel and depend on the {domain}.{event} naming it fixes.
 
 generated: 2026-08-08
-last_updated: 2026-08-22
+last_updated: 2026-08-26
 project: Restaurant-Kitchen-Management-System
 project_key: NOKEY
 tracking_system: file-system
@@ -109,5 +109,5 @@ development_status:
   epic-6: in-progress
   6-1-generate-a-recipe-suggestion-from-current-stock: done
   6-2-confirm-a-recipe-suggestion-into-a-live-dish: done
-  6-3-consult-version-and-improve-recipes-via-smart-assistant-chat: backlog
+  6-3-consult-version-and-improve-recipes-via-smart-assistant-chat: ready-for-dev
   epic-6-retrospective: optional
