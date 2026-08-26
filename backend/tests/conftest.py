@@ -6,6 +6,11 @@ import os
 # Forcing DB_NAME here is what keeps the suite off the development database.
 os.environ["DB_NAME"] = os.environ.get("TEST_DB_NAME") or "kitchen_test"
 
+# The client fixture below runs the real app lifespan (app.router.lifespan_context), which would
+# otherwise auto-create a default Admin on every test's empty database — silently breaking every
+# test that assumes a genuinely empty users table (e.g. AD-15's last-Admin guard tests).
+os.environ["BOOTSTRAP_ADMIN"] = "false"
+
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 

@@ -1,5 +1,6 @@
 app:
   debug: ${APP_DEBUG: false}
+  bootstrap_admin: ${BOOTSTRAP_ADMIN: true}
 
 server:
   host: ${SERVER_HOST: "0.0.0.0"}
