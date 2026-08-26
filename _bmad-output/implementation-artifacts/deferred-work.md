@@ -1,5 +1,31 @@
 # Deferred Work
 
+## Deferred from: code review of story-6-3 (2026-08-26)
+
+- **Unbounded per-turn conversation-history resend, no windowing/truncation** — `backend/services/ai_service.py:517-522`
+  resends every prior message in a Chat Session on every turn, with no truncation, summarization, or token-budget cap;
+  `CreateChatMessageRequest.content` (`backend/data_models/ai.py:168`) also has no `max_length`, a conscious match to
+  Story 3.2's notes-field precedent, but the full-history resend has no such precedent. A long-running session will
+  eventually exceed the model's context window with no recovery path, and per-turn OpenAI cost grows with conversation
+  length. Needs a real design decision (last-N messages vs. summarization vs. token budget) before fixing, not a
+  one-line patch.
+- **New `dish_id`/`suggestion_id` FKs on `ai_chat_sessions` have no `ondelete` policy** —
+  `backend/alembic/versions/ff8b89322b7c_add_dish_id_and_suggestion_id_to_ai_.py` creates both FKs with the Postgres
+  default `NO ACTION`. Unreachable today since no delete endpoint exists for Dish or AIRecipeSuggestion anywhere in
+  the codebase, but the first story that adds one will need to decide the cascade semantics here first.
+- **`ai_service.py` commits without catching `IntegrityError`** — `create_chat_session`
+  (`backend/services/ai_service.py:399-401`) and `send_message` (`backend/services/ai_service.py:538`) both check a
+  Dish/Suggestion exists well before committing, with no re-check or `IntegrityError` handling for the gap. A delete
+  racing in between surfaces as an unhandled 500 instead of a controlled error, unlike `inventory_service.py`,
+  `menu_service.py`, `table_service.py`, and `user_service.py`, which all catch `IntegrityError` around their commits.
+  Pre-existing gap across the whole `ai_service.py` module since Story 6.1 (`generate_suggestion`/`confirm_suggestion`
+  have the same gap) — not a regression introduced by Story 6.3, but worth closing across the file in one pass.
+- **In-process-only concurrency guards** — `_chat_in_flight` and `_in_flight`
+  (`backend/services/ai_service.py:66,72`) are plain Python `set`s on a `providers.Singleton`, so the guard only holds
+  within a single worker process. Inherited directly from Story 6.1's own `_in_flight` guard; fine for this project's
+  single-instance academic deployment, but would need a shared store (DB row lock, Redis, etc.) if this ever ran with
+  multiple workers or instances.
+
 ## Deferred from: code review of story-1-0 (2026-08-08)
 
 - **`get_session` missing `await` on `container.database()`** — `backend/clients/database.py:9`

@@ -785,6 +785,53 @@ async def test_a_session_created_by_one_cook_is_fully_readable_by_a_different_co
 
 
 @pytest.mark.asyncio
+async def test_a_different_cook_can_send_a_message_into_a_session_they_did_not_create(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange (AC3): the write side, not just reads - continuing another Cook's session needs no
+    # special grant either.
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
+    session_id = session_response.json()["id"]
+
+    # Act: a different Cook sends into the session amir created.
+    await _login_as(client, db_session, UserRole.cook, "noa")
+    send_response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "Any tips?"}
+    )
+
+    # Assert
+    assert send_response.status_code == 201
+    messages = send_response.json()
+    assert len(messages) == 2
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_chat_reply_persists_no_messages_and_returns_502(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange (AC4): an empty-string reply from OpenAI must not be persisted as a valid message.
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
+    session_id = session_response.json()["id"]
+    fake_llm_client.chat_response = ""
+
+    # Act
+    response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "How do I improve this?"}
+    )
+
+    # Assert
+    assert response.status_code == 502
+    result = await db_session.execute(select(AIChatMessage).where(AIChatMessage.session_id == session_id))
+    assert result.scalars().all() == []
+
+
+@pytest.mark.asyncio
 async def test_a_failed_chat_reply_persists_no_messages_and_returns_502(
     client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
 ) -> None:

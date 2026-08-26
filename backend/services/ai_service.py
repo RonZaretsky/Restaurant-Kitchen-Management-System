@@ -523,11 +523,14 @@ class AIService:
 
             try:
                 reply = await self._llm_client.send_chat_message(messages)
-            except Exception:
+                if not isinstance(reply, str) or not reply.strip():
+                    raise ValueError("chat reply missing expected non-empty text content")
+            except Exception as exc:
                 self._logger.error(
-                    "Chat message failed for user_id={}: session_id={}: OpenAI call failed",
+                    "Chat message failed for user_id={}: session_id={}: {}",
                     actor.id,
                     session_id,
+                    exc,
                 )
                 raise AIChatReplyFailedError() from None
 

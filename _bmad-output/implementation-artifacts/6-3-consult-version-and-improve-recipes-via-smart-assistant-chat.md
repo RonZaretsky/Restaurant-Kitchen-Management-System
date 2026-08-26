@@ -6,7 +6,7 @@ story: 3
 
 # Story 6.3: Consult, Version, and Improve Recipes via Smart Assistant Chat
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -392,6 +392,16 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
   - [x] `pnpm test` (frontend) — zero regressions.
   - [x] `npx tsc -b` — clean.
 
+### Review Findings
+
+- [x] [Review][Patch] `send_message` never validates the OpenAI reply before persisting it, contradicting AC4's "no dangling Chat Message with empty or null content" [backend/services/ai_service.py:525]
+- [x] [Review][Patch] AC3's "a different Cook can continue another Cook's session" write path has no test — only the read side is covered [backend/tests/test_ai.py:763]
+- [x] [Review][Patch] Chat-reply failure logging discards the caught exception's type/message (`except Exception:` + a static log string + `from None`), making OpenAI outage vs. timeout vs. malformed-response indistinguishable in production logs [backend/services/ai_service.py:526]
+- [x] [Review][Defer] Unbounded per-turn conversation-history resend with no windowing/truncation and no `content` length cap — will eventually exceed the model's context window and compounds per-turn OpenAI cost; the missing `max_length` is a conscious, documented match to Story 3.2's precedent, but the full-history resend itself has no such precedent and needs a real windowing design, not a one-line fix [backend/services/ai_service.py:517-522, backend/data_models/ai.py:168] — deferred, needs a design decision on windowing strategy (last-N messages vs. summarization vs. token budget), not blocking this story's ACs
+- [x] [Review][Defer] New `dish_id`/`suggestion_id` foreign keys on `ai_chat_sessions` have no `ondelete` policy (defaults to `NO ACTION`), which would block deleting a Dish or Suggestion once any chat references it [backend/alembic/versions/ff8b89322b7c_add_dish_id_and_suggestion_id_to_ai_.py] — deferred, unreachable today since no delete endpoint exists for Dish or AIRecipeSuggestion anywhere in the codebase
+- [x] [Review][Defer] `create_chat_session` and `send_message` commit without catching `IntegrityError`, so a Dish/Suggestion delete racing between the existence check and the commit surfaces as an unhandled 500 instead of a controlled error [backend/services/ai_service.py:399-401, backend/services/ai_service.py:538] — deferred, pre-existing gap across the whole `ai_service.py` module since Story 6.1 (`generate_suggestion`/`confirm_suggestion` have the same gap), not a regression introduced by this story
+- [x] [Review][Defer] `_chat_in_flight`/`_in_flight` are in-process Python sets, so the concurrency guard only holds within a single worker process [backend/services/ai_service.py:66, backend/services/ai_service.py:72] — deferred, inherited directly from Story 6.1's own `_in_flight` guard; this project runs as a single-instance academic deployment with no multi-worker/horizontal scaling in scope
+
 ## Dev Notes
 
 ### Architecture compliance
@@ -615,3 +625,14 @@ Claude Sonnet 5
   trap and the admin-only Dish-fixture 403) are captured under Debug Log References above. The
   optional "Discuss via chat" entry point on `DishesPage.tsx` was deliberately not added, per the
   story's own explicit scope decision.
+- **Code review patch pass (2026-08-26)**: adversarial review (Blind Hunter, Edge Case Hunter,
+  Acceptance Auditor) found 3 patch-worthy issues, all fixed — `send_message` now validates the
+  OpenAI reply is non-empty before persisting it (AC4), a write-side cross-Cook test was added
+  (AC3), and chat-failure log lines now include the caught exception's type/message. 4 findings
+  were deferred as pre-existing or design-level (see Review Findings above and
+  `deferred-work.md`); 4 findings from the review layers were dismissed as false positives after
+  reading the surrounding code (verified: `generated_recipe`'s shape is guaranteed by
+  `generate_suggestion`'s own upstream validation, and `useCurrentUser()` is already resolved by
+  `RequireAuth` before this route ever mounts). Full regression pass after the patches: 416
+  backend tests and 220 frontend tests pass (one `UsersPage.test.tsx` timeout confirmed flaky and
+  unrelated — passes in isolation, file untouched by this story).
