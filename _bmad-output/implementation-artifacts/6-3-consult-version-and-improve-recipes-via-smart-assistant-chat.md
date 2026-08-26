@@ -6,7 +6,7 @@ story: 3
 
 # Story 6.3: Consult, Version, and Improve Recipes via Smart Assistant Chat
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -139,13 +139,13 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Backend — `AIChatSession.dish_id`/`suggestion_id` + migration (AC1, AC5)**
-  - [ ] `backend/data_models/ai.py`: add `dish_id: Mapped[int | None] = mapped_column(Integer,
+- [x] **Task 1: Backend — `AIChatSession.dish_id`/`suggestion_id` + migration (AC1, AC5)**
+  - [x] `backend/data_models/ai.py`: add `dish_id: Mapped[int | None] = mapped_column(Integer,
     ForeignKey("dishes.id"), nullable=True)` and `suggestion_id: Mapped[int | None] =
     mapped_column(Integer, ForeignKey("ai_recipe_suggestions.id"), nullable=True)` to
     `AIChatSession`. Both nullable, no default — a session created before this story never existed
     (fresh feature), so there is no backfill concern.
-  - [ ] Generate the Alembic revision: `uv run alembic revision --autogenerate -m "add dish_id and
+  - [x] Generate the Alembic revision: `uv run alembic revision --autogenerate -m "add dish_id and
     suggestion_id to ai_chat_sessions"`, `down_revision` chaining onto `f9cbd3ff5b87` (Story 6.2's
     head). **Inspect the generated script** — confirm it only adds the two nullable columns + two
     FKs, no unrelated autogenerate noise, and that the downgrade correctly names both new FK
@@ -153,36 +153,36 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
     shape — verify with `alembic downgrade --sql` before considering this done, trap the codebase
     has already hit once).
 
-- [ ] **Task 2: Backend — request/response schemas (`backend/data_models/ai.py`)** (AC1, AC3, AC5)
-  - [ ] `CreateChatSessionRequest(BaseModel)`: `dish_id: int | None = Field(default=None, gt=0,
+- [x] **Task 2: Backend — request/response schemas (`backend/data_models/ai.py`)** (AC1, AC3, AC5)
+  - [x] `CreateChatSessionRequest(BaseModel)`: `dish_id: int | None = Field(default=None, gt=0,
     le=_INT4_MAX)`, `suggestion_id: int | None = Field(default=None, gt=0, le=_INT4_MAX)` (import
     `_INT4_MAX` from `data_models.menu`, the existing cross-module convention — see
     `api/smart_chef.py`'s own `SuggestionIdPath` for the precedent). `@model_validator(mode="after")`
     rejecting neither-set and both-set (mirrors `UpdateUserRequest.at_least_one_field`'s shape,
     inverted to "exactly one" instead of "at least one").
-  - [ ] `AIChatSessionResponse(BaseModel)`: `model_config = {"from_attributes": True}`; `id`,
+  - [x] `AIChatSessionResponse(BaseModel)`: `model_config = {"from_attributes": True}`; `id`,
     `user_id`, `dish_id: int | None`, `suggestion_id: int | None`, `title`, `created_at`. Plain
     `model_validate(session)` is sufficient here (unlike `AIRecipeSuggestionResponse`, nothing
     about a session is derived from a join).
-  - [ ] `CreateChatMessageRequest(BaseModel)`: `content: str = Field(min_length=1)`, `_strip_content
+  - [x] `CreateChatMessageRequest(BaseModel)`: `content: str = Field(min_length=1)`, `_strip_content
     = field_validator("content")(_strip_and_require_content)` (import from `data_models.user`, the
     existing shared helper — see `CreateCategoryRequest.name`'s precedent in `data_models/menu.py`
     for the exact import/wiring shape). No `max_length` bound — matches
     `CreateOrderItemRequest.notes`'s already-accepted unbounded-free-text precedent (see
     `deferred-work.md`'s Story 3.2 entry), a conscious match, not an oversight.
-  - [ ] `AIChatMessageResponse(BaseModel)`: `model_config = {"from_attributes": True}`; `id`,
+  - [x] `AIChatMessageResponse(BaseModel)`: `model_config = {"from_attributes": True}`; `id`,
     `session_id`, `role: ChatRole`, `content`, `created_at`.
-  - [ ] Export all four from `data_models/__init__.py` alongside the existing `ai.py` exports.
+  - [x] Export all four from `data_models/__init__.py` alongside the existing `ai.py` exports.
 
-- [ ] **Task 3: Backend — new exception types** (AC1, AC4)
-  - [ ] `backend/exceptions/__init__.py`: `ChatSessionNotFoundError(NotFoundError)`, detail `"Chat
+- [x] **Task 3: Backend — new exception types** (AC1, AC4)
+  - [x] `backend/exceptions/__init__.py`: `ChatSessionNotFoundError(NotFoundError)`, detail `"Chat
     session not found"`. `ChatMessageInProgressError(ConflictError)`, detail `"Rejected, a reply is
     already generating for this session"`. `AIChatReplyFailedError(ExternalServiceError)`, detail
     `"Couldn't get a response right now"`. All three subclass an existing family — no new handler
     needed, same as every exception Stories 6.1/6.2 added.
 
-- [ ] **Task 4: Backend — `clients/llm.py` gains `send_chat_message`** (AD-12)
-  - [ ] Add `async def send_chat_message(self, messages: list[dict[str, str]]) -> str` to the
+- [x] **Task 4: Backend — `clients/llm.py` gains `send_chat_message`** (AD-12)
+  - [x] Add `async def send_chat_message(self, messages: list[dict[str, str]]) -> str` to the
     existing `LLMClient` class (no new file, no second client — the class's own Story 6.1 docstring
     already commits to this). Same `self._client.chat.completions.create(model=self._model,
     messages=messages, timeout=_REQUEST_TIMEOUT_SECONDS)` call shape as `generate_recipe`, but no
@@ -192,11 +192,11 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
     `generate_recipe` already raises — no new no-key handling needed, one shared `if self._client
     is None` check per method, matching the existing shape.
 
-- [ ] **Task 5: Backend — `AIService` chat session + message methods** (AC1, AC2, AC3, AC4, AC5)
-  - [ ] `__init__`: add `self._chat_in_flight: set[int] = set()` alongside the existing
+- [x] **Task 5: Backend — `AIService` chat session + message methods** (AC1, AC2, AC3, AC4, AC5)
+  - [x] `__init__`: add `self._chat_in_flight: set[int] = set()` alongside the existing
     `self._in_flight` (Story 6.1) — a second, independent in-process guard, keyed by session id not
     user id (see Scope note). No container.py change: `AIService` is already a `providers.Singleton`.
-  - [ ] `async def create_chat_session(self, db: AsyncSession, actor: User, dish_id: int | None,
+  - [x] `async def create_chat_session(self, db: AsyncSession, actor: User, dish_id: int | None,
     suggestion_id: int | None) -> AIChatSessionResponse`:
     - Exactly one of `dish_id`/`suggestion_id` is guaranteed non-None by the request schema's own
       validator — this method still only receives whichever the caller resolved, no re-validation
@@ -208,18 +208,18 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
       missing (reuse Story 6.2's exception). Title: `f"Chat about {suggestion.generated_recipe['name']}"`.
     - Insert the new `AIChatSession(user_id=actor.id, dish_id=..., suggestion_id=..., title=...)`,
       commit, refresh, log at `INFO`, return `AIChatSessionResponse.model_validate(session)`.
-  - [ ] `async def list_chat_sessions(self, db: AsyncSession, actor: User) ->
+  - [x] `async def list_chat_sessions(self, db: AsyncSession, actor: User) ->
     Sequence[AIChatSessionResponse]`: `select(AIChatSession).order_by(AIChatSession.id.desc())`, no
     actor-based filtering (AD-9) — mirrors `list_suggestions`'s exact shape, `actor` accepted for
     signature symmetry only.
-  - [ ] `async def list_chat_messages(self, db: AsyncSession, actor: User, session_id: int) ->
+  - [x] `async def list_chat_messages(self, db: AsyncSession, actor: User, session_id: int) ->
     Sequence[AIChatMessageResponse]`: `db.get(AIChatSession, session_id)` first,
     `ChatSessionNotFoundError` if missing (AC1's "retrievable as a full conversation" implies a
     404 for a session that doesn't exist, not an empty list). Then
     `select(AIChatMessage).where(AIChatMessage.session_id == session_id).order_by(AIChatMessage.id.asc())`
     — **ascending**, chronological conversation order (AC5's "scroll back through history"),
     unlike `list_suggestions`'/`list_chat_sessions`' own newest-first descending order.
-  - [ ] `async def send_message(self, db: AsyncSession, actor: User, session_id: int, content: str)
+  - [x] `async def send_message(self, db: AsyncSession, actor: User, session_id: int, content: str)
     -> Sequence[AIChatMessageResponse]`:
     - `db.get(AIChatSession, session_id)`, `ChatSessionNotFoundError` if missing.
     - If `session_id in self._chat_in_flight`: raise `ChatMessageInProgressError` immediately, no
@@ -245,88 +245,88 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
       `INFO`, return `[AIChatMessageResponse.model_validate(user_msg),
       AIChatMessageResponse.model_validate(assistant_msg)]` (user then assistant, matching insertion
       order).
-  - [ ] `_build_chat_system_message(self, dish: Dish | None, suggestion: AIRecipeSuggestion | None,
+  - [x] `_build_chat_system_message(self, dish: Dish | None, suggestion: AIRecipeSuggestion | None,
     recipe_lines: Sequence[RecipeIngredient] | None) -> dict[str, str]` (private helper, exact
     signature/shape is the dev agent's call): instructs the model it is a chef assistant discussing
     a specific recipe (naming it), states the recipe's current ingredients/plating so the assistant
     can reason about it, and asks for plain conversational replies (no JSON mode this time — a
     system-message instruction, not `response_format`).
 
-- [ ] **Task 6: Backend — `api/smart_chef.py` routes** (AC1, AC2, AC3, AC4, AC5)
-  - [ ] `SessionIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]` (mirrors `SuggestionIdPath`).
-  - [ ] `POST /api/smart-chef/chat-sessions` (`SmartChefWriteDep`, Cook-only — matches FR-20's own
+- [x] **Task 6: Backend — `api/smart_chef.py` routes** (AC1, AC2, AC3, AC4, AC5)
+  - [x] `SessionIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]` (mirrors `SuggestionIdPath`).
+  - [x] `POST /api/smart-chef/chat-sessions` (`SmartChefWriteDep`, Cook-only — matches FR-20's own
     "As a Cook" framing and `generate_suggestion`'s existing precedent), body
     `CreateChatSessionRequest`, `response_model=AIChatSessionResponse`, `status_code=201`. Calls
     `ai_service.create_chat_session(db, actor, payload.dish_id, payload.suggestion_id)`.
-  - [ ] `GET /api/smart-chef/chat-sessions` (`SmartChefReadDep`, Cook + Admin — matches
+  - [x] `GET /api/smart-chef/chat-sessions` (`SmartChefReadDep`, Cook + Admin — matches
     `list_suggestions`'s shared-read precedent), `response_model=list[AIChatSessionResponse]`.
-  - [ ] `GET /api/smart-chef/chat-sessions/{session_id}/messages` (`SmartChefReadDep`),
+  - [x] `GET /api/smart-chef/chat-sessions/{session_id}/messages` (`SmartChefReadDep`),
     `response_model=list[AIChatMessageResponse]`.
-  - [ ] `POST /api/smart-chef/chat-sessions/{session_id}/messages` (`SmartChefWriteDep`, Cook-only),
+  - [x] `POST /api/smart-chef/chat-sessions/{session_id}/messages` (`SmartChefWriteDep`, Cook-only),
     body `CreateChatMessageRequest`, `response_model=list[AIChatMessageResponse]`,
     `status_code=201`. Calls `ai_service.send_message(db, actor, session_id, payload.content)`.
-  - [ ] New `_ERROR_DESCRIPTIONS`-style dicts per route, following this file's existing convention
+  - [x] New `_ERROR_DESCRIPTIONS`-style dicts per route, following this file's existing convention
     (`_GENERATE_ERROR_DESCRIPTIONS`/`_LIST_ERROR_DESCRIPTIONS`/`_DISMISS_ERROR_DESCRIPTIONS`) —
     404 "no matching Chat Session", 409 "a reply is already generating for this session", 502 "the
     OpenAI call failed, timed out, or returned unparseable content" (reworded per-route as those
     three existing dicts already do).
-  - [ ] No `container.py` change, no `container.wire(modules=[...])` change — `api.smart_chef` is
+  - [x] No `container.py` change, no `container.wire(modules=[...])` change — `api.smart_chef` is
     already wired (Story 6.1), and no new provider is added this story.
 
-- [ ] **Task 7: Backend tests** (`backend/tests/test_ai.py`, extend)
-  - [ ] Extend `FakeLLMClient` with `chat_response: str | None`, `chat_error: Exception | None`, a
+- [x] **Task 7: Backend tests** (`backend/tests/test_ai.py`, extend)
+  - [x] Extend `FakeLLMClient` with `chat_response: str | None`, `chat_error: Exception | None`, a
     `send_chat_message` method mirroring `generate_recipe`'s own configurable-behavior shape (reuse
     the same fixture, don't build a second fake).
-  - [ ] AC1: creating a session tied to a Dish, and separately to a Suggestion, then sending a
+  - [x] AC1: creating a session tied to a Dish, and separately to a Suggestion, then sending a
     message persists exactly two `AIChatMessage` rows (user, assistant) in that order, retrievable
     via the messages endpoint.
-  - [ ] Creating a session with neither `dish_id` nor `suggestion_id`, and with both, both 422.
-  - [ ] Creating a session against a nonexistent `dish_id`/`suggestion_id` is 404.
-  - [ ] AC2: a second message in an existing session — assert the `messages` list passed to the
+  - [x] Creating a session with neither `dish_id` nor `suggestion_id`, and with both, both 422.
+  - [x] Creating a session against a nonexistent `dish_id`/`suggestion_id` is 404.
+  - [x] AC2: a second message in an existing session — assert the `messages` list passed to the
     fake client's `send_chat_message` includes the prior turns' content, not just the new message
     (a real test of "has access to prior messages as context," not just an assumption).
-  - [ ] AC3: a session/suggestion created by Cook A is fully readable (session detail + messages)
+  - [x] AC3: a session/suggestion created by Cook A is fully readable (session detail + messages)
     by Cook B with no special grant — a positive cross-Cook test, the same class of gap
     Story 3.4's review flagged as missing for cross-Waiter cancel (don't repeat that gap here).
-  - [ ] AC4: a mocked client that raises on `send_chat_message` — the endpoint answers 502, and
+  - [x] AC4: a mocked client that raises on `send_chat_message` — the endpoint answers 502, and
     **zero** `AIChatMessage` rows exist afterward for that session (query the table directly, not
     just the response).
-  - [ ] Chat concurrency guard: two sends into the *same* session, the second rejected 409 while
+  - [x] Chat concurrency guard: two sends into the *same* session, the second rejected 409 while
     the first is still in flight (deterministic via a controlled `asyncio.Event`, mirroring the
     existing suggestion-generation concurrency test's technique, not a timing sleep).
-  - [ ] A different session's send is NOT blocked by another session's in-flight send (mirrors the
+  - [x] A different session's send is NOT blocked by another session's in-flight send (mirrors the
     existing "a different Cook can generate concurrently" test's reasoning, applied per-session
     instead of per-Cook).
-  - [ ] AC5: three sequential messages in one session, `GET .../messages` returns all of them in
+  - [x] AC5: three sequential messages in one session, `GET .../messages` returns all of them in
     ascending chronological order.
-  - [ ] AC6 is a frontend-only concern (empty-state copy) — no backend test needed beyond `GET
+  - [x] AC6 is a frontend-only concern (empty-state copy) — no backend test needed beyond `GET
     /api/smart-chef/chat-sessions` returning `[]` on a fresh install (mirrors Story 6.1's own `GET
     .../suggestions` empty-list test).
-  - [ ] Role coverage: waiter/warehouse_manager 403 on both POST routes; unauthenticated 401;
+  - [x] Role coverage: waiter/warehouse_manager 403 on both POST routes; unauthenticated 401;
     Admin can list sessions/messages via `SmartChefReadDep` but cannot create a session or send a
     message (403 on both POST routes, mirroring `SmartChefWriteDep`'s existing Cook-only coverage).
 
-- [ ] **Task 8: Frontend — `types/ai.ts`** (AC1, AC3, AC5)
-  - [ ] `AIChatSession` interface: `id`, `user_id`, `dish_id: number | null`,
+- [x] **Task 8: Frontend — `types/ai.ts`** (AC1, AC3, AC5)
+  - [x] `AIChatSession` interface: `id`, `user_id`, `dish_id: number | null`,
     `suggestion_id: number | null`, `title`, `created_at`.
-  - [ ] `AIChatMessage` interface: `id`, `session_id`, `role: "user" | "assistant"`, `content`,
+  - [x] `AIChatMessage` interface: `id`, `session_id`, `role: "user" | "assistant"`, `content`,
     `created_at`.
 
-- [ ] **Task 9: Frontend — `smartChefService.ts` gains chat hooks** (AC1, AC2, AC3, AC4, AC6)
-  - [ ] `CHAT_SESSIONS_QUERY_KEY = ["smart-chef", "chat-sessions"] as const` and
+- [x] **Task 9: Frontend — `smartChefService.ts` gains chat hooks** (AC1, AC2, AC3, AC4, AC6)
+  - [x] `CHAT_SESSIONS_QUERY_KEY = ["smart-chef", "chat-sessions"] as const` and
     `chatMessagesQueryKey(sessionId: number) = ["smart-chef", "chat-sessions", sessionId,
     "messages"] as const` (exported, matching `SUGGESTIONS_QUERY_KEY`'s own exported-constant
     precedent).
-  - [ ] `useChatSessions(): UseQueryResult<AIChatSession[], Error>` — `GET
+  - [x] `useChatSessions(): UseQueryResult<AIChatSession[], Error>` — `GET
     /api/smart-chef/chat-sessions`, `retry: false` (matches every other query hook in this file).
-  - [ ] `useChatMessages(sessionId: number | null): UseQueryResult<AIChatMessage[], Error>` — `GET
+  - [x] `useChatMessages(sessionId: number | null): UseQueryResult<AIChatMessage[], Error>` — `GET
     /api/smart-chef/chat-sessions/${sessionId}/messages`, `enabled: sessionId !== null` (the
     established `number | null` + `enabled` gating shape, see `useOrderForTable`'s precedent —
     don't fire the request with a literal `null` in the URL).
-  - [ ] `useCreateChatSession(): UseMutationResult<AIChatSession, Error, { dish_id?: number;
+  - [x] `useCreateChatSession(): UseMutationResult<AIChatSession, Error, { dish_id?: number;
     suggestion_id?: number }>` — `POST /api/smart-chef/chat-sessions`, invalidates
     `CHAT_SESSIONS_QUERY_KEY` `onSettled`.
-  - [ ] `useSendChatMessage(): UseMutationResult<AIChatMessage[], Error, { sessionId: number;
+  - [x] `useSendChatMessage(): UseMutationResult<AIChatMessage[], Error, { sessionId: number;
     content: string }>` — `POST /api/smart-chef/chat-sessions/${sessionId}/messages`, using the
     same `GENERATE_SUGGESTION_TIMEOUT_MS`-shaped override (50s; rename or share the constant, dev
     agent's call, but do not leave a chat send on the 5s default the way `useGenerateSuggestion`'s
@@ -334,8 +334,8 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
     `chatMessagesQueryKey(sessionId)` `onSettled` (a 409/502 both mean the client's view of "what
     just happened" may be stale, matching every other mutation in this file).
 
-- [ ] **Task 10: Frontend — `components/ai/ChatPanel.tsx`** (new) (AC1, AC2, AC4, AC5)
-  - [ ] A self-contained chat panel: renders `useChatMessages(sessionId)`'s messages (user/assistant
+- [x] **Task 10: Frontend — `components/ai/ChatPanel.tsx`** (new) (AC1, AC2, AC4, AC5)
+  - [x] A self-contained chat panel: renders `useChatMessages(sessionId)`'s messages (user/assistant
     styled distinctly, per `key-smart-chef.html`'s `.msg.user`/`.msg.assistant` visual reference —
     `DESIGN.md` has no formal `{components.chat-*}` token for this, the mockup's own inline styles
     are the closest available reference, translate to MUI primitives rather than inventing a new
@@ -345,15 +345,15 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
     `SmartChefPage.tsx`'s own generating state, follow that precedent instead of a new spinner
     shape), and an inline `Alert` on `isError` (AC4 — a failed send must render a clear failure
     state, not a silently-stuck "sending").
-  - [ ] Loading/empty state for the message list itself: while `useChatMessages` is loading, a
+  - [x] Loading/empty state for the message list itself: while `useChatMessages` is loading, a
     skeleton or spinner (dev agent's call on exact treatment, `RowsSkeleton` is available); an
     empty message list (a freshly created session with zero messages yet) renders no special copy,
     it is just a blank panel ready for the first message — no AC names an empty-messages state
     distinct from "No chat sessions yet" (AC6, which is about the *sessions list*, not one open
     session's own message history).
 
-- [ ] **Task 11: Frontend — `SmartChefPage.tsx` gains chat** (AC1, AC2, AC3, AC4, AC6)
-  - [ ] Add a "Discuss via chat" button to `SuggestionCard` (alongside the existing card content,
+- [x] **Task 11: Frontend — `SmartChefPage.tsx` gains chat** (AC1, AC2, AC3, AC4, AC6)
+  - [x] Add a "Discuss via chat" button to `SuggestionCard` (alongside the existing card content,
     still with no Confirm/Dismiss — those stay out of scope here exactly as Stories 6.1/6.2 already
     established). Clicking it calls `useCreateChatSession().mutate({ suggestion_id: suggestion.id
     })`, and on success sets that new session as the page's "active session" (local `useState`),
@@ -362,7 +362,7 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
     column card list allows (dev agent's call on exact layout; the mockup's two-column grid is not
     mandatory to replicate pixel-for-pixel, matching this codebase's own "mocks illustrate, the
     spine and epics govern" rule from `EXPERIENCE.md`).
-  - [ ] Add a "Chat Sessions" section: `useChatSessions()`, sorted client-side with the current
+  - [x] Add a "Chat Sessions" section: `useChatSessions()`, sorted client-side with the current
     Cook's own sessions first (`user_id === currentUser.id`, via the existing `useCurrentUser()`
     hook from `authService.ts`) while preserving each group's own newest-first order — the AD-10
     sort this story's own Scope note commits to building for real. Empty state: **"No chat sessions
@@ -370,27 +370,27 @@ as further debt — a small, directly-AC-justified inclusion, not scope creep.
     matching `SmartChefPage.tsx`'s existing "No recipe suggestions yet." precedent). Clicking a
     session row sets it as the active session and renders `<ChatPanel sessionId={session.id} />`
     the same way the suggestion-card path does.
-  - [ ] Also add the same current-Cook-first client-side sort to the existing Suggestions list
+  - [x] Also add the same current-Cook-first client-side sort to the existing Suggestions list
     (Scope note's own justification — AC3 names both nouns). Do not add a second server-side query
     parameter for this (AD-9/AD-10 forbid it) — a plain client-side sort over the already-fetched
     list.
 
-- [ ] **Task 12: Frontend tests**
-  - [ ] `SmartChefPage.test.tsx`: "No chat sessions yet." empty state renders (AC6); a session
+- [x] **Task 12: Frontend tests**
+  - [x] `SmartChefPage.test.tsx`: "No chat sessions yet." empty state renders (AC6); a session
     created by a different user still appears in the Sessions list (AC3, positive test — mirrors
     Task 7's backend cross-Cook test); clicking "Discuss via chat" on a suggestion creates a
     session and renders the chat panel; sending a message in the panel shows both the new user and
     assistant messages after success; a failed send shows an inline error, not a stuck sending
     state (AC4); current-Cook's-own items render first in both the Sessions list and the
     Suggestions list, given a fixture with items from two different users.
-  - [ ] `ChatPanel.test.tsx` (new, if extracted as its own file — dev agent's call, matching Story
+  - [x] `ChatPanel.test.tsx` (new, if extracted as its own file — dev agent's call, matching Story
     6.2's own "extract a shared component, dev agent's call" precedent) or folded into
     `SmartChefPage.test.tsx`: covers the panel's own loading/error/generating states directly.
 
-- [ ] **Task 13: Full regression pass**
-  - [ ] `uv run pytest -q` (backend) — zero regressions.
-  - [ ] `pnpm test` (frontend) — zero regressions.
-  - [ ] `npx tsc -b` — clean.
+- [x] **Task 13: Full regression pass**
+  - [x] `uv run pytest -q` (backend) — zero regressions.
+  - [x] `pnpm test` (frontend) — zero regressions.
+  - [x] `npx tsc -b` — clean.
 
 ## Dev Notes
 
@@ -530,12 +530,88 @@ unaffected).
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Sonnet 5
 
 ### Debug Log References
 
+- Alembic autogenerate for the new `ai_chat_sessions.dish_id`/`suggestion_id` columns emitted the
+  same unnamed-FK-constraint shape Story 6.2's own review already caught once
+  (`create_foreign_key(None, ...)`, whose downgrade cannot target it). Renamed both constraints to
+  match Postgres's own default naming (`ai_chat_sessions_dish_id_fkey`,
+  `ai_chat_sessions_suggestion_id_fkey`) before ever running it, then verified both directions
+  against the real dev database: `alembic downgrade --sql` renders valid, named `DROP CONSTRAINT`
+  statements, and a live `alembic downgrade f9cbd3ff5b87` followed by `alembic upgrade head`
+  round-trips cleanly.
+- The first draft of the new backend tests created Dish fixtures via `POST /api/menu/dishes`
+  while logged in as the Cook under test, which is admin-only and returned 403. Switched
+  `_create_dish` to insert the Category/Dish rows directly against `db_session`, the same
+  direct-insert precedent `_create_ingredient` already established in this file, rather than
+  juggling a login switch just to seed a fixture.
+
 ### Completion Notes List
 
-- Ultimate context engine analysis completed - comprehensive developer guide created.
+- `AIChatSession` gained two new nullable FK columns, `dish_id` and `suggestion_id`; exactly one
+  is enforced by `CreateChatSessionRequest`'s `model_validator` (422 on neither/both), not a DB
+  constraint, matching `UpdateUserRequest.at_least_one_field`'s established shape. Migration
+  chained onto `f9cbd3ff5b87` as `ai_chat_sessions_dish_id_fkey`/`_suggestion_id_fkey`.
+- `AIService` gained `create_chat_session`/`list_chat_sessions`/`list_chat_messages`/`send_message`
+  plus a private `_build_chat_system_message` helper and a second in-process guard,
+  `_chat_in_flight: set[int]`, keyed by session id (independent of the existing per-Cook
+  `_in_flight`). `send_message` builds the system message from a *live* read of the session's
+  target (Dish + its current Recipe Ingredient lines, or a Recipe Suggestion's stored
+  `generated_recipe`) on every send, never a value cached at session creation.
+- Message-pair atomicity (AD-14): both the user's and the assistant's `AIChatMessage` rows are
+  inserted together in one transaction, only after `LLMClient.send_chat_message` succeeds; any
+  failure raises `AIChatReplyFailedError` (502) with zero rows persisted, verified directly against
+  the `ai_chat_messages` table, not just the response.
+- `LLMClient.send_chat_message` was added to the existing class (AD-12) — same call shape as
+  `generate_recipe`, no `response_format`, returns the plain string reply. `services/` still only
+  ever imports `clients.llm.LLMClient`.
+- `api/smart_chef.py` gained four routes (`POST`/`GET /chat-sessions`,
+  `GET`/`POST /chat-sessions/{id}/messages`) on the existing `SmartChefWriteDep`/`SmartChefReadDep`
+  — no `container.py` change, `api.smart_chef` was already wired in Story 6.1.
+- Frontend: `smartChefService.ts` gained `useChatSessions`/`useChatMessages`/
+  `useCreateChatSession`/`useSendChatMessage` (the send mutation uses a 50s timeout override,
+  matching `useGenerateSuggestion`'s own OpenAI-call reasoning). New `components/ai/ChatPanel.tsx`
+  renders a session's message history, a "Ask a follow-up" input, a generating indicator, and an
+  inline error Alert on a failed send. `SmartChefPage.tsx` gained a "Discuss via chat" action per
+  suggestion card (always creates a new session, per the Scope note) and a new Chat Sessions
+  section with the "No chat sessions yet." empty state (AC6); both the Suggestions and Sessions
+  lists now sort the current Cook's own items first client-side (AC3/AD-10), never a second
+  server-side query parameter. `DishesPage.tsx` was deliberately not touched, per the story's own
+  scope decision.
+- Full regression pass: 414 backend tests pass (`uv run pytest -q`), 220 frontend tests pass
+  (`pnpm test` / vitest), `tsc -b` clean. No ruff/mypy or eslint configuration exists in this repo
+  to run.
 
 ### File List
+
+- `backend/data_models/ai.py` (modified)
+- `backend/data_models/__init__.py` (modified)
+- `backend/alembic/versions/ff8b89322b7c_add_dish_id_and_suggestion_id_to_ai_.py` (new)
+- `backend/services/ai_service.py` (modified)
+- `backend/clients/llm.py` (modified)
+- `backend/exceptions/__init__.py` (modified)
+- `backend/api/smart_chef.py` (modified)
+- `backend/tests/test_ai.py` (modified)
+- `frontend/src/types/ai.ts` (modified)
+- `frontend/src/services/smartChefService.ts` (modified)
+- `frontend/src/components/ai/ChatPanel.tsx` (new)
+- `frontend/src/components/ai/ChatPanel.test.tsx` (new)
+- `frontend/src/pages/cook/SmartChefPage.tsx` (modified)
+- `frontend/src/pages/cook/SmartChefPage.test.tsx` (modified)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (modified)
+- `_bmad-output/implementation-artifacts/6-3-consult-version-and-improve-recipes-via-smart-assistant-chat.md` (modified)
+
+## Change Log
+
+- **Implementation pass (2026-08-26)**: implemented all 13 tasks per the story's own sequencing —
+  schema + migration (Task 1), request/response schemas (Task 2), new exception types (Task 3),
+  `LLMClient.send_chat_message` (Task 4), `AIService`'s four chat methods plus the
+  `_chat_in_flight` guard (Task 5), the four new `api/smart_chef.py` routes (Task 6), backend test
+  coverage (Task 7), frontend types/hooks/`ChatPanel`/`SmartChefPage` wiring (Tasks 8-11), frontend
+  test coverage (Task 12), and a full regression pass (Task 13). No deviations from the story's
+  Dev Notes guardrails; the two implementation notes worth recording (the FK-constraint-naming
+  trap and the admin-only Dish-fixture 403) are captured under Debug Log References above. The
+  optional "Discuss via chat" entry point on `DishesPage.tsx` was deliberately not added, per the
+  story's own explicit scope decision.

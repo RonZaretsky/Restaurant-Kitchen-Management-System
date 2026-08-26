@@ -74,3 +74,35 @@ class LLMClient:
         )
         content = response.choices[0].message.content
         return json.loads(content)
+
+    async def send_chat_message(self, messages: list[dict[str, str]]) -> str:
+        """Send a chat conversation to the configured model and return its free-text reply.
+
+        Story 6.3's own extension of this class (per its own docstring above, "future Smart Chef
+        calls extend this same class rather than introducing a second OpenAI client", AD-12).
+        Same call shape as `generate_recipe`, but no `response_format` (a chat reply is free
+        text, not a structured suggestion) and returns the plain string content directly instead
+        of parsing it as JSON. Any failure propagates to the caller as-is, same contract as
+        `generate_recipe` — this method's job is the API call, not deciding what a failure means;
+        `AIService` (its only caller) translates any exception here into FR-21's
+        graceful-degradation path.
+
+        Args:
+            messages: The full conversation to send, in OpenAI Chat Completions message shape
+                (a system message plus the prior turns and the new user message, in order).
+
+        Returns:
+            The assistant's free-text reply.
+
+        Raises:
+            RuntimeError: If no API key was configured at construction.
+            Exception: Any exception raised by the OpenAI SDK (rate limit, auth, timeout, etc.).
+        """
+        if self._client is None:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
+        response = await self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+        return response.choices[0].message.content

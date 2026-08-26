@@ -109,5 +109,5 @@ development_status:
   epic-6: in-progress
   6-1-generate-a-recipe-suggestion-from-current-stock: done
   6-2-confirm-a-recipe-suggestion-into-a-live-dish: done
-  6-3-consult-version-and-improve-recipes-via-smart-assistant-chat: ready-for-dev
+  6-3-consult-version-and-improve-recipes-via-smart-assistant-chat: review
   epic-6-retrospective: optional

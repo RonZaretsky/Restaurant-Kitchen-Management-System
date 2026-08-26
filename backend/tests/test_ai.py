@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal
 
 import pytest
 import pytest_asyncio
@@ -8,7 +9,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.llm import LLMClient
-from data_models import AIRecipeSuggestion, Ingredient, Unit, User, UserRole
+from data_models import (
+    AIChatMessage,
+    AIChatSession,
+    AIRecipeSuggestion,
+    Category,
+    Dish,
+    Ingredient,
+    Unit,
+    User,
+    UserRole,
+)
 from main import app, container
 from services.auth_service import AuthService
 
@@ -63,6 +74,12 @@ class FakeLLMClient:
         # `_in_flight.add(actor.id)` has already run — awaited by the concurrency test instead of
         # a fixed sleep, so it never races the guard it's testing (review finding).
         self.started = asyncio.Event()
+        # Story 6.3: chat-message configurable behavior, mirroring generate_recipe's own shape
+        # exactly rather than building a second fake.
+        self.chat_response: str | None = "Try adding a pinch of nutmeg, it complements the zucchini."
+        self.chat_error: Exception | None = None
+        self.chat_calls: list[list[dict[str, str]]] = []
+        self.chat_started = asyncio.Event()
 
     async def generate_recipe(self, prompt: str) -> dict:
         self.calls.append(prompt)
@@ -84,6 +101,18 @@ class FakeLLMClient:
             raise self.error
         assert self.response is not None
         return self.response
+
+    async def send_chat_message(self, messages: list[dict[str, str]]) -> str:
+        self.chat_calls.append(messages)
+        is_first_call = len(self.chat_calls) == 1
+        if is_first_call:
+            self.chat_started.set()
+        if self.block_event is not None and is_first_call:
+            await self.block_event.wait()
+        if self.chat_error is not None:
+            raise self.chat_error
+        assert self.chat_response is not None
+        return self.chat_response
 
 
 @pytest_asyncio.fixture
@@ -556,3 +585,412 @@ async def test_llm_client_raises_a_plain_error_when_no_api_key_is_configured() -
     # Act/Assert
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY is not configured"):
         await client.generate_recipe("irrelevant prompt")
+
+
+# --- Story 6.3: Consult, Version, and Improve Recipes via Smart Assistant Chat ---------------
+
+
+async def _create_dish(db_session: AsyncSession, name: str = "Flatbread") -> Dish:
+    # Created directly against the DB, not through POST /api/menu/dishes (admin-only) — these
+    # tests act as a Cook throughout, matching _create_ingredient's own direct-insert precedent
+    # rather than juggling a login switch just to seed a Dish fixture.
+    category = Category(name=f"{name} Category")
+    db_session.add(category)
+    await db_session.commit()
+    await db_session.refresh(category)
+    dish = Dish(name=name, price=Decimal("12.50"), category_id=category.id, is_available=False)
+    db_session.add(dish)
+    await db_session.commit()
+    await db_session.refresh(dish)
+    return dish
+
+
+@pytest.mark.asyncio
+async def test_creating_a_chat_session_tied_to_a_dish_and_sending_a_message_persists_two_messages(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+
+    # Act
+    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
+    assert session_response.status_code == 201
+    session_body = session_response.json()
+    assert session_body["title"] == f"Chat about {dish.name}"
+    assert session_body["dish_id"] == dish.id
+    assert session_body["suggestion_id"] is None
+
+    send_response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_body['id']}/messages", json={"content": "How do I improve this?"}
+    )
+
+    # Assert
+    assert send_response.status_code == 201
+    messages = send_response.json()
+    assert len(messages) == 2
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "How do I improve this?"
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == fake_llm_client.chat_response
+
+    list_response = await client.get(f"/api/smart-chef/chat-sessions/{session_body['id']}/messages")
+    assert list_response.status_code == 200
+    assert [m["role"] for m in list_response.json()] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_creating_a_chat_session_tied_to_a_suggestion_and_sending_a_message_persists_two_messages(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange
+    cook = await _login_as(client, db_session, UserRole.cook, "amir")
+    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
+
+    # Act
+    session_response = await client.post(
+        "/api/smart-chef/chat-sessions", json={"suggestion_id": suggestion.id}
+    )
+    assert session_response.status_code == 201
+    session_body = session_response.json()
+    assert session_body["title"] == f"Chat about {suggestion.generated_recipe['name']}"
+    assert session_body["suggestion_id"] == suggestion.id
+    assert session_body["dish_id"] is None
+
+    send_response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_body['id']}/messages", json={"content": "Can it be spicier?"}
+    )
+
+    # Assert
+    assert send_response.status_code == 201
+    messages = send_response.json()
+    assert len(messages) == 2
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_creating_a_chat_session_with_neither_target_is_422(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.post("/api/smart-chef/chat-sessions", json={})
+
+    # Assert
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_creating_a_chat_session_with_both_targets_is_422(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    cook = await _login_as(client, db_session, UserRole.cook, "amir")
+    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
+    dish = await _create_dish(db_session, "Flatbread")
+
+    # Act
+    response = await client.post(
+        "/api/smart-chef/chat-sessions", json={"dish_id": dish.id, "suggestion_id": suggestion.id}
+    )
+
+    # Assert
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_creating_a_chat_session_against_a_nonexistent_dish_is_404(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 999999})
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_creating_a_chat_session_against_a_nonexistent_suggestion_is_404(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.post("/api/smart-chef/chat-sessions", json={"suggestion_id": 999999})
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_message_gives_the_assistant_access_to_prior_turns_as_context(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: AC2 - the messages list passed to the LLM client on the second send must include
+    # the first turn's actual content, not just the new message.
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
+    session_id = session_response.json()["id"]
+
+    first = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "What herbs would work well?"}
+    )
+    assert first.status_code == 201
+
+    # Act
+    second = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "What about basil specifically?"}
+    )
+
+    # Assert
+    assert second.status_code == 201
+    assert len(fake_llm_client.chat_calls) == 2
+    second_call_contents = [m["content"] for m in fake_llm_client.chat_calls[1]]
+    assert "What herbs would work well?" in second_call_contents
+    assert fake_llm_client.chat_response in second_call_contents
+    assert "What about basil specifically?" in second_call_contents
+
+
+@pytest.mark.asyncio
+async def test_a_session_created_by_one_cook_is_fully_readable_by_a_different_cook(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange (AC3): no special grant needed - shared access, sort-not-filter personalization.
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
+    session_id = session_response.json()["id"]
+    send_response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "Any tips?"}
+    )
+    assert send_response.status_code == 201
+
+    # Act: a different Cook reads the same session and its messages.
+    await _login_as(client, db_session, UserRole.cook, "noa")
+    session_detail = await client.get("/api/smart-chef/chat-sessions")
+    messages_response = await client.get(f"/api/smart-chef/chat-sessions/{session_id}/messages")
+
+    # Assert
+    assert session_id in [s["id"] for s in session_detail.json()]
+    assert messages_response.status_code == 200
+    assert len(messages_response.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_chat_reply_persists_no_messages_and_returns_502(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange (AC4)
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
+    session_id = session_response.json()["id"]
+    fake_llm_client.chat_error = RuntimeError("simulated OpenAI failure")
+
+    # Act
+    response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "How do I improve this?"}
+    )
+
+    # Assert
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Couldn't get a response right now"
+    result = await db_session.execute(select(AIChatMessage).where(AIChatMessage.session_id == session_id))
+    assert result.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_a_second_concurrent_send_into_the_same_session_is_rejected(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
+    session_id = session_response.json()["id"]
+    fake_llm_client.block_event = asyncio.Event()
+
+    # Act
+    first_task = asyncio.create_task(
+        client.post(f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "First message"})
+    )
+    await asyncio.wait_for(fake_llm_client.chat_started.wait(), timeout=2)
+    second_response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "Second message"}
+    )
+    fake_llm_client.block_event.set()
+    first_response = await first_task
+
+    # Assert
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+    assert second_response.json()["detail"] == "Rejected, a reply is already generating for this session"
+
+
+@pytest.mark.asyncio
+async def test_a_different_sessions_send_is_not_blocked_by_another_sessions_in_flight_send(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: the in-flight guard is keyed by session_id, so a send into a DIFFERENT session must
+    # not be blocked by another session's own in-flight send.
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    first_session = (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})).json()
+    second_session = (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})).json()
+    fake_llm_client.block_event = asyncio.Event()
+
+    # Act
+    first_task = asyncio.create_task(
+        client.post(
+            f"/api/smart-chef/chat-sessions/{first_session['id']}/messages", json={"content": "First message"}
+        )
+    )
+    await asyncio.wait_for(fake_llm_client.chat_started.wait(), timeout=2)
+    second_response = await client.post(
+        f"/api/smart-chef/chat-sessions/{second_session['id']}/messages", json={"content": "Second message"}
+    )
+    fake_llm_client.block_event.set()
+    first_response = await first_task
+
+    # Assert
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_three_sequential_messages_are_returned_in_ascending_chronological_order(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange (AC5)
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_id = (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})).json()["id"]
+
+    # Act
+    for content in ("First", "Second", "Third"):
+        response = await client.post(
+            f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": content}
+        )
+        assert response.status_code == 201
+
+    # Assert
+    list_response = await client.get(f"/api/smart-chef/chat-sessions/{session_id}/messages")
+    contents = [m["content"] for m in list_response.json() if m["role"] == "user"]
+    assert contents == ["First", "Second", "Third"]
+
+
+@pytest.mark.asyncio
+async def test_get_chat_sessions_returns_empty_list_not_404(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange (AC6, backend side)
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.get("/api/smart-chef/chat-sessions")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_sending_a_message_to_a_nonexistent_session_is_404(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.post("/api/smart-chef/chat-sessions/999999/messages", json={"content": "hi"})
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_listing_messages_for_a_nonexistent_session_is_404(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.get("/api/smart-chef/chat-sessions/999999/messages")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_chat_session_role_coverage(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange/Act/Assert: waiter, warehouse_manager, admin are all 403 (Cook-only, no admin
+    # fallback); unauthenticated is 401.
+    await _login_as(client, db_session, UserRole.waiter, "maya")
+    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 403
+
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 403
+
+    await _login_as(client, db_session, UserRole.admin, "david")
+    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 403
+
+    client.cookies.clear()
+    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_role_coverage(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    cook = await _login_as(client, db_session, UserRole.cook, "amir")
+    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
+    session_id_row = AIChatSession(user_id=cook.id, suggestion_id=suggestion.id, title="Chat about test")
+    db_session.add(session_id_row)
+    await db_session.commit()
+    await db_session.refresh(session_id_row)
+    session_id = session_id_row.id
+
+    # Act/Assert: waiter, warehouse_manager, admin are all 403 (Cook-only, no admin fallback);
+    # unauthenticated is 401.
+    await _login_as(client, db_session, UserRole.waiter, "maya")
+    assert (
+        await client.post(f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "hi"})
+    ).status_code == 403
+
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    assert (
+        await client.post(f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "hi"})
+    ).status_code == 403
+
+    await _login_as(client, db_session, UserRole.admin, "david")
+    assert (
+        await client.post(f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "hi"})
+    ).status_code == 403
+
+    client.cookies.clear()
+    assert (
+        await client.post(f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "hi"})
+    ).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_list_chat_sessions_and_messages_role_coverage(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange/Act/Assert: waiter and warehouse_manager are 403 on both read routes;
+    # unauthenticated is 401. Admin CAN list (shared read, matching SmartChefReadDep).
+    await _login_as(client, db_session, UserRole.waiter, "maya")
+    assert (await client.get("/api/smart-chef/chat-sessions")).status_code == 403
+
+    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
+    assert (await client.get("/api/smart-chef/chat-sessions")).status_code == 403
+
+    await _login_as(client, db_session, UserRole.admin, "david")
+    assert (await client.get("/api/smart-chef/chat-sessions")).status_code == 200
+
+    client.cookies.clear()
+    assert (await client.get("/api/smart-chef/chat-sessions")).status_code == 401
