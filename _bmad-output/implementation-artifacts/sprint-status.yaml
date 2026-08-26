@@ -1,5 +1,5 @@
 # generated: 2026-08-08
-# last_updated: 2026-08-22
+# last_updated: 2026-08-26
 # project: Restaurant-Kitchen-Management-System
 # project_key: NOKEY
 # tracking_system: file-system
@@ -52,7 +52,7 @@
 #     all emit over its channel and depend on the {domain}.{event} naming it fixes.
 
 generated: 2026-08-08
-last_updated: 2026-08-22
+last_updated: 2026-08-26
 project: Restaurant-Kitchen-Management-System
 project_key: NOKEY
 tracking_system: file-system
@@ -60,7 +60,7 @@ story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
   # Epic 1: Staff Accounts & Access Control
-  epic-1: in-progress
+  epic-1: done
   1-0-project-foundation-test-harness-and-migration-baseline: done
   1-1-user-login: done
   1-2-role-based-authorization-enforcement: done
@@ -82,7 +82,7 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Table Service & Order Taking
-  epic-3: in-progress
+  epic-3: done
   3-1-open-a-table-and-start-an-order: done
   3-2-add-items-to-an-order: done
   3-3-view-live-order-and-table-status: done
