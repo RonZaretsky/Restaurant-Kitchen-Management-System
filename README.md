@@ -27,6 +27,18 @@ docker compose up --build
 | Backend API | http://localhost:8000 |
 | API Docs | http://localhost:8000/docs |
 
+### First login
+
+A fresh database has no accounts. On its first startup against an empty `users` table, the
+backend automatically creates a default Admin:
+
+| Username | Password |
+|---|---|
+| `admin` | `ChangeMe123!` |
+
+Sign in with these, then immediately create a real Admin account and change or retire this one
+from the Users screen. Set `BOOTSTRAP_ADMIN=false` in `backend/.env` to disable this behavior.
+
 ---
 
 ## Backend

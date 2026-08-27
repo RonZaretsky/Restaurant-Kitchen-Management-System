@@ -45,7 +45,17 @@ after editing a manifest; never hand-edit a lockfile.
 
 ```
 backend/
-  main.py            app factory + lifespan; calls exceptions/handlers.py's register_exception_handlers(app)
+  main.py            app factory + lifespan; calls exceptions/handlers.py's register_exception_handlers(app).
+                     Fix (2026-08-26): lifespan now also runs _bootstrap_first_admin, which
+                     creates a default Admin (username "admin") the moment it finds the `users`
+                     table empty - a fresh clone had no seed data and every route requires an
+                     authenticated Admin, so there was no way to log in at all. Idempotent (checked
+                     via a row COUNT on every boot, not gated to first-run only), gated behind the
+                     new config.app.bootstrap_admin flag (BOOTSTRAP_ADMIN env var, default true).
+                     Forced to "false" in tests/conftest.py, set before `from main import app` runs
+                     - without that, every test's own empty-`users`-table assumption (e.g. AD-15's
+                     last-Admin guard tests) would silently break the moment the client fixture's
+                     lifespan ran
   container.py       DeclarativeContainer: config, logging, database, connection_registry, auth_service,
                      user_service, inventory_service, menu_service, table_service, order_service,
                      realtime_service
