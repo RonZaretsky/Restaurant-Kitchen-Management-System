@@ -383,7 +383,7 @@ backend/
   Adding a new 404 means subclassing `NotFoundError` and nothing else; forgetting to subclass it
   makes the error a silent 500, which `tests/test_migrations.py` now guards against.
 
-**Frontend, shell/routing plus a live real-time transport, and eleven real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, the Warehouse Ingredient detail page, the Warehouse Alerts page, the Cook's Kitchen Display, the Cook's Smart Chef page (Story 6.1), and the Admin's Recipe Suggestions review page (Story 6.2)). The remaining IA surfaces are still placeholders.**
+**Frontend, shell/routing plus a live real-time transport, and twelve real domain screens (Menu Management with dish/category creation, Tables setup, Cook's read-only Dishes catalog, Ingredients, the Waiter's Tables grid, the Waiter's Table/Order detail, the Warehouse Ingredient detail page, the Warehouse Alerts page, the Cook's Kitchen Display, the Cook's Smart Chef page (Story 6.1), the Admin's Recipe Suggestions review page (Story 6.2), and the Admin's Users screen (Story 1.6, missing from this list until this correction - `router.tsx` has wired it since Story 1.6, it was just never added here)). Every routed IA surface now has a real screen; no placeholder pages remain.**
 
 ```
 frontend/src/
@@ -563,8 +563,8 @@ frontend/src/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
                         so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
-  pages/{role}/           placeholder components for the 4 IA surfaces that have not shipped yet
-                        (just the surface's own title as the page's h1). Nine are now real:
+  pages/{role}/           every routed IA surface is now a real screen (last one, Admin's Users
+                        screen, shipped in Story 1.6) - no placeholder components remain:
                         admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
                         "+ New dish" form and an inline "+ New category" reveal on its Category
                         picker, no dialog), admin/TablesSetupPage.tsx (Story 2.4), cook/DishesPage.tsx
