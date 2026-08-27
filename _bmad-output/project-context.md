@@ -41,7 +41,7 @@ after editing a manifest; never hand-edit a lockfile.
 
 ## Current state of the code
 
-**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design at the time — both gained one later, Story 5.5). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is **complete**: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event. Story 5.3 made `Order.status` derive live from its items. Story 5.4 added the guarded `mark_served`/`close_order` transitions and Order total computation. Story 5.5 closed the live-update gap on cancel/edit. Epic 6 (Smart Chef, Recipe Suggestions & Assistant Chat) is under way: Story 6.1 added the project's first external-API integration — `backend/clients/llm.py` (the only place `openai` is imported, AD-12), `AIService` (a deliberate `Singleton`, not `Factory`, for its in-process concurrency guard), and `POST`/`GET /api/smart-chef/suggestions`, letting a Cook generate an AI recipe suggestion from current stock. Story 6.2 let an Admin confirm a Recipe Suggestion into a live Dish (or dismiss it): `Dish.source_suggestion_id` is a nullable, **unique** FK (closes a double-confirm race — two concurrent creates citing the same suggestion, one loses to an `IntegrityError` translated to a 409) and `AIRecipeSuggestion.dismissed` is the one new stored column; "confirmed" stays derived (a suggestion is confirmed iff some `Dish.source_suggestion_id` matches it, resolved via `AIService.list_suggestions`'s outerjoin), never a stored flag. `POST /api/smart-chef/suggestions/{id}/dismiss` is Admin-only. The frontend design changed twice during this story's own manual testing: the original "navigate to Menu Management with prefilled fields" hand-off was reworked into an in-place `ConfirmSuggestionDialog` (creates the Dish AND its Recipe Ingredient lines together, composing the same two existing endpoints, no new backend action), and a follow-up fix made the dialog PATCH the Dish available immediately once a recipe line lands, reusing `update_dish`'s existing `EmptyRecipeError`/AD-8 guard as the safety net rather than leaving the Admin to flip it by hand.**
+**Backend, layered and wired. Epic 2's authoring domain is complete: auth, users, real-time push, inventory, menu (including Recipe Ingredient CRUD), and Restaurant Tables. Epic 3 (Table Service & Order Taking) is complete: Story 3.1 opened a Table into a new Order, Story 3.2 added Order Items (list/add) and the table_id → Order read the detail page needs, Story 3.3 gave `RealtimeService` its first two producers so both of those now push live, Story 3.4 added edit/cancel for a pending or in_preparation Order Item (no live push for either, by design at the time — both gained one later, Story 5.5). Epic 4 (Warehouse Inventory Operations & Low-Stock Alerts) is **complete**: Story 4.1 added manual Stock Movement recording (purchase/waste/adjustment), `InventoryService`'s first write to `Ingredient.current_stock` since Story 2.1 created the column. Story 4.2 added the Low-Stock Alert as a derived (not stored) state — `GET /api/inventory/alerts`, plus `InventoryService`'s first `RealtimeService` producer, a crossing-triggered `inventory.alerts_changed` push to `warehouse_manager` connections only. Story 4.3 added shortage visualization to the Ingredients list (warning icon + red row, sort-to-top) by reusing Story 4.2's `useAlerts()` as-is — the first Epic 4 story with zero backend changes. Epic 5 (Kitchen Fulfillment, Automatic Stock Deduction & Close-Out) is **complete**: Story 5.1 opened it with a read-only Kitchen Display — a brand-new `kitchen` domain (first genuine join in `backend/services/`), `order.item_added` and `TablesReadDep` both widened to include Cook. Story 5.2 made the Kitchen Display's cards clickable: `OrderService` gained `pick_up_item`/`mark_item_ready` (its first cross-service collaborator, `InventoryService`, reusing rather than duplicating the row-lock/threshold-crossing stock-deduction machinery), and a new `order.item_status_changed` event. Story 5.3 made `Order.status` derive live from its items. Story 5.4 added the guarded `mark_served`/`close_order` transitions and Order total computation. Story 5.5 closed the live-update gap on cancel/edit. Epic 6 (Smart Chef, Recipe Suggestions & Assistant Chat) is **complete** (and with it, the whole sprint plan): Story 6.1 added the project's first external-API integration — `backend/clients/llm.py` (the only place `openai` is imported, AD-12), `AIService` (a deliberate `Singleton`, not `Factory`, for its in-process concurrency guard), and `POST`/`GET /api/smart-chef/suggestions`, letting a Cook generate an AI recipe suggestion from current stock. Story 6.2 let an Admin confirm a Recipe Suggestion into a live Dish (or dismiss it): `Dish.source_suggestion_id` is a nullable, **unique** FK (closes a double-confirm race — two concurrent creates citing the same suggestion, one loses to an `IntegrityError` translated to a 409) and `AIRecipeSuggestion.dismissed` is the one new stored column; "confirmed" stays derived (a suggestion is confirmed iff some `Dish.source_suggestion_id` matches it, resolved via `AIService.list_suggestions`'s outerjoin), never a stored flag. `POST /api/smart-chef/suggestions/{id}/dismiss` is Admin-only. The frontend design changed twice during this story's own manual testing: the original "navigate to Menu Management with prefilled fields" hand-off was reworked into an in-place `ConfirmSuggestionDialog` (creates the Dish AND its Recipe Ingredient lines together, composing the same two existing endpoints, no new backend action), and a follow-up fix made the dialog PATCH the Dish available immediately once a recipe line lands, reusing `update_dish`'s existing `EmptyRecipeError`/AD-8 guard as the safety net rather than leaving the Admin to flip it by hand. Story 6.3 closed out the epic by letting a Cook open a Chat Session tied to either a Dish or a Recipe Suggestion and iterate on it conversationally: `AIChatSession` gained two new nullable FK columns, `dish_id` and `suggestion_id`, with exactly one required per session enforced by `CreateChatSessionRequest`'s own Pydantic `model_validator` (422 on neither/both) rather than a DB constraint — this codebase's established application-level pattern for a business-rule invariant, the same shape `SuggestionAlreadyConfirmedError`/`SuggestionAlreadyDismissedError`'s own mutual-exclusivity guard already uses. The migration chaining that column pair onto `f9cbd3ff5b87` hit the exact same unnamed-FK-constraint-breaks-downgrade trap Story 6.2's own migration review caught once before (`create_foreign_key(None, ...)` cannot be targeted by `drop_constraint(None, ...)`), this time named before it ever ran rather than caught after the fact. `send_message` applies AD-14's message-pair atomicity to chat for the first time: neither the Cook's own `AIChatMessage` row nor the assistant's reply is inserted until the OpenAI call succeeds, both landing together in one transaction only on success, guarded by a second, independent in-process set — `_chat_in_flight: set[int]`, keyed by session id rather than Cook id, alongside Story 6.1's own per-Cook `_in_flight`, both living on the same `Singleton` `AIService` instance. `LLMClient` gained a second method, `send_chat_message`, extending the existing class rather than introducing a second OpenAI client (AD-12) — same call shape as `generate_recipe` minus JSON mode, returning the plain string reply. The chat's system message is a live read of the target's current state on every send (the Dish's current Recipe Ingredient lines, or the Suggestion's stored `generated_recipe`), never a value captured once at session creation, matching this codebase's established "never a stale snapshot" convention for recipe-domain reads. Code review caught one AC4-contradicting bug before merge: `send_message` persisted whatever `LLMClient.send_chat_message` returned without checking it was non-empty, so a null/blank OpenAI reply would have shipped as a "successful" Chat Message; fixed to validate the reply's shape first, mirroring `generate_suggestion`'s own response-shape-validation precedent exactly, and to log the caught exception's type/message on a chat failure instead of a static string.**
 
 ```
 backend/
@@ -125,7 +125,12 @@ backend/
                      cook + admin, shared with Story 6.2's Admin review page). First router
                      to reach an external service indirectly (via ai_service -> llm_client).
                      Story 6.2 added POST /suggestions/{id}/dismiss on a new SmartChefAdminDep
-                     (admin only, narrower than SmartChefReadDep)
+                     (admin only, narrower than SmartChefReadDep). Story 6.3 added four chat
+                     routes (POST/GET /chat-sessions, GET/POST /chat-sessions/{id}/messages):
+                     session-create and message-send stay on the existing cook-only
+                     SmartChefWriteDep, session/message reads on the existing SmartChefReadDep —
+                     no new dependency, no container.wire() change, this module was already wired
+                     in Story 6.1
   api/websocket.py    Story 1.5: the single /api/ws endpoint, Role-scoped, cookie-authenticated,
                      periodic session re-verification while the connection stays open
   api/dependencies.py CurrentUserDep (get_current_user) and require_role(*roles) — the shared auth/authz seams;
@@ -142,7 +147,13 @@ backend/
                      (response_format={"type": "json_object"}), a 45s per-call timeout. Defers
                      constructing the SDK client until first real use if no API key is configured,
                      so a missing key fails inside the call (which AIService already catches),
-                     never raw at container-Singleton construction time
+                     never raw at container-Singleton construction time. Story 6.3 added a second
+                     method, send_chat_message(messages) -> str — same call shape and
+                     _REQUEST_TIMEOUT_SECONDS constant, but no response_format (a chat reply is
+                     free text, not a structured suggestion) and returns the plain string reply
+                     directly. Fulfills this class's own Story 6.1 docstring commitment ("future
+                     Smart Chef calls extend this same class rather than introducing a second
+                     OpenAI client")
   data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written.
                      recipe.py, menu.py and order.py also hold their own Pydantic request/response
                      schemas colocated with their ORM class, matching user.py's shape. menu.py owns
@@ -298,7 +309,31 @@ backend/
                      unconfirmed), the derived-state read side of "confirmed." Added
                      dismiss_suggestion (404 if missing, 409 if already dismissed or already
                      confirmed, via a private _get_confirmed_dish_id helper reused by both the
-                     guard and the response so the two can never drift apart)
+                     guard and the response so the two can never drift apart). Story 6.3 added
+                     four chat methods: create_chat_session (resolves whichever of dish_id/
+                     suggestion_id the request schema's own validator already guaranteed is set,
+                     404s via DishNotFoundError/SuggestionNotFoundError, computes title
+                     server-side as a creation-time snapshot, "Chat about {name}", never
+                     Cook-supplied), list_chat_sessions/list_chat_messages (no actor-based
+                     filtering, AD-9; list_chat_messages orders ascending, unlike every other
+                     list_* method's newest-first, since AC5's "scroll back through history" reads
+                     as a conversation), and send_message, which applies AD-14's message-pair
+                     atomicity to chat: neither the Cook's own AIChatMessage row nor the
+                     assistant's reply is inserted until LLMClient.send_chat_message succeeds, both
+                     landing together in one transaction only on success, guarded by a second,
+                     independent in-process set, self._chat_in_flight: set[int], keyed by session
+                     id rather than Cook id (a Cook may legitimately have two sessions open in two
+                     tabs; only two concurrent sends into the *same* session race AC2's
+                     conversational-context guarantee, rejected with ChatMessageInProgressError,
+                     409). The system message send_message builds is a live read of the target's
+                     current state on every call (the Dish's current RecipeIngredient lines via a
+                     join, or the Suggestion's stored generated_recipe), never a value cached at
+                     session creation. Code review caught one AC4-contradicting bug before merge:
+                     the OpenAI reply was persisted without checking it was non-empty, so a
+                     null/blank reply would have shipped as a "successful" Chat Message; fixed to
+                     validate the reply's shape first (mirrors generate_suggestion's own
+                     response-shape-validation precedent) and to log the caught exception's
+                     type/message on failure, previously a static string
   exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409),
                      NotFoundError family (404, one shared base since Story 2.3, see trap 17).
                      Story 6.1 added a fifth family, ExternalServiceError (502) — the first
@@ -306,7 +341,11 @@ backend/
                      failure (AIGenerationFailedError). Story 6.2 added three NotFoundError/
                      ConflictError subclasses (SuggestionNotFoundError,
                      SuggestionAlreadyDismissedError, SuggestionAlreadyConfirmedError), no new
-                     handler needed since both families already have one
+                     handler needed since both families already have one. Story 6.3 added three
+                     more, one per existing family (ChatSessionNotFoundError extends
+                     NotFoundError, ChatMessageInProgressError extends ConflictError,
+                     AIChatReplyFailedError extends ExternalServiceError) — again no new handler
+                     needed
   exceptions/handlers.py    register_exception_handlers(app); five handlers as of Story 6.1, one
                      per family
 ```
@@ -364,7 +403,15 @@ frontend/src/
                         matching LLMClient's own 45s server-side budget plus margin). Story 6.2
                         added useDismissSuggestion (POST .../dismiss, invalidates
                         SUGGESTIONS_QUERY_KEY on settle, same reasoning as useGenerateSuggestion's
-                        own settle-not-success invalidation)
+                        own settle-not-success invalidation). Story 6.3 added
+                        useChatSessions/useChatMessages/useCreateChatSession/useSendChatMessage
+                        plus two exported cache keys (CHAT_SESSIONS_QUERY_KEY,
+                        chatMessagesQueryKey(sessionId)); useChatMessages follows
+                        useOrderForTable's `number | null` + enabled gating shape so it never fires
+                        with a literal null in the URL, and useSendChatMessage reuses
+                        useGenerateSuggestion's own 50s-timeout-override reasoning (a second real
+                        OpenAI-backed call site), invalidating chatMessagesQueryKey(sessionId)
+                        onSettled
   services/authService.ts  useCurrentUser / useLogin / useLogout (Story 1.7: invalidates
                         CURRENT_USER_QUERY_KEY on success, the mirror of useLogin's own
                         invalidation; no manual navigate(), RequireAuth's existing 401-redirect
@@ -447,6 +494,17 @@ frontend/src/
                         same flow. A per-row add failure (or the availability PATCH itself failing)
                         does not roll back the created Dish; it is reported inline for the Admin to
                         finish from Menu Management's existing recipe editor
+  components/ai/ChatPanel.tsx  Story 6.3 (new): a self-contained Chat Session panel. Message
+                        bubbles are styled distinctly per role, translating the mockup's
+                        `.msg.user`/`.msg.assistant` inline styles (`key-smart-chef.html`,
+                        DESIGN.md defines no formal `{components.chat-*}` token for this) to MUI
+                        primitives rather than inventing a new design-system entry. A text input +
+                        Send button wired to useSendChatMessage, a generating indicator matching
+                        SmartChefPage.tsx's own CircularProgress + text precedent, and an inline
+                        error Alert on a failed send (AC4). Rendered from two call sites on
+                        SmartChefPage.tsx: a suggestion's own "Discuss via chat" action (a new
+                        session), and a row in the new Chat Sessions list (reopening an existing
+                        one)
   components/orders/OrderItemStatusBadge.tsx  Story 3.2: the shared Order Item status badge
                         (UX-DR1, MUI Chip + icon + spelled label), built as its own file rather
                         than inlined so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can
@@ -581,8 +639,19 @@ frontend/src/
                         cook/SmartChefPage.tsx (Story 6.1: a request bar (optional free-text
                         direction) plus the Cook's own persisted Recipe Suggestions, newest first,
                         each card via the shared SuggestionSummary component. Deliberately no
-                        Confirm/Dismiss and no chat panel here, both out of scope for that story),
-                        and
+                        Confirm/Dismiss and no chat panel here, both out of scope for that story.
+                        Story 6.3 added a "Discuss via chat" action to SuggestionCard (always opens
+                        a brand-new Chat Session tied to that suggestion, never find-or-resumes an
+                        existing one — the Chat Sessions list below is what reopens one), a new
+                        Chat Sessions section rendering ChatPanel inline per selected row with the
+                        "No chat sessions yet." empty state (AC6), and a client-side
+                        sortCurrentUserFirst applied to both the Suggestions list and the new
+                        Sessions list (AC3/AD-10 — closing a "current Cook's own first" sort gap
+                        Stories 6.1/6.2 had each explicitly left deferred). Still no
+                        Dish-triggered "discuss this dish" entry point on DishesPage.tsx, a
+                        deliberate scope decision, not an oversight: the
+                        POST /api/smart-chef/chat-sessions dish_id path is backend-complete but has
+                        no frontend caller yet), and
                         admin/RecipeSuggestionsPage.tsx (Story 6.2, replacing the placeholder:
                         useSuggestions() filtered client-side to "awaiting review"
                         (!dismissed && confirmed_dish_id === null, AD-9's convention), each card

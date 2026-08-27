@@ -353,3 +353,33 @@ class SuggestionAlreadyConfirmedError(ConflictError):
     """
 
     detail = "Rejected, suggestion is already confirmed"
+
+
+class ChatSessionNotFoundError(NotFoundError):
+    """Raised when a request references a Chat Session id that does not exist (Story 6.3)."""
+
+    detail = "Chat session not found"
+
+
+class ChatMessageInProgressError(ConflictError):
+    """Raised when a Cook sends a message into a Chat Session while a reply is already generating
+    for that same session (Story 6.3, AD-14).
+
+    Scoped to the session, not the Cook — reject, don't queue, mirroring
+    SuggestionGenerationInProgressError's exact shape, just keyed by session id instead of user
+    id. A Cook may legitimately have two different sessions open in two tabs; only two concurrent
+    sends into the *same* session race the message-ordering guarantee AC2 relies on.
+    """
+
+    detail = "Rejected, a reply is already generating for this session"
+
+
+class AIChatReplyFailedError(ExternalServiceError):
+    """Raised when the OpenAI call for a Chat Message fails, times out, or returns unusable
+    content (Story 6.3, AC4, FR-21/AD-14).
+
+    No AIChatMessage row (neither the user's nor the assistant's) is ever created on this path —
+    both are inserted together, in one transaction, only after the call succeeds.
+    """
+
+    detail = "Couldn't get a response right now"

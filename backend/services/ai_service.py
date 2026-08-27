@@ -6,9 +6,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.llm import LLMClient
-from data_models import AIRecipeSuggestion, AIRecipeSuggestionResponse, Dish, Ingredient, User
+from data_models import (
+    AIChatMessage,
+    AIChatMessageResponse,
+    AIChatSession,
+    AIChatSessionResponse,
+    AIRecipeSuggestion,
+    AIRecipeSuggestionResponse,
+    ChatRole,
+    Dish,
+    Ingredient,
+    RecipeIngredient,
+    Unit,
+    User,
+)
 from exceptions import (
+    AIChatReplyFailedError,
     AIGenerationFailedError,
+    ChatMessageInProgressError,
+    ChatSessionNotFoundError,
+    DishNotFoundError,
     SuggestionAlreadyConfirmedError,
     SuggestionAlreadyDismissedError,
     SuggestionGenerationInProgressError,
@@ -47,6 +64,12 @@ class AIService:
         # single-process app, and simpler than a DB column or a distributed lock for a rule that
         # only needs to reject a second concurrent request, never queue or recover it.
         self._in_flight: set[int] = set()
+        # A second, independent in-process guard (Story 6.3, AD-14), keyed by Chat Session id
+        # rather than Cook user id: a Cook may legitimately have two different sessions open in
+        # two tabs, but two concurrent sends into the *same* session would race the
+        # message-ordering guarantee AC2 relies on. Lives on this same Singleton, not a
+        # container.py change — see this class's own Singleton reasoning above.
+        self._chat_in_flight: set[int] = set()
 
     async def generate_suggestion(
         self, db: AsyncSession, actor: User, direction: str | None
@@ -321,3 +344,276 @@ class AIService:
             '"ingredients": [{"name": "<ingredient name>", "quantity": "<amount with unit>"}], '
             '"plating": "<a short plating/serving description>"}.'
         )
+
+    async def create_chat_session(
+        self, db: AsyncSession, actor: User, dish_id: int | None, suggestion_id: int | None
+    ) -> AIChatSessionResponse:
+        """Open a new Chat Session tied to a Dish or a Recipe Suggestion (Story 6.3, AC1).
+
+        Exactly one of `dish_id`/`suggestion_id` is guaranteed non-None by
+        `CreateChatSessionRequest`'s own model_validator — this method still only receives
+        whichever the caller resolved, no re-validation of the XOR here (that is the schema's
+        job, not the service's).
+
+        `title` is server-computed at creation, not Cook-supplied (Scope note): a snapshot of the
+        target's name at this instant, matching `OrderItem.price_at_add`/
+        `AIRecipeSuggestion.prompt_used`'s own "captured at creation time" precedent, so it stays
+        stable even if the underlying Dish is later renamed.
+
+        Args:
+            db: The active database session.
+            actor: The Cook opening the session.
+            dish_id: The Dish this session targets, or None if targeting a Suggestion instead.
+            suggestion_id: The Recipe Suggestion this session targets, or None if targeting a
+                Dish instead.
+
+        Returns:
+            The newly created, persisted Chat Session.
+
+        Raises:
+            DishNotFoundError: If dish_id is set but no matching Dish exists.
+            SuggestionNotFoundError: If suggestion_id is set but no matching Recipe Suggestion
+                exists.
+        """
+        if dish_id is not None:
+            dish = await db.get(Dish, dish_id)
+            if dish is None:
+                self._logger.warning(
+                    "Chat session creation rejected for user_id={}: no dish_id={}", actor.id, dish_id
+                )
+                raise DishNotFoundError()
+            title = f"Chat about {dish.name}"
+            session = AIChatSession(user_id=actor.id, dish_id=dish_id, suggestion_id=None, title=title)
+        else:
+            suggestion = await db.get(AIRecipeSuggestion, suggestion_id)
+            if suggestion is None:
+                self._logger.warning(
+                    "Chat session creation rejected for user_id={}: no suggestion_id={}",
+                    actor.id,
+                    suggestion_id,
+                )
+                raise SuggestionNotFoundError()
+            title = f"Chat about {suggestion.generated_recipe['name']}"
+            session = AIChatSession(user_id=actor.id, dish_id=None, suggestion_id=suggestion_id, title=title)
+
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        self._logger.info(
+            "Chat session created by user_id={}: session_id={}, dish_id={}, suggestion_id={}",
+            actor.id,
+            session.id,
+            dish_id,
+            suggestion_id,
+        )
+        return AIChatSessionResponse.model_validate(session)
+
+    async def list_chat_sessions(self, db: AsyncSession, actor: User) -> Sequence[AIChatSessionResponse]:
+        """List every Chat Session, newest first (Story 6.3, AC3, AC6).
+
+        No actor-based filtering (AD-9) — every Cook and Admin sees every session; "current
+        Cook's own items first" is a client-side sort (AD-10), matching `list_suggestions`'s own
+        precedent exactly. `actor` is accepted only for signature symmetry.
+
+        Args:
+            db: The active database session.
+            actor: The Cook or Admin making the request.
+
+        Returns:
+            Every Chat Session, ordered newest first.
+        """
+        result = await db.execute(select(AIChatSession).order_by(AIChatSession.id.desc()))
+        return [AIChatSessionResponse.model_validate(session) for session in result.scalars().all()]
+
+    async def list_chat_messages(
+        self, db: AsyncSession, actor: User, session_id: int
+    ) -> Sequence[AIChatMessageResponse]:
+        """List every Message in a Chat Session, in chronological order (Story 6.3, AC1, AC5).
+
+        Ascending, unlike `list_suggestions`'/`list_chat_sessions`'s own newest-first descending
+        order — AC5's "scroll back through history" reads as a conversation, oldest first.
+
+        Args:
+            db: The active database session.
+            actor: The Cook or Admin making the request.
+            session_id: The Chat Session whose messages are being listed.
+
+        Returns:
+            Every Message in the session, oldest first.
+
+        Raises:
+            ChatSessionNotFoundError: If no Chat Session matches session_id.
+        """
+        session = await db.get(AIChatSession, session_id)
+        if session is None:
+            raise ChatSessionNotFoundError()
+
+        return await self._list_messages_ascending(db, session_id)
+
+    async def send_message(
+        self, db: AsyncSession, actor: User, session_id: int, content: str
+    ) -> Sequence[AIChatMessageResponse]:
+        """Send a Cook's message into a Chat Session and persist the assistant's reply (Story 6.3).
+
+        Message-pair atomicity (AD-14, this story's own application of it): neither the user's
+        own Message row nor the assistant's reply is inserted until the OpenAI call succeeds —
+        both are inserted together, in one transaction, only on success. A looser reading would
+        persist the user's message immediately and only skip the assistant reply on failure, but
+        this is the one that keeps every session free of an unanswered dangling turn and matches
+        `generate_suggestion`'s own insert-only-after-success shape exactly, rather than inventing
+        a second failure semantics for this domain.
+
+        Rejects a second concurrent send into the *same* session immediately (AC3's "prior
+        messages as conversational context" would otherwise race), before any OpenAI call
+        (`_chat_in_flight`, keyed by session id, independent of `_in_flight`'s per-Cook guard).
+
+        The system message is built from the target's *current* state on every send (a live
+        read, never a value captured once at session-creation) — if a Dish's recipe changes
+        mid-conversation, the next message the assistant answers reflects the current recipe.
+
+        Args:
+            db: The active database session.
+            actor: The Cook sending the message.
+            session_id: The Chat Session to send into.
+            content: The Cook's message content.
+
+        Returns:
+            The two newly persisted Messages, user then assistant, matching insertion order.
+
+        Raises:
+            ChatSessionNotFoundError: If no Chat Session matches session_id.
+            ChatMessageInProgressError: If a reply is already generating for this session (AC3).
+            AIChatReplyFailedError: If the OpenAI call fails, times out, or errors (AC4).
+        """
+        session = await db.get(AIChatSession, session_id)
+        if session is None:
+            raise ChatSessionNotFoundError()
+
+        if session_id in self._chat_in_flight:
+            self._logger.warning(
+                "Chat message rejected for user_id={}: session_id={} already in flight",
+                actor.id,
+                session_id,
+            )
+            raise ChatMessageInProgressError()
+
+        self._chat_in_flight.add(session_id)
+        try:
+            dish: Dish | None = None
+            suggestion: AIRecipeSuggestion | None = None
+            recipe_lines: Sequence[tuple[str, Decimal, Unit]] | None = None
+
+            if session.dish_id is not None:
+                dish = await db.get(Dish, session.dish_id)
+                lines_result = await db.execute(
+                    select(Ingredient.name, RecipeIngredient.quantity, RecipeIngredient.unit)
+                    .join(RecipeIngredient, RecipeIngredient.ingredient_id == Ingredient.id)
+                    .where(RecipeIngredient.dish_id == session.dish_id)
+                )
+                recipe_lines = lines_result.all()
+            else:
+                suggestion = await db.get(AIRecipeSuggestion, session.suggestion_id)
+
+            system_message = self._build_chat_system_message(dish, suggestion, recipe_lines)
+            prior_messages = await self._list_messages_ascending(db, session_id)
+
+            messages = [system_message]
+            messages.extend({"role": message.role.value, "content": message.content} for message in prior_messages)
+            messages.append({"role": "user", "content": content})
+
+            try:
+                reply = await self._llm_client.send_chat_message(messages)
+                if not isinstance(reply, str) or not reply.strip():
+                    raise ValueError("chat reply missing expected non-empty text content")
+            except Exception as exc:
+                self._logger.error(
+                    "Chat message failed for user_id={}: session_id={}: {}",
+                    actor.id,
+                    session_id,
+                    exc,
+                )
+                raise AIChatReplyFailedError() from None
+
+            user_message = AIChatMessage(session_id=session_id, role=ChatRole.user, content=content)
+            assistant_message = AIChatMessage(session_id=session_id, role=ChatRole.assistant, content=reply)
+            db.add(user_message)
+            db.add(assistant_message)
+            await db.commit()
+            await db.refresh(user_message)
+            await db.refresh(assistant_message)
+            self._logger.info(
+                "Chat message sent by user_id={}: session_id={}", actor.id, session_id
+            )
+            return [
+                AIChatMessageResponse.model_validate(user_message),
+                AIChatMessageResponse.model_validate(assistant_message),
+            ]
+        finally:
+            self._chat_in_flight.discard(session_id)
+
+    @staticmethod
+    async def _list_messages_ascending(db: AsyncSession, session_id: int) -> Sequence[AIChatMessage]:
+        """Load every Message for a Chat Session, oldest first.
+
+        A shared private seam so `list_chat_messages` and `send_message` (building the prior
+        conversational context, AC2) never duplicate this query's shape.
+
+        Args:
+            db: The active database session.
+            session_id: The Chat Session whose messages are being loaded.
+
+        Returns:
+            Every Message row for the session, ordered oldest first.
+        """
+        result = await db.execute(
+            select(AIChatMessage).where(AIChatMessage.session_id == session_id).order_by(AIChatMessage.id.asc())
+        )
+        return result.scalars().all()
+
+    def _build_chat_system_message(
+        self,
+        dish: Dish | None,
+        suggestion: AIRecipeSuggestion | None,
+        recipe_lines: Sequence[tuple[str, Decimal, Unit]] | None,
+    ) -> dict[str, str]:
+        """Build the system message describing the chat's target recipe (Story 6.3).
+
+        Instructs the model it is a chef assistant discussing a specific recipe (naming it),
+        states the recipe's current ingredients/plating so it can reason about it, and asks for
+        plain conversational replies — no JSON mode this time, a system-message instruction
+        rather than `response_format`.
+
+        Args:
+            dish: The Dish this session targets, or None if it targets a Suggestion instead.
+            suggestion: The Recipe Suggestion this session targets, or None if it targets a Dish
+                instead.
+            recipe_lines: The Dish's current Recipe Ingredient lines as (ingredient name,
+                quantity, unit) tuples, or None when the target is a Suggestion.
+
+        Returns:
+            The system message to prepend to the OpenAI chat request.
+        """
+        if dish is not None:
+            ingredients_text = (
+                "\n".join(f"- {name}: {quantity} {unit.value}" for name, quantity, unit in recipe_lines)
+                if recipe_lines
+                else "(no recipe ingredients defined yet)"
+            )
+            description_text = f"\nDescription: {dish.description}" if dish.description else ""
+            content = (
+                f'You are a chef assistant discussing the recipe for "{dish.name}", a Dish on the '
+                f"menu.{description_text}\n\nCurrent recipe ingredients:\n{ingredients_text}\n\n"
+                "Discuss and help improve this recipe conversationally. Reply in plain text, not JSON."
+            )
+        else:
+            recipe = suggestion.generated_recipe
+            ingredients_text = "\n".join(
+                f"- {item.get('name')}: {item.get('quantity')}" for item in recipe.get("ingredients", [])
+            )
+            content = (
+                f'You are a chef assistant discussing a proposed recipe, "{recipe.get("name")}", a '
+                "Recipe Suggestion not yet confirmed into a Dish.\n\n"
+                f"Ingredients:\n{ingredients_text}\n\nPlating: {recipe.get('plating')}\n\n"
+                "Discuss and help improve this recipe conversationally. Reply in plain text, not JSON."
+            )
+        return {"role": "system", "content": content}

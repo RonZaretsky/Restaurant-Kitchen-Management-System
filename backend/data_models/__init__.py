@@ -53,6 +53,10 @@ from .ai import (
     ChatRole,
     CreateRecipeSuggestionRequest,
     AIRecipeSuggestionResponse,
+    CreateChatSessionRequest,
+    AIChatSessionResponse,
+    CreateChatMessageRequest,
+    AIChatMessageResponse,
 )
 
 __all__ = [
@@ -70,4 +74,6 @@ __all__ = [
     "StockMovement", "MovementType", "CreateStockMovementRequest", "StockMovementResponse",
     "AIRecipeSuggestion", "AIChatSession", "AIChatMessage", "ChatRole",
     "CreateRecipeSuggestionRequest", "AIRecipeSuggestionResponse",
+    "CreateChatSessionRequest", "AIChatSessionResponse",
+    "CreateChatMessageRequest", "AIChatMessageResponse",
 ]
