@@ -73,9 +73,13 @@ function ChatMessageBubble({ message }: { message: AIChatMessage }) {
  * about the sessions list, not one open session's own history).
  *
  * @param sessionId - The Chat Session this panel renders and sends into.
+ * @param suggestionId - The Recipe Suggestion this session is tied to, when applicable (this
+ *   batch's #7). Passed through to `useSendChatMessage` so a send that updates the Suggestion's
+ *   recipe also invalidates the Suggestions list; omitted (or undefined) for a Dish-tied session,
+ *   which never mutates a Suggestion.
  * @returns The chat panel.
  */
-export function ChatPanel({ sessionId }: { sessionId: number }) {
+export function ChatPanel({ sessionId, suggestionId }: { sessionId: number; suggestionId?: number }) {
   const [content, setContent] = useState("");
   const { data: messages, isLoading, isError, error } = useChatMessages(sessionId);
   const sendMutation = useSendChatMessage();
@@ -92,7 +96,7 @@ export function ChatPanel({ sessionId }: { sessionId: number }) {
     if (trimmed === "") {
       return;
     }
-    sendMutation.mutate({ sessionId, content: trimmed }, { onSuccess: () => setContent("") });
+    sendMutation.mutate({ sessionId, content: trimmed, suggestionId }, { onSuccess: () => setContent("") });
   };
 
   return (

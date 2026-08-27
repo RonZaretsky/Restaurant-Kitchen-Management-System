@@ -26,6 +26,7 @@ from exceptions import (
     DuplicateCategoryNameError,
     DuplicateRecipeIngredientError,
     EmptyRecipeError,
+    IngredientNotActiveError,
     IngredientNotFoundError,
     RecipeIngredientNotFoundError,
     SuggestionAlreadyConfirmedError,
@@ -385,6 +386,9 @@ class MenuService:
         Raises:
             DishNotFoundError: If no Dish matches dish_id.
             IngredientNotFoundError: If no Ingredient matches payload.ingredient_id.
+            IngredientNotActiveError: If the Ingredient is currently deactivated (Story #3/#4) —
+                only a *new* line is blocked; an existing line against an Ingredient deactivated
+                later is untouched.
             UnitMismatchError: If payload.unit differs from the Ingredient's
                 own unit.
             DuplicateRecipeIngredientError: If this Dish already has a line
@@ -392,6 +396,15 @@ class MenuService:
         """
         await self.get_dish(db, actor, dish_id)
         ingredient = await self._get_ingredient(db, actor, payload.ingredient_id)
+        if not ingredient.is_active:
+            self._logger.warning(
+                "Recipe ingredient addition rejected by user_id={}: dish_id={} ingredient_id={} "
+                "is deactivated",
+                actor.id,
+                dish_id,
+                payload.ingredient_id,
+            )
+            raise IngredientNotActiveError()
         self._reject_if_unit_mismatched(ingredient, payload.unit, actor, dish_id)
 
         existing = await db.get(RecipeIngredient, (dish_id, payload.ingredient_id))

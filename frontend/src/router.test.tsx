@@ -208,18 +208,21 @@ describe("route guard and per-role navigation", () => {
     expect(screen.queryByRole("heading", { name: "Alerts" })).not.toBeInTheDocument();
   });
 
-  it("grants a nav entry's exact surface, never its subtree", async () => {
-    // Arrange: /warehouse/ingredients/:ingredientId is Story 4.3's surface. A
-    // startsWith match on the nav path would hand it to Admin as a side effect
-    // of the Ingredients grant, which nobody decided to do.
+  it("lets an Admin reach an Ingredient's detail page via includeSubroutes (this batch's #2)", async () => {
+    // Arrange: /warehouse/ingredients/:ingredientId is Story 4.1's surface. FR-16 gives Admin the
+    // same ingredient-management rights as Warehouse Manager, so withholding just the detail page
+    // was the gap; Admin's Ingredients nav entry now opts into includeSubroutes to close it.
     mockAuthenticated("admin");
 
     // Act
     renderAt("/warehouse/ingredients/1");
 
-    // Assert
-    expect(await screen.findByRole("heading", { name: "Menu Management" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Ingredient" })).not.toBeInTheDocument();
+    // Assert: reached the Ingredient detail surface, not bounced to Menu Management. This route
+    // does not stub fetch, so the page's data never resolves and its heading stays on its bare
+    // "Ingredient" fallback (rendered unconditionally, ahead of the loading/error/data states),
+    // which is enough to prove the route itself was reached.
+    expect(await screen.findByRole("heading", { name: "Ingredient" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Menu Management" })).not.toBeInTheDocument();
   });
 
   it("keeps a Role's own prefix granting its detail routes", async () => {

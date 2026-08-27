@@ -7,7 +7,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_models import CreateIngredientRequest, CreateStockMovementRequest, Ingredient, MovementType, StockMovement, User, UserRole
-from exceptions import DuplicateIngredientNameError, IngredientNotFoundError
+from exceptions import (
+    DuplicateIngredientNameError,
+    IngredientNotActiveError,
+    IngredientNotFoundError,
+    InsufficientStockError,
+    StockMovementWouldGoNegativeError,
+)
 from services.realtime_service import RealtimeService
 
 
@@ -150,6 +156,71 @@ class InventoryService:
         """
         return await self._get_ingredient(db, ingredient_id)
 
+    async def deactivate_ingredient(self, db: AsyncSession, actor: User, ingredient_id: int) -> Ingredient:
+        """Deactivate an active Ingredient, blocking new Recipe Ingredient lines and new Stock
+        Movements against it (Story #3/#4).
+
+        Mirrors UserService.deactivate_user exactly: a simple flag flip, idempotent (a no-op on
+        an already-inactive Ingredient), no row-locking needed (this isn't a numeric
+        read-modify-write like record_movement). Historical Recipe Ingredient lines and Stock
+        Movements referencing this Ingredient are untouched — deactivation only flips is_active,
+        it never deletes or reassigns the row.
+
+        Args:
+            db: The active database session.
+            actor: The Warehouse Manager or Admin performing the deactivation, used only for
+                logging.
+            ingredient_id: The id of the Ingredient to deactivate.
+
+        Returns:
+            The deactivated Ingredient.
+
+        Raises:
+            IngredientNotFoundError: If no Ingredient matches ingredient_id.
+        """
+        ingredient = await self._get_ingredient(db, ingredient_id)
+
+        if not ingredient.is_active:
+            return ingredient
+
+        ingredient.is_active = False
+        await db.commit()
+        await db.refresh(ingredient)
+        self._logger.info(
+            "Ingredient deactivated by user_id={}: ingredient_id={}", actor.id, ingredient_id
+        )
+        return ingredient
+
+    async def reactivate_ingredient(self, db: AsyncSession, actor: User, ingredient_id: int) -> Ingredient:
+        """Reactivate a previously deactivated Ingredient, restoring its normal use.
+
+        Mirrors UserService.reactivate_user exactly.
+
+        Args:
+            db: The active database session.
+            actor: The Warehouse Manager or Admin performing the reactivation, used only for
+                logging.
+            ingredient_id: The id of the Ingredient to reactivate.
+
+        Returns:
+            The reactivated Ingredient.
+
+        Raises:
+            IngredientNotFoundError: If no Ingredient matches ingredient_id.
+        """
+        ingredient = await self._get_ingredient(db, ingredient_id)
+
+        if ingredient.is_active:
+            return ingredient
+
+        ingredient.is_active = True
+        await db.commit()
+        await db.refresh(ingredient)
+        self._logger.info(
+            "Ingredient reactivated by user_id={}: ingredient_id={}", actor.id, ingredient_id
+        )
+        return ingredient
+
     async def list_movements(self, db: AsyncSession, ingredient_id: int) -> Sequence[StockMovement]:
         """List every Stock Movement recorded for an Ingredient, newest first.
 
@@ -184,9 +255,10 @@ class InventoryService:
         silently discard the earlier delta, even though both StockMovement audit rows would still
         insert correctly, leaving current_stock disagreeing with its own audit trail (NFR-4). Both
         the Ingredient update and the new StockMovement insert commit together in one transaction
-        (AD-16, NFR-4). purchase/waste apply as +/-quantity; adjustment applies payload.quantity as
-        already signed. current_stock is never floor-capped at zero (AD-16): a waste or negative
-        adjustment is applied in full even past zero.
+        (NFR-4). purchase/waste apply as +/-quantity; adjustment applies payload.quantity as
+        already signed. current_stock is rejected cleanly (before any mutation) if the movement
+        would drive it negative (AD-16 reversed): manual movements can no longer drive stock below
+        zero.
 
         Story 4.2: broadcasts inventory.alerts_changed to warehouse_manager connections, but only
         when this movement crosses the shortage threshold in either direction (current_stock <
@@ -206,6 +278,9 @@ class InventoryService:
 
         Raises:
             IngredientNotFoundError: If no Ingredient matches ingredient_id.
+            IngredientNotActiveError: If the Ingredient is currently deactivated (Story #3/#4).
+            StockMovementWouldGoNegativeError: If this movement would drive current_stock below
+                zero.
         """
         try:
             ingredient = await self._lock_ingredient(db, ingredient_id)
@@ -217,9 +292,32 @@ class InventoryService:
             )
             raise
 
+        if not ingredient.is_active:
+            self._logger.warning(
+                "Stock movement rejected by user_id={}: ingredient_id={} is deactivated",
+                actor.id,
+                ingredient_id,
+            )
+            raise IngredientNotActiveError()
+
         was_low = ingredient.current_stock < ingredient.min_stock_threshold
 
         delta = -payload.quantity if payload.movement_type == MovementType.waste else payload.quantity
+
+        # Checked before any mutation (no rollback needed, nothing written yet): AD-16 reversed,
+        # a manual movement that would drive current_stock negative is rejected cleanly rather
+        # than applied in full past zero.
+        if ingredient.current_stock + delta < 0:
+            self._logger.warning(
+                "Stock movement rejected by user_id={}: ingredient_id={} current_stock={} "
+                "delta={} would go negative",
+                actor.id,
+                ingredient_id,
+                ingredient.current_stock,
+                delta,
+            )
+            raise StockMovementWouldGoNegativeError()
+
         ingredient.current_stock = ingredient.current_stock + delta
 
         movement = StockMovement(
@@ -282,8 +380,8 @@ class InventoryService:
             db: The active database session, part of the caller's own transaction.
             ingredient_id: The id of the Ingredient being consumed.
             quantity: The amount to deduct (RecipeIngredient.quantity * OrderItem.quantity),
-                always applied as a subtraction, never floor-capped at zero (AD-16) — a Recipe
-                requiring more than is currently in stock still deducts in full.
+                always applied as a subtraction. Rejected before any mutation if it would drive
+                current_stock negative (AD-16 reversed) — see InsufficientStockError below.
             actor_id: The id of the Cook performing the triggering pick-up, recorded as the
                 StockMovement's performed_by.
             order_id: The id of the Order whose item triggered this consumption, recorded as the
@@ -296,10 +394,29 @@ class InventoryService:
 
         Raises:
             IngredientNotFoundError: If no Ingredient matches ingredient_id.
+            InsufficientStockError: If this deduction would drive current_stock below zero. The
+                caller (OrderService.pick_up_item) is responsible for rolling back any earlier
+                deduction already staged on this same session in the same loop (AD-6, whole-item
+                all-or-nothing) — this method itself only guards its own single deduction.
         """
         ingredient = await self._lock_ingredient(db, ingredient_id)
 
         was_low = ingredient.current_stock < ingredient.min_stock_threshold
+
+        # Checked before any mutation on this Ingredient (no partial effect for this one line);
+        # the caller is responsible for discarding any earlier line's already-staged deduction in
+        # the same pick-up (AD-6, whole-item all-or-nothing rejection).
+        if ingredient.current_stock - quantity < 0:
+            self._logger.warning(
+                "Consumption rejected for order_id={}: ingredient_id={} current_stock={} "
+                "quantity={} would go negative",
+                order_id,
+                ingredient_id,
+                ingredient.current_stock,
+                quantity,
+            )
+            raise InsufficientStockError()
+
         ingredient.current_stock = ingredient.current_stock - quantity
 
         movement = StockMovement(

@@ -117,7 +117,7 @@ function SuggestionCard({
 
       {activeSessionId !== null && (
         <Box sx={{ marginTop: 2 }}>
-          <ChatPanel sessionId={activeSessionId} />
+          <ChatPanel sessionId={activeSessionId} suggestionId={suggestion.id} />
         </Box>
       )}
     </Card>

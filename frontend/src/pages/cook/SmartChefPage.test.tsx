@@ -356,6 +356,64 @@ describe("SmartChefPage", () => {
     expect(await screen.findByText("Great idea, try that.")).toBeInTheDocument();
   });
 
+  it("sending a message in a suggestion's own chat panel also refetches the suggestions list (#7)", async () => {
+    // Arrange: this batch's #7 — a Suggestion-tied chat send can mutate the Suggestion's
+    // generated_recipe server-side, so the client must refresh the Suggestions list too, not
+    // just this session's own messages.
+    let suggestionsCallCount = 0;
+    const messagesStore: Record<number, unknown[]> = {};
+    const baseFetch = mockFetch({
+      suggestions: [SUGGESTION],
+      messagesBySession: messagesStore,
+      onPost: (path, body) => {
+        if (path.endsWith("/api/smart-chef/chat-sessions")) {
+          expect(body).toEqual({ suggestion_id: SUGGESTION.id });
+          return jsonResponse(201, SESSION);
+        }
+        if (path.endsWith(`/chat-sessions/${SESSION.id}/messages`)) {
+          const userMessage = {
+            id: 1,
+            session_id: SESSION.id,
+            role: "user",
+            content: body.content,
+            created_at: "2026-01-02T09:05:00Z",
+          };
+          const assistantMessage = {
+            id: 2,
+            session_id: SESSION.id,
+            role: "assistant",
+            content: "Done, swapped in a vegan cheese.",
+            created_at: "2026-01-02T09:05:05Z",
+          };
+          messagesStore[SESSION.id] = [...(messagesStore[SESSION.id] ?? []), userMessage, assistantMessage];
+          return jsonResponse(201, [userMessage, assistantMessage]);
+        }
+        return undefined;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        if (String(url).endsWith("/api/smart-chef/suggestions") && (init.method ?? "GET") === "GET") {
+          suggestionsCallCount += 1;
+        }
+        return baseFetch(url, init);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Discuss via chat" }));
+    const callsBeforeSend = suggestionsCallCount;
+    await user.type(await screen.findByLabelText("Ask a follow-up"), "Make it vegan");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // Assert
+    await screen.findByText("Done, swapped in a vegan cheese.");
+    await vi.waitFor(() => expect(suggestionsCallCount).toBeGreaterThan(callsBeforeSend));
+  });
+
   it("a failed send shows an inline error, not a stuck sending state (AC4)", async () => {
     // Arrange
     vi.stubGlobal(

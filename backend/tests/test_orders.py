@@ -1354,10 +1354,11 @@ async def test_a_different_active_cook_can_mark_ready_an_item_picked_up_by_a_dea
 
 
 @pytest.mark.asyncio
-async def test_pick_up_below_available_stock_still_succeeds_and_is_not_floor_capped(
+async def test_pick_up_below_available_stock_is_rejected_and_item_stays_pending(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    # Arrange: current_stock less than the Recipe requires.
+    # Arrange: current_stock less than the Recipe requires. Reverses AD-16 (this batch's #5) —
+    # the pick-up is now rejected cleanly rather than deducting past zero.
     dish, ingredient = await _create_available_dish_with_ingredient(
         client,
         db_session,
@@ -1373,12 +1374,69 @@ async def test_pick_up_below_available_stock_still_succeeds_and_is_not_floor_cap
     # Act
     response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
 
-    # Assert: succeeds, and current_stock is not clamped at zero (AD-16).
-    assert response.status_code == 200
-    assert response.json()["status"] == "in_preparation"
+    # Assert: rejected, the item stays pending, and the ingredient's stock is untouched.
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Not enough stock to prepare this item"
     db_session.expire_all()
+    unchanged_item = await db_session.get(OrderItem, item["id"])
+    assert unchanged_item.status is OrderItemStatus.pending
     updated_ingredient = await db_session.get(Ingredient, ingredient)
-    assert updated_ingredient.current_stock == Decimal("-0.300")
+    assert updated_ingredient.current_stock == Decimal("0.200")
+    movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
+    assert movements.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_pick_up_rejected_for_one_insufficient_recipe_line_does_not_partially_deduct_earlier_lines(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: a Dish with two Recipe Ingredients, ordered by ingredient_id (matching
+    # pick_up_item's own iteration order) — flour has enough stock, cheese does not. The
+    # whole-item, all-or-nothing guarantee (this batch's #5) means flour's deduction, staged in
+    # the same loop before cheese's rejection, must be rolled back too.
+    await _create_user(db_session, "all-or-nothing-admin", UserRole.admin)
+    await _login(client, "all-or-nothing-admin")
+    dish = await _create_dish(client, "All-or-Nothing Dish", "18.00")
+    flour = Ingredient(name="AON Flour", unit=Unit.kg, current_stock="10.000", min_stock_threshold="1.000")
+    cheese = Ingredient(name="AON Cheese", unit=Unit.kg, current_stock="0.100", min_stock_threshold="0.500")
+    db_session.add_all([flour, cheese])
+    await db_session.commit()
+    await db_session.refresh(flour)
+    await db_session.refresh(cheese)
+    flour_id = flour.id
+    cheese_id = cheese.id
+    for ingredient_id, quantity in ((flour_id, "0.300"), (cheese_id, "0.200")):
+        recipe_response = await client.post(
+            f"/api/menu/dishes/{dish['id']}/recipe-ingredients",
+            json={"ingredient_id": ingredient_id, "quantity": quantity, "unit": "kg"},
+        )
+        assert recipe_response.status_code == 201
+    available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
+    assert available_response.status_code == 200
+    dish = available_response.json()
+
+    order, _waiter, _table = await _open_table(client, db_session, table_number=66)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "all-or-nothing-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert: rejected, item stays pending, and NEITHER ingredient's stock changed — flour's
+    # earlier-in-loop deduction was rolled back along with cheese's own rejection.
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Not enough stock to prepare this item"
+    db_session.expire_all()
+    unchanged_item = await db_session.get(OrderItem, item["id"])
+    assert unchanged_item.status is OrderItemStatus.pending
+    updated_flour = await db_session.get(Ingredient, flour_id)
+    updated_cheese = await db_session.get(Ingredient, cheese_id)
+    assert updated_flour.current_stock == Decimal("10.000")
+    assert updated_cheese.current_stock == Decimal("0.100")
+    flour_movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == flour_id))
+    cheese_movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == cheese_id))
+    assert flour_movements.scalars().all() == []
+    assert cheese_movements.scalars().all() == []
 
 
 @pytest.mark.asyncio

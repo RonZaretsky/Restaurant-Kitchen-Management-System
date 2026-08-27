@@ -24,6 +24,7 @@ const FLOUR = {
   unit: "kg",
   current_stock: "10.000",
   min_stock_threshold: "1.000",
+  is_active: true,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
@@ -450,5 +451,186 @@ describe("IngredientsPage", () => {
 
     // Assert: both queries' own requests fire again, not just one.
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(callsBeforeRetry + 2));
+  });
+
+  // --- This batch's #6: sortable table -------------------------------------------------------
+
+  it("sorts by a clicked column header, ascending then descending on a repeated click", async () => {
+    // Arrange: default (unsorted) order is shortage-first-then-alphabetical, so Basil (in
+    // shortage) would otherwise sort ahead of Flour despite "B" > "F" is irrelevant here — using
+    // two NOT-in-shortage ingredients isolates the column sort from that default ordering.
+    const APPLE = { ...FLOUR, id: 6, name: "Apple", current_stock: "3.000" };
+    const ZUCCHINI = { ...FLOUR, id: 7, name: "Zucchini", current_stock: "1.000" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
+        if (String(url).includes("/api/inventory/ingredients"))
+          return Promise.resolve(jsonResponse(200, [ZUCCHINI, APPLE]));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("Apple");
+    await user.click(screen.getByRole("button", { name: "Name" }));
+
+    // Assert: ascending by name.
+    let rowNames = screen.getAllByRole("row").slice(1).map((row) => row.textContent);
+    expect(rowNames[0]).toContain("Apple");
+    expect(rowNames[1]).toContain("Zucchini");
+
+    // Act: click again toggles to descending.
+    await user.click(screen.getByRole("button", { name: "Name" }));
+
+    // Assert
+    rowNames = screen.getAllByRole("row").slice(1).map((row) => row.textContent);
+    expect(rowNames[0]).toContain("Zucchini");
+    expect(rowNames[1]).toContain("Apple");
+  });
+
+  it("sorts numerically by Current stock, not lexicographically", async () => {
+    // Arrange: lexicographic order would put "10.000" ahead of "2.000" (since "1" < "2"); a
+    // numeric sort must not.
+    const TEN = { ...FLOUR, id: 8, name: "Ten Stock", current_stock: "10.000" };
+    const TWO = { ...FLOUR, id: 9, name: "Two Stock", current_stock: "2.000" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
+        if (String(url).includes("/api/inventory/ingredients"))
+          return Promise.resolve(jsonResponse(200, [TEN, TWO]));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("Ten Stock");
+    await user.click(screen.getByRole("button", { name: "Current stock" }));
+
+    // Assert: ascending numeric order, 2.000 before 10.000.
+    const rowNames = screen.getAllByRole("row").slice(1).map((row) => row.textContent);
+    expect(rowNames[0]).toContain("Two Stock");
+    expect(rowNames[1]).toContain("Ten Stock");
+  });
+
+  it("keeps shortage highlighting regardless of the active sort order", async () => {
+    // Arrange
+    const BASIL = { ...FLOUR, id: 2, name: "Basil", current_stock: "0.500", min_stock_threshold: "2.000" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, [BASIL]));
+        if (String(url).includes("/api/inventory/ingredients"))
+          return Promise.resolve(jsonResponse(200, [FLOUR, BASIL]));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act: switch to sorting by Unit (both rows share "kg", so order is stable/unaffected)
+    // rather than the default shortage-first view.
+    renderPage();
+    await screen.findByText("Flour");
+    await user.click(screen.getByRole("button", { name: "Unit" }));
+
+    // Assert: Basil still renders the shortage icon/coloring even though the active sort is by
+    // Unit, not the shortage-derived default.
+    const basilRow = screen.getByText("Basil").closest("tr");
+    expect(basilRow).not.toBeNull();
+    expect(basilRow!.querySelector('[data-testid="WarningAmberIcon"]')).toBeInTheDocument();
+    expect(screen.getByText("Basil")).toHaveStyle({ color: "rgb(211, 47, 47)" });
+  });
+
+  // --- This batch's #3/#4: soft-deactivate ----------------------------------------------------
+
+  it("shows an Active badge and Deactivate action for an active ingredient, and can deactivate it", async () => {
+    // Arrange
+    let ingredient = { ...FLOUR };
+    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
+      const path = String(url);
+      if (path.endsWith(`/api/inventory/ingredients/${ingredient.id}/deactivate`) && init.method === "POST") {
+        ingredient = { ...ingredient, is_active: false };
+        return Promise.resolve(jsonResponse(200, ingredient));
+      }
+      if (path.includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
+      if (path.includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [ingredient]));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("Flour");
+    expect(screen.getByText("Active")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Deactivate" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    // Assert: the row now reads Inactive once the mutation settles and the list refetches.
+    expect(await screen.findByText("Inactive")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/inventory/ingredients/1/deactivate"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    // The row click handler must not have fired from the button click (no stray navigation).
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("shows an Inactive badge and Reactivate action for a deactivated ingredient, and can reactivate it", async () => {
+    // Arrange
+    let ingredient = { ...FLOUR, is_active: false };
+    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
+      const path = String(url);
+      if (path.endsWith(`/api/inventory/ingredients/${ingredient.id}/reactivate`) && init.method === "POST") {
+        ingredient = { ...ingredient, is_active: true };
+        return Promise.resolve(jsonResponse(200, ingredient));
+      }
+      if (path.includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
+      if (path.includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [ingredient]));
+      return Promise.reject(new Error(`unexpected request: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("Flour");
+    expect(screen.getByText("Inactive")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reactivate" }));
+
+    // Assert
+    expect(await screen.findByText("Active")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/inventory/ingredients/1/reactivate"),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("cancelling a deactivate confirmation leaves the ingredient active", async () => {
+    // Arrange
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
+        if (String(url).includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [FLOUR]));
+        return Promise.reject(new Error(`unexpected request: ${url}`));
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("Flour");
+    await user.click(screen.getByRole("button", { name: "Deactivate" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    // Assert: back to the plain Deactivate button, still Active, no request sent.
+    expect(await screen.findByRole("button", { name: "Deactivate" })).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
   });
 });

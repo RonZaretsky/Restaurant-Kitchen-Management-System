@@ -92,7 +92,7 @@ _PICK_UP_ITEM_ERROR_DESCRIPTIONS = {
     401: _ERROR_DESCRIPTIONS[401],
     403: "Authenticated, but the caller's Role is not cook or admin",
     404: "No matching Order or Order Item was found, or the item's Dish recipe references an ingredient that no longer exists",
-    409: "The item is not pending",
+    409: "The item is not pending, or a Recipe Ingredient line would drive its Ingredient's stock below zero",
 }
 
 _MARK_READY_ITEM_ERROR_DESCRIPTIONS = {
@@ -383,6 +383,9 @@ async def pick_up_order_item(
         OrderItemNotPendingError: Propagated from order_service, handled
             globally as a 409, if the item's status is not pending at the
             moment of the write.
+        InsufficientStockError: Propagated from order_service, handled
+            globally as a 409, if any Recipe Ingredient line would drive its
+            Ingredient's current_stock below zero.
     """
     return await order_service.pick_up_item(db, actor, order_id, item_id)
 

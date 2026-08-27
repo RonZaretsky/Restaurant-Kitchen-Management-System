@@ -92,6 +92,29 @@ class DuplicateIngredientNameError(ConflictError):
     detail = "That ingredient name already exists"
 
 
+class StockMovementWouldGoNegativeError(ConflictError):
+    """Raised when a manual Stock Movement would drive an Ingredient's current_stock negative.
+
+    Reverses AD-16 ("current_stock is never floor-capped at zero"): manual movements (purchase,
+    waste, adjustment) are now rejected cleanly, before any mutation, rather than applied in full
+    past zero.
+    """
+
+    detail = "Rejected, this movement would drive current stock below zero"
+
+
+class InsufficientStockError(ConflictError):
+    """Raised when a Kitchen pick-up's Recipe-driven consumption would drive an Ingredient's
+    current_stock negative (Story 5.2's apply_consumption, reused by OrderService.pick_up_item).
+
+    Distinct from StockMovementWouldGoNegativeError (a manual movement) even though both guard
+    the same invariant, mirroring this codebase's existing per-call-site error naming convention
+    (e.g. TableInUseError vs. TableNotAvailableError).
+    """
+
+    detail = "Not enough stock to prepare this item"
+
+
 class DuplicateCategoryNameError(ConflictError):
     """Raised when creating a Menu Category with a name that already exists."""
 
@@ -106,6 +129,19 @@ class EmptyRecipeError(ConflictError):
     """
 
     detail = "Cannot mark available, recipe has no ingredients"
+
+
+class IngredientNotActiveError(ConflictError):
+    """Raised when adding a new Recipe Ingredient line or a new Stock Movement against an
+    Ingredient that is currently deactivated (Story #3/#4's soft-deactivate).
+
+    Mirrors DishNotAvailableError's shape: a deactivated Ingredient blocks new references to it,
+    the same way an unavailable Dish blocks new Order Items. Deliberately NOT enforced in
+    OrderService.pick_up_item — an Ingredient already baked into a Dish's recipe should not newly
+    block Kitchen operations because of an unrelated, later admin action.
+    """
+
+    detail = "Rejected, ingredient is deactivated"
 
 
 class NotFoundError(Exception):

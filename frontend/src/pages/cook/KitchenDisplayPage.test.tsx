@@ -217,6 +217,27 @@ describe("KitchenDisplayPage", () => {
     expect(await screen.findByText("Rejected, item not pending")).toBeInTheDocument();
   });
 
+  it("shows a clear inline error when a pick-up is rejected for insufficient stock (#5)", async () => {
+    // Arrange: InsufficientStockError's 409, same generic inline-error rendering path as any
+    // other rejection on this card — no new frontend branch needed, just the backend's own
+    // user-facing detail text rendering through.
+    const fetchMock = vi.fn((url: string) => {
+      if (String(url).includes("/pick-up")) {
+        return Promise.resolve(jsonResponse(409, { detail: "Not enough stock to prepare this item" }));
+      }
+      return stubReads({ items: [ITEM_TABLE_5] })(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Pick up" }));
+
+    // Assert
+    expect(await screen.findByText("Not enough stock to prepare this item")).toBeInTheDocument();
+  });
+
   it("updates a row's status when a live order.item_status_changed event arrives", async () => {
     // Arrange
     let items: unknown[] = [ITEM_TABLE_5];
