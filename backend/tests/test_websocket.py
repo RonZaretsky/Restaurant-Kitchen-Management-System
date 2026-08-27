@@ -34,6 +34,7 @@ from utils import load_config
 _PASSWORD = "correct-horse-battery-staple"
 _ALLOWED_ORIGIN = load_config(SETTINGS.CONFIG_PATH)["cors"]["allow_origin"]
 _POLICY_VIOLATION = 1008
+_CONNECTION_REPLACED = 4409
 _SERVER_START_TIMEOUT = 10
 
 
@@ -273,9 +274,13 @@ async def test_second_connection_for_a_user_replaces_the_first(db_session) -> No
         try:
             # Act: the same session opens a second socket.
             async with await _connect(port, token) as second:
-                # Assert: the first is closed, and only the second is delivered to.
-                with pytest.raises(ConnectionClosed):
+                # Assert: the first is closed with a distinct code the frontend recognizes as
+                # "replaced," not a generic drop it would otherwise auto-retry against
+                # (frontend/src/components/shell/RealtimeProvider.tsx) - and only the second is
+                # delivered to.
+                with pytest.raises(ConnectionClosed) as closed:
                     await asyncio.wait_for(first.recv(), timeout=2)
+                assert closed.value.rcvd.code == _CONNECTION_REPLACED
 
                 realtime_service = await container.realtime_service()
                 await realtime_service.broadcast([UserRole.cook], "test.single", {"ok": True})

@@ -178,6 +178,22 @@ describe("RealtimeProvider", () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
+  it("does not retry after a 4409 connection-replaced close, and reports it distinctly", () => {
+    // Arrange
+    renderProbe();
+    act(() => FakeWebSocket.instances[0].onopen?.());
+
+    // Act: the backend closes with 4409 because another tab's connection took this one's place
+    // (ConnectionRegistry.register in backend/clients/websocket.py).
+    act(() => FakeWebSocket.instances[0].close(4409));
+
+    // Assert: a distinct status from a plain drop, and no reconnect is scheduled -- retrying
+    // would just steal the connection back and repeat the takeover forever.
+    expect(screen.getByTestId("status")).toHaveTextContent("replaced");
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
   it("closes the socket when onerror fires", () => {
     // Arrange
     renderProbe();

@@ -1,6 +1,12 @@
 import { createContext, useContext, type ReactNode } from "react";
 
-export type ConnectionStatus = "connected" | "reconnecting";
+/**
+ * "replaced": this tab's own connection was deliberately closed by the server because a newer
+ * connection for the same session (typically a second tab) took it over - not a drop, and not
+ * retried (see RealtimeProvider's CONNECTION_REPLACED_CLOSE_CODE handling), since retrying would
+ * just steal the connection back and repeat the takeover forever.
+ */
+export type ConnectionStatus = "connected" | "reconnecting" | "replaced";
 
 interface ConnectionStatusContextValue {
   status: ConnectionStatus;
