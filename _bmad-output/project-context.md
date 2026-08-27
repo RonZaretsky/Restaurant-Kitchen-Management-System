@@ -135,7 +135,14 @@ backend/
                      caller (a WebSocket handshake, a periodic re-verification tick) uses directly (see trap 15)
   clients/websocket.py ConnectionRegistry (Story 1.5): tracks open sockets keyed by user id (not just Role),
                      closing a User's prior socket on a new one; broadcast_to_roles() targets several Roles
-                     in one emission
+                     in one emission. Fix (2026-08-26): that takeover close now sends its own code,
+                     CONNECTION_REPLACED_CLOSE_CODE = 4409 (RFC 6455's private-use range), instead of a
+                     generic one - the superseded tab's RealtimeProvider was treating it as a plain drop
+                     and auto-retrying, which stole the connection right back and made two tabs of the
+                     same account flap between connected/reconnecting roughly every second, forever.
+                     _close_quietly(websocket, code=1000) now takes the code explicitly; close_all()
+                     (app shutdown) still uses the 1000 default, only register()'s takeover path passes
+                     4409
   clients/llm.py       Story 6.1 (new, Epic 6): LLMClient, the ONLY place `openai` is imported
                      anywhere in backend/ (AD-12). Wraps AsyncOpenAI, one method
                      (generate_recipe(prompt) -> dict), JSON mode
@@ -474,7 +481,16 @@ frontend/src/
                         ConnectionStatusContext/ReconnectingBanner, RealtimeProvider (Story 1.5:
                         owns the single WebSocket connection, drives ConnectionStatusContext with
                         real state, capped exponential backoff reconnect, exposes useRealtime()'s
-                        subscribe(event, handler) for later stories to consume push events),
+                        subscribe(event, handler) for later stories to consume push events.
+                        Fix (2026-08-26): ConnectionStatus gained a third value, "replaced", read
+                        off a new CONNECTION_REPLACED_CLOSE_CODE = 4409 the backend's
+                        ConnectionRegistry now sends when a second tab of the same session takes the
+                        socket over - onclose no longer treats that close as a plain drop and
+                        auto-retries into it, which is what was making two tabs of the same account
+                        flap between connected/reconnecting roughly every second, forever.
+                        ReconnectingBanner shows a distinct "connected in another tab" info message
+                        for it, not the "Reconnecting..." warning; a superseded tab needs a manual
+                        reload to go live again, deliberately not automatic),
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
