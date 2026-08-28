@@ -40,6 +40,7 @@ class OrderItemStatus(enum.Enum):
     in_preparation = "in_preparation"
     ready = "ready"
     cancelled = "cancelled"
+    rejected = "rejected"
 
 
 class RestaurantTable(Base):
@@ -141,6 +142,9 @@ class OrderItem(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     cook_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     price_at_add: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
+    # Set only by reject_item (this batch): the message the Waiter sees, stating how much of this
+    # item's quantity the kitchen could actually have prepared. Null for every other status.
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class OrderResponse(BaseModel):
@@ -201,17 +205,26 @@ class OrderItemResponse(BaseModel):
     notes: str | None
     cook_id: int | None
     price_at_add: Decimal
+    reject_reason: str | None
 
 
 class KitchenItemResponse(BaseModel):
     """Body of GET /api/kitchen/items, describing one active Order Item plus its Table (Story 5.1).
 
-    OrderItemResponse's exact field set plus table_id. table_id is not a column on OrderItem
-    itself (only order_id is), so this is not from_attributes-constructible off a bare OrderItem
-    the way OrderItemResponse is; KitchenService builds instances explicitly from a (OrderItem,
-    table_id) row pair, the one join in this codebase's services/ layer this story explicitly
-    justifies (see the story's Scope note) — the Kitchen Display groups by Table, and no existing
-    endpoint maps an arbitrary order_id to its table_id for a Cook session.
+    OrderItemResponse's exact field set plus table_id and max_preparable_quantity. table_id is not
+    a column on OrderItem itself (only order_id is), so this is not from_attributes-constructible
+    off a bare OrderItem the way OrderItemResponse is; KitchenService builds instances explicitly
+    from a (OrderItem, table_id) row pair, the one join in this codebase's services/ layer this
+    story explicitly justifies (see the story's Scope note) — the Kitchen Display groups by Table,
+    and no existing endpoint maps an arbitrary order_id to its table_id for a Cook session.
+
+    `max_preparable_quantity` (this batch): how many portions of this item's Dish current stock
+    can actually support right now, live off `Ingredient.current_stock` — not stored on OrderItem,
+    computed fresh on every list call, the same "advisory read, not a stored fact" shape
+    `Dish.is_available`'s own recipe-emptiness check already uses elsewhere. Only meaningful while
+    `status == pending` (a picked-up item already reserved its stock); KitchenService still
+    populates it for every status for a uniform response shape, the Kitchen Display only reads it
+    for pending rows.
     """
 
     id: int
@@ -223,14 +236,20 @@ class KitchenItemResponse(BaseModel):
     notes: str | None
     cook_id: int | None
     price_at_add: Decimal
+    reject_reason: str | None
+    max_preparable_quantity: int
 
     @classmethod
-    def from_item(cls, item: "OrderItem", table_id: int) -> "KitchenItemResponse":
+    def from_item(cls, item: "OrderItem", table_id: int, max_preparable_quantity: int) -> "KitchenItemResponse":
         """Build a response from an OrderItem row plus its resolved table_id.
 
         Args:
             item: The Order Item row.
             table_id: The table_id of the Order this item belongs to.
+            max_preparable_quantity: How many portions of this item's Dish current stock supports
+                right now (only meaningful for a pending item; the caller passes item.quantity
+                itself for any other status, so the field never falsely flags a reserved/completed
+                item as short).
 
         Returns:
             The assembled response.
@@ -244,5 +263,7 @@ class KitchenItemResponse(BaseModel):
             status=item.status,
             notes=item.notes,
             cook_id=item.cook_id,
+            reject_reason=item.reject_reason,
+            max_preparable_quantity=max_preparable_quantity,
             price_at_add=item.price_at_add,
         )

@@ -6,7 +6,16 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data_models import CreateIngredientRequest, CreateStockMovementRequest, Ingredient, MovementType, StockMovement, User, UserRole
+from data_models import (
+    CreateIngredientRequest,
+    CreateStockMovementRequest,
+    Ingredient,
+    MovementType,
+    RecipeIngredient,
+    StockMovement,
+    User,
+    UserRole,
+)
 from exceptions import (
     DuplicateIngredientNameError,
     IngredientNotActiveError,
@@ -430,6 +439,66 @@ class InventoryService:
 
         is_low = ingredient.current_stock < ingredient.min_stock_threshold
         return was_low != is_low
+
+    async def max_preparable_quantity(self, db: AsyncSession, dish_id: int) -> int:
+        """How many portions of one Dish current stock supports right now (this batch, FR-18's
+        stock-aware availability check, applied to the kitchen pick-up/reject flow).
+
+        A single-dish convenience over `max_preparable_quantities` below — see that method for the
+        actual computation and its edge cases.
+
+        Args:
+            db: The active database session.
+            dish_id: The Dish to check.
+
+        Returns:
+            The largest quantity this Dish's recipe can currently support, floored to a whole
+            portion. 0 if the Dish has no Recipe Ingredient lines at all (nothing to compute a
+            supportable quantity from — the conservative answer, not "unlimited").
+        """
+        return (await self.max_preparable_quantities(db, [dish_id])).get(dish_id, 0)
+
+    async def max_preparable_quantities(self, db: AsyncSession, dish_ids: Sequence[int]) -> dict[int, int]:
+        """How many portions of each given Dish current stock supports right now, batched.
+
+        A read-only, advisory computation — no row lock, unlike `apply_consumption`'s own
+        `_lock_ingredient`: this never mutates stock, it only informs a Cook-facing "can this be
+        prepared" display (the Kitchen Display's insufficient-stock warning) and the message
+        `OrderService.reject_item` records for the Waiter. The authoritative check stays
+        `apply_consumption`'s own guard at the moment of an actual pick-up; a stock change between
+        this read and that write is expected and already handled there (AD-6's guarded-UPDATE
+        pattern), not a bug in this method.
+
+        For each Dish, the answer is `min` over its Recipe Ingredient lines of
+        `floor(Ingredient.current_stock / RecipeIngredient.quantity)` — the single scarcest
+        ingredient line caps how many whole portions are possible, the same reasoning
+        `InventoryService.apply_consumption` applies per-line but this method applies across a
+        whole recipe at once.
+
+        Args:
+            db: The active database session.
+            dish_ids: The Dishes to check, batched in one query rather than one round-trip per
+                Dish (the Kitchen Display lists many pending items across many Dishes at once).
+
+        Returns:
+            A dict of dish_id to its currently supportable quantity. A dish_id with no Recipe
+            Ingredient lines is omitted entirely (nothing to compute from) — callers needing a
+            default should use 0 (the conservative "cannot confirm this is preparable" answer),
+            never "unlimited", matching `max_preparable_quantity`'s own single-dish contract above.
+        """
+        if not dish_ids:
+            return {}
+        result = await db.execute(
+            select(RecipeIngredient.dish_id, RecipeIngredient.quantity, Ingredient.current_stock)
+            .join(Ingredient, RecipeIngredient.ingredient_id == Ingredient.id)
+            .where(RecipeIngredient.dish_id.in_(dish_ids))
+        )
+        max_by_dish: dict[int, int] = {}
+        for dish_id, recipe_quantity, current_stock in result.all():
+            preparable = int(current_stock // recipe_quantity)
+            if dish_id not in max_by_dish or preparable < max_by_dish[dish_id]:
+                max_by_dish[dish_id] = preparable
+        return max_by_dish
 
     async def _get_ingredient(self, db: AsyncSession, ingredient_id: int) -> Ingredient:
         """Fetch an Ingredient by id with no row lock, for read-only callers.

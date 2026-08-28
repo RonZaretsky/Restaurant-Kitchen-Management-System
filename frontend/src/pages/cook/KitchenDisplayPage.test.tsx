@@ -33,6 +33,8 @@ const ITEM_TABLE_5 = {
   notes: "no onions",
   cook_id: null,
   price_at_add: "42.00",
+  reject_reason: null,
+  max_preparable_quantity: 2,
 };
 
 const ITEM_TABLE_9 = {
@@ -322,5 +324,54 @@ describe("KitchenDisplayPage", () => {
     // Assert: resolves to the real table_number, not the "?" fallback.
     expect(await screen.findByText("Table 9")).toBeInTheDocument();
     expect(screen.queryByText("Table ?")).not.toBeInTheDocument();
+  });
+
+  it("shows a Reject button instead of Pick up, with a warning, when stock cannot support the full quantity", async () => {
+    // Arrange: quantity 2, but only 1 preparable with current stock.
+    const shortItem = { ...ITEM_TABLE_5, max_preparable_quantity: 1 };
+    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [shortItem] })));
+
+    // Act
+    renderPage();
+    await screen.findByText("Table 5");
+
+    // Assert
+    expect(screen.queryByRole("button", { name: "Pick up" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(screen.getByText("Only 1 of 2 can be prepared with current stock")).toBeInTheDocument();
+  });
+
+  it("rejecting an item calls the reject endpoint and refreshes the board", async () => {
+    // Arrange
+    const shortItem = { ...ITEM_TABLE_5, max_preparable_quantity: 1 };
+    let items: unknown[] = [shortItem];
+    const rejectedItem = {
+      ...shortItem,
+      status: "rejected",
+      reject_reason: "Only 1 of 2 requested could be prepared (insufficient stock).",
+    };
+    const fetchMock = vi.fn((url: string) => {
+      if (String(url).includes("/reject")) {
+        items = [rejectedItem];
+        return Promise.resolve(jsonResponse(200, rejectedItem));
+      }
+      return stubReads({ items })(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Reject" }));
+
+    // Assert
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/orders/10/items/1/reject"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(await screen.findByText("Rejected")).toBeInTheDocument();
+    expect(
+      screen.getByText("Only 1 of 2 requested could be prepared (insufficient stock)."),
+    ).toBeInTheDocument();
   });
 });

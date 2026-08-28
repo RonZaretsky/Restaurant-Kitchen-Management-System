@@ -84,6 +84,38 @@ async def _add_item(client: AsyncClient, order_id: int, dish_id: int, quantity: 
     return response.json()
 
 
+async def _create_available_dish_with_stock(
+    client: AsyncClient, db_session: AsyncSession, name: str, ingredient_stock: str, recipe_quantity: str
+) -> dict:
+    # Same shape as _create_available_dish, but with a controlled stock/recipe_quantity pair so
+    # max_preparable_quantity tests can assert an exact expected value.
+    await _create_user(db_session, f"dish-admin-{name}", UserRole.admin)
+    await _login(client, f"dish-admin-{name}")
+    category_response = await client.post("/api/menu/categories", json={"name": f"{name} Category"})
+    assert category_response.status_code == 201
+    category = category_response.json()
+    dish_response = await client.post(
+        "/api/menu/dishes",
+        json={"name": name, "price": "12.50", "category_id": category["id"], "prep_time_minutes": 15},
+    )
+    assert dish_response.status_code == 201
+    dish = dish_response.json()
+    ingredient = Ingredient(
+        name=f"{name} Ingredient", unit=Unit.kg, current_stock=ingredient_stock, min_stock_threshold="1.000"
+    )
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    recipe_response = await client.post(
+        f"/api/menu/dishes/{dish['id']}/recipe-ingredients",
+        json={"ingredient_id": ingredient.id, "quantity": recipe_quantity, "unit": "kg"},
+    )
+    assert recipe_response.status_code == 201
+    available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
+    assert available_response.status_code == 200
+    return available_response.json()
+
+
 @pytest.mark.asyncio
 async def test_returns_empty_list_when_nothing_is_active(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
@@ -221,6 +253,93 @@ async def test_a_served_orders_ready_item_is_excluded(client: AsyncClient, db_se
 
     # Assert
     assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_item_is_excluded(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _table = await _open_table(client, db_session, table_number=1)
+    dish = await _create_available_dish(client, db_session, "Rejected Fries")
+    await _login(client, "waiter-1")
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    reject_response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+    assert reject_response.status_code == 200
+
+    # Act
+    response = await client.get("/api/kitchen/items")
+
+    # Assert: excluded from the board the same way a cancelled item always has been.
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_a_pending_item_with_enough_stock_reports_its_full_quantity_as_preparable(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: 10.000 in stock, 1.000 per portion -> 10 preparable, well above the 2 ordered.
+    order, _table = await _open_table(client, db_session, table_number=1)
+    dish = await _create_available_dish_with_stock(
+        client, db_session, "Plenty Stock Dish", ingredient_stock="10.000", recipe_quantity="1.000"
+    )
+    await _login(client, "waiter-1")
+    item = await _add_item(client, order["id"], dish["id"], quantity=2)
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.get("/api/kitchen/items")
+
+    # Assert
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["max_preparable_quantity"] == 10
+
+
+@pytest.mark.asyncio
+async def test_a_pending_item_with_insufficient_stock_reports_its_true_max_preparable_quantity(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: 3.000 in stock, 1.000 per portion -> only 3 preparable, but 10 were ordered.
+    order, _table = await _open_table(client, db_session, table_number=1)
+    dish = await _create_available_dish_with_stock(
+        client, db_session, "Short Stock Dish", ingredient_stock="3.000", recipe_quantity="1.000"
+    )
+    await _login(client, "waiter-1")
+    item = await _add_item(client, order["id"], dish["id"], quantity=10)
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.get("/api/kitchen/items")
+
+    # Assert
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["max_preparable_quantity"] == 3
+    assert body[0]["quantity"] == 10
+
+
+@pytest.mark.asyncio
+async def test_an_in_preparation_items_max_preparable_quantity_is_its_own_quantity(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: already picked up (stock already reserved for it) — its own field must not flag a
+    # false shortage now that current stock reflects its own deduction.
+    order, _table = await _open_table(client, db_session, table_number=1)
+    dish = await _create_available_dish(client, db_session, "In Prep Stock Dish")
+    await _login(client, "waiter-1")
+    item = await _add_item(client, order["id"], dish["id"], quantity=3)
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    pick_up_response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert pick_up_response.status_code == 200
+
+    # Act
+    response = await client.get("/api/kitchen/items")
+
+    # Assert
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["max_preparable_quantity"] == 3
+    assert body[0]["status"] == "in_preparation"
 
 
 @pytest.mark.asyncio

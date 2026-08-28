@@ -114,7 +114,7 @@ function formatPrice(priceAtAdd: string): string {
  */
 function computeClientSideTotal(items: OrderItem[]): string {
   const total = items
-    .filter((item) => item.status !== "cancelled")
+    .filter((item) => item.status !== "cancelled" && item.status !== "rejected")
     .reduce((sum, item) => sum + Number(item.price_at_add) * item.quantity, 0);
   return total.toFixed(2);
 }
@@ -143,7 +143,8 @@ function OrderTotalBar({ order, items }: { order: Order; items: OrderItem[] }) {
 
   const canMarkServed =
     order.status === "ready" ||
-    (order.status === "pending" && items.every((item) => item.status === "cancelled"));
+    (order.status === "pending" &&
+      items.every((item) => item.status === "cancelled" || item.status === "rejected"));
   const canClose = order.status === "served";
   const displayedTotal = order.status === "closed" && order.total_amount !== null
     ? order.total_amount
@@ -383,6 +384,13 @@ function OrderItemRow({
             >
               Stock already deducted for this item will not be restored. Cancel anyway?
             </Alert>
+          </TableCell>
+        </TableRow>
+      )}
+      {item.status === "rejected" && item.reject_reason && (
+        <TableRow>
+          <TableCell colSpan={6} sx={{ borderBottom: "none" }}>
+            <Alert severity="warning">{item.reject_reason}</Alert>
           </TableCell>
         </TableRow>
       )}
