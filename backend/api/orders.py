@@ -102,6 +102,13 @@ _MARK_READY_ITEM_ERROR_DESCRIPTIONS = {
     409: "The item is not in_preparation",
 }
 
+_REJECT_ITEM_ERROR_DESCRIPTIONS = {
+    401: _ERROR_DESCRIPTIONS[401],
+    403: "Authenticated, but the caller's Role is not cook or admin",
+    404: "No matching Order or Order Item was found",
+    409: "The item is not pending",
+}
+
 _SERVE_ERROR_DESCRIPTIONS = {
     401: _ERROR_DESCRIPTIONS[401],
     403: _ERROR_DESCRIPTIONS[403],
@@ -388,6 +395,41 @@ async def pick_up_order_item(
             Ingredient's current_stock below zero.
     """
     return await order_service.pick_up_item(db, actor, order_id, item_id)
+
+
+@router.post(
+    "/{order_id}/items/{item_id}/reject",
+    response_model=OrderItemResponse,
+    responses=error_responses(_REJECT_ITEM_ERROR_DESCRIPTIONS, 401, 403, 404, 409),
+)
+@inject
+async def reject_order_item(
+    order_id: OrderIdPath,
+    item_id: ItemIdPath,
+    actor: OrderItemProgressDep,
+    db: SessionDep,
+    order_service: OrderService = Depends(Provide[Container.order_service]),
+) -> OrderItem:
+    """Reject a pending Order Item the kitchen cannot currently prepare (this batch).
+
+    Args:
+        order_id: The id of the Order the item belongs to.
+        item_id: The id of the Order Item to reject.
+        actor: The authenticated Cook or Admin making the request.
+        db: The active database session.
+        order_service: Injected service handling the reject.
+
+    Returns:
+        The now-rejected Order Item, carrying its reject_reason message.
+
+    Raises:
+        OrderItemNotFoundError: Propagated from order_service, handled
+            globally as a 404, if no Order Item matches item_id on order_id.
+        OrderItemNotPendingError: Propagated from order_service, handled
+            globally as a 409, if the item's status is not pending at the
+            moment of the write.
+    """
+    return await order_service.reject_item(db, actor, order_id, item_id)
 
 
 @router.post(

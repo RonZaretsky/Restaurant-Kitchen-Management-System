@@ -86,6 +86,18 @@ const CANCELLED_ITEM = {
   price_at_add: "42.00",
 };
 
+const REJECTED_ITEM = {
+  id: 5,
+  order_id: 10,
+  dish_id: 5,
+  quantity: 5,
+  status: "rejected",
+  notes: null,
+  cook_id: null,
+  price_at_add: "42.00",
+  reject_reason: "Only 3 of 5 requested could be prepared (insufficient stock).",
+};
+
 function jsonResponse(status: number, body: unknown): Response {
   const text = JSON.stringify(body);
   return {
@@ -212,6 +224,24 @@ describe("TableOrderDetailPage", () => {
     // Two matches: the item row's own price cell, and the total bar (Story 5.4), which
     // happens to equal the same amount for a single qty-1 item.
     expect(screen.getAllByText("42.00 ₪")).toHaveLength(2);
+  });
+
+  it("shows the reject_reason message on a rejected item, and excludes it from the total", async () => {
+    // Arrange
+    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [PENDING_ITEM, REJECTED_ITEM] })));
+
+    // Act
+    renderPage();
+
+    // Assert
+    expect(await screen.findByText("Rejected")).toBeInTheDocument();
+    expect(
+      screen.getByText("Only 3 of 5 requested could be prepared (insufficient stock)."),
+    ).toBeInTheDocument();
+    // Three matches: each item row still shows its own price_at_add cell (42.00 for both), plus
+    // the total bar itself — which is PENDING_ITEM's own 42.00 only, REJECTED_ITEM's 5 x 42.00
+    // excluded, coincidentally landing on the same "42.00" text as the row cells.
+    expect(screen.getAllByText("42.00 ₪")).toHaveLength(3);
   });
 
   it("renders an em dash for a note that is present but blank", async () => {

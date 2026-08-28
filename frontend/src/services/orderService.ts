@@ -267,6 +267,25 @@ export function useMarkItemReady(): UseMutationResult<OrderItem, Error, PickUpOr
 }
 
 /**
+ * Rejects a pending Order Item the kitchen cannot currently prepare (this batch).
+ *
+ * Same shape and invalidation reasoning as `usePickUpItem`/`useMarkItemReady` — the Waiter's own
+ * Table Order Detail page refreshes from the live `order.item_status_changed` push instead, which
+ * carries the item's new `reject_reason` for that page to display.
+ *
+ * @returns The TanStack Query mutation for rejecting an Order Item.
+ */
+export function useRejectItem(): UseMutationResult<OrderItem, Error, PickUpOrMarkReadyVariables> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ orderId, itemId }: PickUpOrMarkReadyVariables) =>
+      apiRequest<OrderItem>(`/api/orders/${orderId}/items/${itemId}/reject`, { method: "POST" }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY }),
+  });
+}
+
+/**
  * Marks a ready (or zero-item) Order served, a pure status change (Story 5.4, AC1, AC2).
  *
  * Invalidates `orderForTableQueryKey(tableId)` on settle — it is the Order object itself that

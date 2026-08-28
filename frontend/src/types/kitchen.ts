@@ -15,4 +15,9 @@ export interface KitchenItem {
   notes: string | null;
   cook_id: number | null;
   price_at_add: string;
+  reject_reason: string | null;
+  /** How many portions of this item's Dish current stock supports right now. Only meaningful
+   * while status is "pending" — the Kitchen Display disables "Pick up" and shows "Reject"
+   * instead once this falls below `quantity`. */
+  max_preparable_quantity: number;
 }

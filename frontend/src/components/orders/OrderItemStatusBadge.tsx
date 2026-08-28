@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import BlockIcon from "@mui/icons-material/Block";
 import CancelIcon from "@mui/icons-material/Cancel";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import LocalFireDepartmentIcon from "@mui/icons-material/LocalFireDepartment";
@@ -12,6 +13,7 @@ const LABELS: Record<OrderItemStatus, string> = {
   in_preparation: "In preparation",
   ready: "Ready",
   cancelled: "Cancelled",
+  rejected: "Rejected",
 };
 
 const ICONS: Record<OrderItemStatus, ReactElement> = {
@@ -19,6 +21,7 @@ const ICONS: Record<OrderItemStatus, ReactElement> = {
   in_preparation: <LocalFireDepartmentIcon />,
   ready: <CheckCircleIcon />,
   cancelled: <CancelIcon />,
+  rejected: <BlockIcon />,
 };
 
 const COLORS: Record<OrderItemStatus, "default" | "warning" | "success" | "error"> = {
@@ -26,6 +29,7 @@ const COLORS: Record<OrderItemStatus, "default" | "warning" | "success" | "error
   in_preparation: "warning",
   ready: "success",
   cancelled: "error",
+  rejected: "error",
 };
 
 /**
@@ -33,7 +37,8 @@ const COLORS: Record<OrderItemStatus, "default" | "warning" | "success" | "error
  * built once so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can reuse it rather than
  * each re-implementing their own status-to-color mapping.
  *
- * Covers all 4 OrderItemStatus members, `cancelled` (AD-11, Story 3.4) included. Order-level
+ * Covers all 5 OrderItemStatus members, `cancelled` (AD-11, Story 3.4) and `rejected` (this
+ * batch) included. Order-level
  * statuses (`served`/`closed`) still do not belong here, they describe a different type
  * (OrderStatus, not OrderItemStatus).
  *

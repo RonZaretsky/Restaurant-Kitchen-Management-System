@@ -15,7 +15,7 @@ import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
 import { KITCHEN_ITEMS_QUERY_KEY, useKitchenItems } from "../../services/kitchenService";
 import { DISHES_QUERY_KEY, useDishes } from "../../services/menuService";
-import { usePickUpItem, useMarkItemReady } from "../../services/orderService";
+import { usePickUpItem, useMarkItemReady, useRejectItem } from "../../services/orderService";
 import { TABLES_QUERY_KEY, useTables } from "../../services/tableService";
 import type { KitchenItem } from "../../types/kitchen";
 
@@ -66,6 +66,13 @@ function errorMessage(error: Error): string {
  * an inline error under that row (UX-DR17), not a toast — this codebase has no toast/snackbar
  * system anywhere else, so this story does not introduce one either.
  *
+ * This batch adds live insufficient-stock awareness: a `pending` row whose
+ * `max_preparable_quantity` (server-computed off current stock on every fetch) falls below its
+ * own `quantity` swaps "Pick up" for "Reject" instead, with an inline warning stating how much
+ * actually can be prepared — no extra client-side computation, just reading a field the server
+ * already recomputes on every kitchen-items refetch (including the ones this page's own pick-up
+ * mutations already trigger elsewhere on the board, which is what makes the awareness "live").
+ *
  * @returns The Kitchen Display page.
  */
 export function KitchenDisplayPage() {
@@ -94,6 +101,7 @@ export function KitchenDisplayPage() {
   } = useDishes();
   const pickUpMutation = usePickUpItem();
   const markReadyMutation = useMarkItemReady();
+  const rejectMutation = useRejectItem();
   const [actionErrors, setActionErrors] = useState<Record<number, string>>({});
   // Tracked as an explicit Set rather than derived from pickUpMutation.variables/markReadyMutation.variables
   // (review finding, Story 5.2): a single shared mutation's .variables only ever reflects the most
@@ -102,6 +110,7 @@ export function KitchenDisplayPage() {
   // the Set synchronously before mutate() and removing it in onSettled closes that window.
   const [pendingPickUpIds, setPendingPickUpIds] = useState<Set<number>>(new Set());
   const [pendingMarkReadyIds, setPendingMarkReadyIds] = useState<Set<number>>(new Set());
+  const [pendingRejectIds, setPendingRejectIds] = useState<Set<number>>(new Set());
 
   const isLoading = isItemsLoading || isTablesLoading || isDishesLoading;
   const isError = isItemsError || isTablesError || isDishesError;
@@ -195,6 +204,27 @@ export function KitchenDisplayPage() {
     );
   };
 
+  const handleReject = (item: KitchenItem) => {
+    if (pendingRejectIds.has(item.id)) {
+      return;
+    }
+    clearActionError(item.id);
+    setPendingRejectIds((previous) => new Set(previous).add(item.id));
+    rejectMutation.mutate(
+      { orderId: item.order_id, itemId: item.id },
+      {
+        onError: (error) =>
+          setActionErrors((previous) => ({ ...previous, [item.id]: errorMessage(error) })),
+        onSettled: () =>
+          setPendingRejectIds((previous) => {
+            const next = new Set(previous);
+            next.delete(item.id);
+            return next;
+          }),
+      },
+    );
+  };
+
   // Falls back to a bare, clearly-unresolved label rather than the raw internal id (never show a
   // raw id, matching TableOrderDetailPage.tsx's own precedent) — a real table_number could
   // plausibly equal a stale table_id by coincidence, which would be indistinguishable from a
@@ -250,7 +280,14 @@ export function KitchenDisplayPage() {
                   {tableItems.map((item) => {
                     const isPickingUp = pendingPickUpIds.has(item.id);
                     const isMarkingReady = pendingMarkReadyIds.has(item.id);
+                    const isRejecting = pendingRejectIds.has(item.id);
                     const actionError = actionErrors[item.id];
+                    // Live off KitchenItemResponse.max_preparable_quantity (InventoryService's
+                    // current_stock / RecipeIngredient.quantity floor, recomputed on every
+                    // kitchen-items fetch) — "on the go" awareness as stock is consumed elsewhere
+                    // on the board, not a value this page computes itself.
+                    const hasInsufficientStock =
+                      item.status === "pending" && item.max_preparable_quantity < item.quantity;
                     return (
                       <Box key={item.id}>
                         <Stack
@@ -268,7 +305,17 @@ export function KitchenDisplayPage() {
                             {item.notes}
                           </Typography>
                         )}
-                        {item.status === "pending" && (
+                        {item.status === "rejected" && item.reject_reason && (
+                          <Typography variant="body2" color="error.main">
+                            {item.reject_reason}
+                          </Typography>
+                        )}
+                        {hasInsufficientStock && (
+                          <Typography variant="body2" color="warning.main">
+                            {`Only ${item.max_preparable_quantity} of ${item.quantity} can be prepared with current stock`}
+                          </Typography>
+                        )}
+                        {item.status === "pending" && !hasInsufficientStock && (
                           <Button
                             variant="contained"
                             fullWidth
@@ -278,6 +325,19 @@ export function KitchenDisplayPage() {
                             sx={{ marginTop: 1 }}
                           >
                             Pick up
+                          </Button>
+                        )}
+                        {hasInsufficientStock && (
+                          <Button
+                            variant="contained"
+                            color="error"
+                            fullWidth
+                            size="large"
+                            disabled={isRejecting}
+                            onClick={() => handleReject(item)}
+                            sx={{ marginTop: 1 }}
+                          >
+                            Reject
                           </Button>
                         )}
                         {item.status === "in_preparation" && (

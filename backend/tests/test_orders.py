@@ -1440,6 +1440,186 @@ async def test_pick_up_rejected_for_one_insufficient_recipe_line_does_not_partia
 
 
 @pytest.mark.asyncio
+async def test_cook_can_reject_a_pending_item_with_insufficient_stock(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: 3.000 in stock, 1.000 per portion -> 3 portions preparable, but 5 were ordered.
+    dish, ingredient = await _create_available_dish_with_ingredient(
+        client,
+        db_session,
+        name="Reject Insufficient Dish",
+        ingredient_stock="3.000",
+        ingredient_threshold="1.000",
+        recipe_quantity="1.000",
+    )
+    order, _waiter, _table = await _open_table(client, db_session, table_number=70)
+    item = await _add_item(client, order["id"], dish["id"], quantity=5)
+    await _login_as_cook(client, db_session, "reject-insufficient-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+
+    # Assert: rejected with a message stating the actual max preparable amount, no stock touched.
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "rejected"
+    assert body["reject_reason"] == "Only 3 of 5 requested could be prepared (insufficient stock)."
+    updated_ingredient = await db_session.get(Ingredient, ingredient)
+    assert updated_ingredient.current_stock == Decimal("3.000")
+    movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
+    assert movements.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_rejecting_an_item_with_sufficient_stock_uses_a_generic_reason(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: plenty of stock for the ordered quantity — a Cook can still choose to reject.
+    dish = await _create_available_dish(client, db_session, name="Reject Sufficient Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=71)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "reject-sufficient-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+
+    # Assert
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "rejected"
+    assert body["reject_reason"] == "Rejected by the kitchen."
+
+
+@pytest.mark.asyncio
+async def test_rejecting_a_non_pending_item_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Reject Non Pending Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=72)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "reject-non-pending-cook")
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+    assert pick_up.status_code == 200
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, item not pending"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_item_is_excluded_from_the_kitchen_board(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Reject Board Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=73)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "reject-board-cook")
+    reject = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+    assert reject.status_code == 200
+
+    # Act
+    response = await client.get("/api/kitchen/items")
+
+    # Assert: the rejected item is gone from the board, same as a cancelled one always has been.
+    assert response.status_code == 200
+    assert item["id"] not in [kitchen_item["id"] for kitchen_item in response.json()]
+
+
+@pytest.mark.asyncio
+async def test_order_status_recomputes_to_ready_when_remaining_items_are_ready_alongside_a_rejected_one(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: one item will be rejected, the other picked up and marked ready — the Order should
+    # still reach `ready`, not get stuck on the rejected item forever (this batch's own fix to
+    # _recompute_order_status's aggregate).
+    dish = await _create_available_dish(client, db_session, name="Reject Recompute Dish")
+    order, waiter, table = await _open_table(client, db_session, table_number=74)
+    keep_item = await _add_item(client, order["id"], dish["id"])
+    reject_item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "reject-recompute-cook")
+    reject = await client.post(f"/api/orders/{order['id']}/items/{reject_item['id']}/reject")
+    assert reject.status_code == 200
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{keep_item['id']}/pick-up")
+    assert pick_up.status_code == 200
+
+    # Act
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/{keep_item['id']}/mark-ready")
+
+    # Assert
+    assert mark_ready.status_code == 200
+    await _login(client, waiter.username)
+    order_response = await client.get(f"/api/orders/tables/{table['id']}")
+    assert order_response.status_code == 200
+    assert order_response.json()["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_waiter_and_warehouse_manager_cannot_reject(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Reject Role Guard Dish")
+    order, waiter, _table = await _open_table(client, db_session, table_number=75)
+    item = await _add_item(client, order["id"], dish["id"])
+
+    # Act/Assert: the Waiter who opened the table cannot reject.
+    await _login(client, waiter.username)
+    waiter_reject = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+    assert waiter_reject.status_code == 403
+
+    # Act/Assert: warehouse_manager cannot reject either.
+    await _create_user(db_session, "reject-role-guard-wm", UserRole.warehouse_manager)
+    await _login(client, "reject-role-guard-wm")
+    wm_reject = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+    assert wm_reject.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_can_reject(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Reject Admin Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=76)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_admin(client, db_session, "reject-admin")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+
+    # Assert
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_cannot_reject(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    dish = await _create_available_dish(client, db_session, name="Reject Unauth Dish")
+    order, _waiter, _table = await _open_table(client, db_session, table_number=77)
+    item = await _add_item(client, order["id"], dish["id"])
+    client.cookies.clear()
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/reject")
+
+    # Assert
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_rejecting_a_nonexistent_item_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange
+    order, _waiter, _table = await _open_table(client, db_session, table_number=78)
+    await _login_as_cook(client, db_session, "reject-nonexistent-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/999999/reject")
+
+    # Assert
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_waiter_and_warehouse_manager_cannot_pick_up_or_mark_ready(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -1790,21 +1970,22 @@ async def test_get_open_orders_role_coverage(client: AsyncClient, db_session: As
 
 
 @pytest.mark.asyncio
-async def test_recompute_does_not_touch_a_served_or_closed_order(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange: an Order forced to `served` directly (no code path can produce this yet, that's
-    # Story 5.4's job) with a still-pending item. If _recompute_order_status's served/closed
-    # no-op guard were ever broken, cancelling that item would wrongly revert this Order back to
-    # `pending` (zero non-cancelled items left) instead of leaving it untouched (code review
-    # finding, Story 5.3: this guard previously shipped with zero test coverage).
-    dish = await _create_available_dish(client, db_session, name="Served Guard Dish")
+async def test_recompute_does_not_touch_a_closed_order(client: AsyncClient, db_session: AsyncSession) -> None:
+    # Arrange: an Order forced to `closed` directly with a still-pending item (no ordinary code
+    # path can produce this combination — closed is genuinely terminal). If
+    # _recompute_order_status's closed no-op guard were ever broken, cancelling that item would
+    # wrongly revert this Order back to `pending` (zero non-cancelled items left) instead of
+    # leaving it untouched (code review finding, Story 5.3: this guard previously shipped with
+    # zero test coverage). `served` is deliberately NOT covered by this same guard any more (this
+    # batch's own fix, see the sibling test below) — closed is the only status recompute still
+    # refuses to touch.
+    dish = await _create_available_dish(client, db_session, name="Closed Guard Dish")
     order, waiter, _table = await _open_table(client, db_session, table_number=78)
     waiter_username = waiter.username
     item = await _add_item(client, order["id"], dish["id"])
 
     db_order = await db_session.get(Order, order["id"])
-    db_order.status = OrderStatus.served
+    db_order.status = OrderStatus.closed
     await db_session.commit()
 
     # Act
@@ -1812,9 +1993,46 @@ async def test_recompute_does_not_touch_a_served_or_closed_order(
     cancel_response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/cancel")
     assert cancel_response.status_code == 200
 
-    # Assert: still served, not reverted to pending.
+    # Assert: still closed, not reverted to pending.
     db_session.expire_all()
-    assert (await db_session.get(Order, order["id"])).status is OrderStatus.served
+    assert (await db_session.get(Order, order["id"])).status is OrderStatus.closed
+
+
+@pytest.mark.asyncio
+async def test_adding_an_item_to_a_served_order_reverts_it_to_in_preparation_and_it_reaches_the_kitchen(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: a real serve, through the actual API flow (not a forced DB write) — a manual-test
+    # bug (this batch): a Waiter adding one more dish after the table was already served left the
+    # Order silently stuck at `served`, which hid the brand-new pending item from the Kitchen
+    # Display entirely (its board filters out every item of a served/closed Order).
+    dish = await _create_available_dish(client, db_session, name="Post Serve Dish")
+    order, waiter, _table = await _open_table(client, db_session, table_number=79)
+    first_item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "post-serve-cook")
+    pick_up = await client.post(f"/api/orders/{order['id']}/items/{first_item['id']}/pick-up")
+    assert pick_up.status_code == 200
+    mark_ready = await client.post(f"/api/orders/{order['id']}/items/{first_item['id']}/mark-ready")
+    assert mark_ready.status_code == 200
+    await _login(client, waiter.username)
+    serve_response = await client.post(f"/api/orders/{order['id']}/serve")
+    assert serve_response.status_code == 200
+    assert serve_response.json()["status"] == "served"
+
+    # Act: the Waiter adds one more dish to the already-served Order.
+    second_item = await _add_item(client, order["id"], dish["id"])
+
+    # Assert: the Order is active again (not stuck at served)...
+    order_response = await client.get(f"/api/orders/tables/{order['table_id']}")
+    assert order_response.status_code == 200
+    assert order_response.json()["status"] == "in_preparation"
+
+    # ...and the new item is now visible to the kitchen (the bug being fixed).
+    await _login_as_cook(client, db_session, "post-serve-cook-2")
+    kitchen_response = await client.get("/api/kitchen/items")
+    assert kitchen_response.status_code == 200
+    kitchen_item_ids = {item["id"] for item in kitchen_response.json()}
+    assert second_item["id"] in kitchen_item_ids
 
 
 @pytest.mark.asyncio

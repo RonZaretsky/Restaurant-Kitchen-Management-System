@@ -554,6 +554,87 @@ class OrderService:
             )
         return item
 
+    async def reject_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
+        """Reject a pending Order Item the kitchen cannot currently prepare (this batch).
+
+        The Kitchen Display disables "Pick up" and shows "Reject" instead once a pending item's
+        `KitchenItemResponse.max_preparable_quantity` (`InventoryService.max_preparable_quantities`,
+        computed live off current stock) falls below the item's own `quantity` — but this method
+        does not re-enforce that as a hard precondition. A Cook choosing to reject a pending item
+        is always accepted (guarded only on status == pending, same shape as pick_up_item/
+        cancel_item); recomputing the max-preparable amount here is purely to word the message the
+        Waiter sees, not a gate, since the two reads (this one and whatever value the Kitchen
+        Display's list last rendered) can legitimately disagree by the time this write lands and
+        neither is more "correct" than the other.
+
+        Never deducts stock (a rejected item is never picked up), the whole item's quantity is
+        rejected — no partial-quantity fulfillment: if 30 of a 50-portion request are preparable,
+        all 50 are rejected together, with a message stating the 30 so the Waiter can decide
+        whether to re-order a smaller quantity. Excluded from the Kitchen Display's active board
+        and from Order.status's aggregate/Order.total_amount's sum the same way a cancelled item
+        already is (`KitchenService.list_active_items`, `_recompute_order_status`, `close_order`).
+
+        Args:
+            db: The active database session.
+            actor: The Cook rejecting the item.
+            order_id: The id of the Order the item belongs to.
+            item_id: The id of the Order Item to reject.
+
+        Returns:
+            The now-rejected Order Item, carrying its reject_reason message.
+
+        Raises:
+            OrderItemNotFoundError: If no Order Item matches item_id on order_id.
+            OrderItemNotPendingError: If the item's status is not pending at the moment of the
+                write.
+        """
+        item = await self._get_item(db, actor, order_id, item_id)
+
+        max_preparable = await self._inventory_service.max_preparable_quantity(db, item.dish_id)
+        reject_reason = (
+            f"Only {max_preparable} of {item.quantity} requested could be prepared (insufficient stock)."
+            if max_preparable < item.quantity
+            else "Rejected by the kitchen."
+        )
+
+        result = await db.execute(
+            update(OrderItem)
+            .where(OrderItem.id == item_id, OrderItem.status == OrderItemStatus.pending)
+            .values(status=OrderItemStatus.rejected, reject_reason=reject_reason)
+        )
+        if result.rowcount == 0:
+            self._logger.warning(
+                "Order item reject rejected for user_id={}: order_id={} item_id={} is not pending",
+                actor.id,
+                order_id,
+                item_id,
+            )
+            await db.rollback()
+            raise OrderItemNotPendingError()
+
+        updated_order, order_status_changed = await self._recompute_order_status(db, order_id)
+        await db.commit()
+        await db.refresh(item)
+        self._logger.info(
+            "Order item rejected by user_id={}: order_id={} item_id={} dish_id={} max_preparable={}"
+            " requested_quantity={}",
+            actor.id,
+            order_id,
+            item_id,
+            item.dish_id,
+            max_preparable,
+            item.quantity,
+        )
+        await self._realtime_service.broadcast(
+            [UserRole.waiter, UserRole.cook],
+            "order.item_status_changed",
+            OrderItemResponse.model_validate(item).model_dump(mode="json"),
+        )
+        if order_status_changed:
+            assert updated_order is not None  # order_status_changed is only True when it isn't
+            await self._broadcast_order_status_changed(db, updated_order)
+        return item
+
     async def mark_item_ready(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
         """Mark an in_preparation Order Item ready, a pure status change (AC3, AC5, AC6, AC8).
 
@@ -620,7 +701,7 @@ class OrderService:
         A guarded transition (AD-6, trap 18), unlike Story 5.3's `_recompute_order_status`: there
         is a real expected prior status to check here, not a pure recompute. The guard accepts
         both `ready` and `pending` because, per FR-12, an Order is `pending` if and only if it
-        currently has zero non-cancelled Order Items — the status column already encodes that
+        currently has zero non-cancelled, non-rejected Order Items — the status column already encodes that
         fact, so no separate item count is needed.
 
         Args:
@@ -667,17 +748,18 @@ class OrderService:
 
         A guarded transition (AD-6, trap 18): Order.status moves from served to closed, in the
         same transaction as computing Order.total_amount (sum of price_at_add x quantity over
-        non-cancelled Order Items, AD-7) and returning the owning Table to available. All three
+        non-cancelled, non-rejected Order Items, AD-7) and returning the owning Table to available. All three
         writes commit together — a closed Order whose Table never reopened, or vice versa, is a
         state nothing later can recover from cleanly, the same "things that change together
         commit together" principle AD-6 already applies to pick-up's stock deduction.
 
         No row lock is needed for the total's aggregate read (contrast trap 27, Story 5.3): by
-        the time an Order reaches served, every non-cancelled Order Item is already ready
+        the time an Order reaches served, every non-cancelled, non-rejected Order Item is already ready
         (mark_served's own guard only accepts ready/pending, and ready per FR-12 means every
-        non-cancelled item already is), and no later action can change any Order Item's status
-        once its Order is served (cancel_item only accepts pending/in_preparation items, none of
-        which exist once served). The item set is frozen, so reading it here sees a value nothing
+        non-cancelled, non-rejected item already is), and no later action can change any Order Item's
+        status once its Order is served (cancel_item only accepts pending/in_preparation items, and
+        reject_item only a pending one, none of which exist once served). The item set is frozen,
+        so reading it here sees a value nothing
         else can be concurrently mutating.
 
         Args:
@@ -712,7 +794,7 @@ class OrderService:
         items_result = await db.execute(
             select(OrderItem.price_at_add, OrderItem.quantity).where(
                 OrderItem.order_id == order_id,
-                OrderItem.status != OrderItemStatus.cancelled,
+                OrderItem.status.not_in([OrderItemStatus.cancelled, OrderItemStatus.rejected]),
             )
         )
         total = sum(
@@ -756,14 +838,29 @@ class OrderService:
         return order
 
     async def _recompute_order_status(self, db: AsyncSession, order_id: int) -> tuple[Order | None, bool]:
-        """Recompute Order.status from its non-cancelled Items (FR-12).
+        """Recompute Order.status from its non-cancelled, non-rejected Items (FR-12).
 
         A pure recomputation, not a guarded transition (AD-6 does not apply): there is no expected
         prior status to check, only a value to overwrite with whatever the aggregate says right
         now, converging to the same correct answer however many times it runs *sequentially*.
-        `served`/`closed` are set explicitly (a later story's territory, FR-11/FR-8) and are never
-        overwritten here, forward-safe even though nothing today can ever produce a `served`/
-        `closed` Order yet.
+        `closed` is set explicitly (FR-8) and is never overwritten here — a closed Order is
+        genuinely terminal, its bill already settled and its Table already freed. `served` (this
+        batch's own fix) is NOT excluded the same way: `add_item` has no guard against adding a
+        new, pending Order Item to an already-served Order (a legitimate "one more thing" request
+        after the rest of the table was served), and that new item must both make the Order
+        recompute back to `in_preparation`/`pending` (so `close_order`'s own guard correctly waits
+        for it) and put the item back within `KitchenService.list_active_items`'s
+        `Order.status not in (served, closed)` filter, which excludes a `served` Order's items
+        wholesale — a `served` Order.status stuck in place is exactly what previously hid a
+        newly-added item from the Kitchen Display entirely (review finding).
+
+        Reaching an empty non-cancelled/non-rejected item set here while `order.status` is
+        `served` cannot happen: `mark_served`'s own guard requires the Order to already be
+        `ready`/`pending`, and every route that could remove a `served` Order's last active item
+        (`cancel_item`/`reject_item`) only accepts a `pending`/`in_preparation` item, which a truly
+        `served` Order (no `add_item` call since) has none of — so the `new_status = pending` empty
+        branch below is only ever reached with `order.status` already `pending`, never as a
+        surprise regression from `served`.
 
         The Order row is locked (`SELECT ... FOR UPDATE`, trap 9's row-lock idiom, the same
         pattern `InventoryService._lock_ingredient`/`MenuService._lock_dish` already use) before
@@ -792,13 +889,18 @@ class OrderService:
         order = result.scalar_one_or_none()
         if order is None:
             return None, False
-        if order.status not in (OrderStatus.pending, OrderStatus.in_preparation, OrderStatus.ready):
+        if order.status not in (
+            OrderStatus.pending,
+            OrderStatus.in_preparation,
+            OrderStatus.ready,
+            OrderStatus.served,
+        ):
             return order, False
 
         items_result = await db.execute(
             select(OrderItem.status).where(
                 OrderItem.order_id == order_id,
-                OrderItem.status != OrderItemStatus.cancelled,
+                OrderItem.status.not_in([OrderItemStatus.cancelled, OrderItemStatus.rejected]),
             )
         )
         statuses = items_result.scalars().all()

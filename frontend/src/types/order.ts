@@ -21,9 +21,10 @@ export interface Order {
 /**
  * Mirrors backend/data_models/order.py's OrderItemStatus enum values exactly.
  *
- * `cancelled` (AD-11) added by Story 3.4's own migration.
+ * `cancelled` (AD-11) added by Story 3.4's own migration. `rejected` added by this batch's own
+ * migration (a1b2c3d4e5f6) — a pending item the kitchen could not currently prepare.
  */
-export type OrderItemStatus = "pending" | "in_preparation" | "ready" | "cancelled";
+export type OrderItemStatus = "pending" | "in_preparation" | "ready" | "cancelled" | "rejected";
 
 /**
  * Mirrors backend/data_models/order.py's MAX_ORDER_ITEM_QUANTITY.
@@ -48,4 +49,7 @@ export interface OrderItem {
   notes: string | null;
   cook_id: number | null;
   price_at_add: string;
+  /** Set only when status is "rejected": the message stating how much of this item's quantity
+   * the kitchen could actually have prepared. Null for every other status. */
+  reject_reason: string | null;
 }
