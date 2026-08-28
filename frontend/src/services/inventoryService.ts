@@ -102,6 +102,49 @@ export function useCreateIngredient(): UseMutationResult<Ingredient, Error, Crea
 }
 
 /**
+ * Deactivates an Ingredient (this batch's #3/#4), blocking new Recipe Ingredient lines and new
+ * Stock Movements against it.
+ *
+ * Invalidates both INGREDIENTS_QUERY_KEY and ALERTS_QUERY_KEY on settle, matching
+ * useCreateIngredient's own double-invalidation: a deactivated Ingredient's is_active flag
+ * changed (the ingredients list must show it), and while deactivation itself never changes
+ * current_stock, invalidating alerts alongside it keeps this mutation consistent with every
+ * other one in this file rather than leaving one silent exception.
+ *
+ * @returns The TanStack Query mutation for deactivating an Ingredient by id.
+ */
+export function useDeactivateIngredient(): UseMutationResult<Ingredient, Error, number> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ingredientId: number) =>
+      apiRequest<Ingredient>(`/api/inventory/ingredients/${ingredientId}/deactivate`, { method: "POST" }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: INGREDIENTS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ALERTS_QUERY_KEY });
+    },
+  });
+}
+
+/**
+ * Reactivates a previously deactivated Ingredient (this batch's #3/#4).
+ *
+ * @returns The TanStack Query mutation for reactivating an Ingredient by id.
+ */
+export function useReactivateIngredient(): UseMutationResult<Ingredient, Error, number> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ingredientId: number) =>
+      apiRequest<Ingredient>(`/api/inventory/ingredients/${ingredientId}/reactivate`, { method: "POST" }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: INGREDIENTS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: ALERTS_QUERY_KEY });
+    },
+  });
+}
+
+/**
  * Fetches one Ingredient by id, for the Ingredient detail screen's stat cards (Story 4.1).
  *
  * @param ingredientId - The id of the Ingredient to fetch, or null while the route

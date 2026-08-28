@@ -173,21 +173,33 @@ export function useCreateChatSession(): UseMutationResult<
  *
  * Invalidates that session's message list on settle: a 409 (a reply is already generating) or a
  * 502 (the call failed) both mean the client's view of "what just happened" may be stale,
- * matching every other mutation in this file.
+ * matching every other mutation in this file. `suggestionId` (optional, this batch's #7) is not
+ * sent to the backend — the request body still carries only `content`, matching the backend's
+ * own `CreateChatMessageRequest` shape — it exists purely so `onSettled` can also invalidate
+ * `SUGGESTIONS_QUERY_KEY` when this send targets a Suggestion-tied session, since the backend may
+ * have just updated that Suggestion's `generated_recipe` in the same request.
  *
  * @returns The TanStack Query mutation for sending a Chat Message.
  */
-export function useSendChatMessage(): UseMutationResult<AIChatMessage[], Error, { sessionId: number; content: string }> {
+export function useSendChatMessage(): UseMutationResult<
+  AIChatMessage[],
+  Error,
+  { sessionId: number; content: string; suggestionId?: number }
+> {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ sessionId, content }: { sessionId: number; content: string }) =>
+    mutationFn: ({ sessionId, content }: { sessionId: number; content: string; suggestionId?: number }) =>
       apiRequest<AIChatMessage[]>(
         `/api/smart-chef/chat-sessions/${sessionId}/messages`,
         { method: "POST", body: JSON.stringify({ content }) },
         SEND_CHAT_MESSAGE_TIMEOUT_MS,
       ),
-    onSettled: (_data, _error, variables) =>
-      queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(variables.sessionId) }),
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey(variables.sessionId) });
+      if (variables.suggestionId !== undefined) {
+        void queryClient.invalidateQueries({ queryKey: SUGGESTIONS_QUERY_KEY });
+      }
+    },
   });
 }

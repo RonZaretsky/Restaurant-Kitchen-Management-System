@@ -59,7 +59,8 @@ _ERROR_DESCRIPTIONS = {
     404: "No matching Category, Dish, Ingredient, or Recipe Ingredient line was found",
     409: "The request conflicts with existing state (a duplicate name, an empty-recipe "
     "availability gate, a duplicate recipe ingredient, a unit that does not match the "
-    "ingredient's own, or removing a dish's last recipe ingredient while it is available)",
+    "ingredient's own, removing a dish's last recipe ingredient while it is available, or "
+    "adding a line against a deactivated ingredient)",
 }
 
 

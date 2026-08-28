@@ -62,7 +62,14 @@ _MOVEMENT_ERROR_DESCRIPTIONS = {
     401: _ERROR_DESCRIPTIONS[401],
     403: _ERROR_DESCRIPTIONS[403],
     404: "No ingredient matches the given id",
+    409: "The ingredient is deactivated, or this movement would drive current stock below zero",
     422: "movement_type is consumption, or quantity is invalid for the given movement_type",
+}
+
+_DEACTIVATE_ERROR_DESCRIPTIONS = {
+    401: _ERROR_DESCRIPTIONS[401],
+    403: _ERROR_DESCRIPTIONS[403],
+    404: "No ingredient matches the given id",
 }
 
 
@@ -210,7 +217,7 @@ async def list_movements(
     "/ingredients/{ingredient_id}/movements",
     response_model=StockMovementResponse,
     status_code=201,
-    responses=error_responses(_MOVEMENT_ERROR_DESCRIPTIONS, 401, 403, 404, 422),
+    responses=error_responses(_MOVEMENT_ERROR_DESCRIPTIONS, 401, 403, 404, 409, 422),
 )
 @inject
 async def record_movement(
@@ -237,3 +244,64 @@ async def record_movement(
             globally as a 404, if no Ingredient matches ingredient_id.
     """
     return await inventory_service.record_movement(db, actor, ingredient_id, payload)
+
+
+@router.post(
+    "/ingredients/{ingredient_id}/deactivate",
+    response_model=IngredientResponse,
+    responses=error_responses(_DEACTIVATE_ERROR_DESCRIPTIONS, 401, 403, 404),
+)
+@inject
+async def deactivate_ingredient(
+    ingredient_id: IngredientIdPath,
+    actor: InventoryWriteDep,
+    db: SessionDep,
+    inventory_service: InventoryService = Depends(Provide[Container.inventory_service]),
+) -> Ingredient:
+    """Deactivate an active Ingredient, blocking new Recipe Ingredient lines and new Stock
+    Movements against it (Story #3/#4).
+
+    Args:
+        ingredient_id: The id of the Ingredient to deactivate.
+        actor: The authenticated Warehouse Manager or Admin making the request.
+        db: The active database session.
+        inventory_service: Injected service handling the deactivation.
+
+    Returns:
+        The deactivated Ingredient.
+
+    Raises:
+        IngredientNotFoundError: Propagated from inventory_service, handled
+            globally as a 404, if no Ingredient matches ingredient_id.
+    """
+    return await inventory_service.deactivate_ingredient(db, actor, ingredient_id)
+
+
+@router.post(
+    "/ingredients/{ingredient_id}/reactivate",
+    response_model=IngredientResponse,
+    responses=error_responses(_DEACTIVATE_ERROR_DESCRIPTIONS, 401, 403, 404),
+)
+@inject
+async def reactivate_ingredient(
+    ingredient_id: IngredientIdPath,
+    actor: InventoryWriteDep,
+    db: SessionDep,
+    inventory_service: InventoryService = Depends(Provide[Container.inventory_service]),
+) -> Ingredient:
+    """Reactivate a previously deactivated Ingredient, restoring its normal use.
+
+    Args:
+        ingredient_id: The id of the Ingredient to reactivate.
+        actor: The authenticated Warehouse Manager or Admin making the request.
+        db: The active database session.
+        inventory_service: Injected service handling the reactivation.
+
+    Returns:
+        The reactivated Ingredient.
+
+    Raises:
+        IngredientNotFoundError: Propagated from inventory_service, handled
+            globally as a 404, if no Ingredient matches ingredient_id.
+    """
+    return await inventory_service.reactivate_ingredient(db, actor, ingredient_id)

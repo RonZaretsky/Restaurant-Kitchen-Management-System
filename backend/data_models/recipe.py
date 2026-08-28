@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, func, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -38,6 +38,11 @@ class Ingredient(Base):
     unit: Mapped[Unit] = mapped_column(Enum(Unit), nullable=False)
     current_stock: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False, default=0)
     min_stock_threshold: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
+    # Soft-deactivate (mirrors User.is_active exactly): flipping this never deletes or reassigns
+    # the row, so every historical Recipe Ingredient line and Stock Movement referencing this
+    # Ingredient stays intact. Not a CreateIngredientRequest field — always True at creation,
+    # never caller-supplied, same as User.is_active.
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -76,6 +81,7 @@ class IngredientResponse(BaseModel):
     unit: Unit
     current_stock: Decimal
     min_stock_threshold: Decimal
+    is_active: bool
     created_at: datetime
     updated_at: datetime
 

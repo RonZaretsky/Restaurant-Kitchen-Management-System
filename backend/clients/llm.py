@@ -106,3 +106,43 @@ class LLMClient:
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )
         return response.choices[0].message.content
+
+    async def send_chat_message_with_recipe_update(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        """Send a chat conversation to the configured model and return a structured envelope
+        carrying both a conversational reply and an optional updated recipe.
+
+        Used only for Chat Sessions tied to a Recipe Suggestion (a Dish-tied session stays on
+        `send_chat_message`'s free-text contract, unchanged) — a separate method rather than a
+        branch inside `send_chat_message`, matching how `generate_recipe`/`send_chat_message` are
+        already two separate methods for two different response shapes, keeping each method's
+        contract to exactly one shape.
+
+        Same call shape as `send_chat_message`, but with `response_format={"type": "json_object"}`
+        added (JSON mode, same mechanism `generate_recipe` already uses) and returning the parsed
+        JSON dict directly (`json.loads`, same as `generate_recipe`) rather than a plain string.
+
+        Args:
+            messages: The full conversation to send, in OpenAI Chat Completions message shape (a
+                system message instructing the JSON envelope shape, plus the prior turns and the
+                new user message, in order).
+
+        Returns:
+            The parsed JSON response as a dict, expected to have a "reply" string and an
+            "updated_recipe" key that is either null or a dict (not validated here — the caller,
+            `AIService`, validates shape).
+
+        Raises:
+            RuntimeError: If no API key was configured at construction.
+            Exception: Any exception raised by the OpenAI SDK (rate limit, auth, timeout, etc.),
+                or `json.JSONDecodeError` if the response content is not valid JSON.
+        """
+        if self._client is None:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
+        response = await self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            response_format={"type": "json_object"},
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+        content = response.choices[0].message.content
+        return json.loads(content)

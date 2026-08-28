@@ -70,6 +70,13 @@ class AIService:
         # message-ordering guarantee AC2 relies on. Lives on this same Singleton, not a
         # container.py change — see this class's own Singleton reasoning above.
         self._chat_in_flight: set[int] = set()
+        # A third in-process guard (this batch's #7, AD-14), keyed by Recipe Suggestion id rather
+        # than session id: today's _chat_in_flight alone does not stop two *different* Chat
+        # Sessions both tied to the *same* Suggestion from racing to overwrite its
+        # generated_recipe (e.g. two Cooks each opening their own "Discuss via chat" thread on
+        # it). Checked/reserved alongside _chat_in_flight only when a session targets a
+        # Suggestion, released in the same finally — same "reject, don't queue" philosophy.
+        self._suggestion_chat_in_flight: set[int] = set()
 
     async def generate_suggestion(
         self, db: AsyncSession, actor: User, direction: str | None
@@ -147,11 +154,7 @@ class AIService:
 
             try:
                 generated_recipe = await self._llm_client.generate_recipe(prompt)
-                if not isinstance(generated_recipe, dict) or not (
-                    isinstance(generated_recipe.get("name"), str)
-                    and isinstance(generated_recipe.get("ingredients"), list)
-                    and isinstance(generated_recipe.get("plating"), str)
-                ):
+                if not self._is_recipe_shape_valid(generated_recipe):
                     raise ValueError("generated_recipe missing expected name/ingredients/plating shape")
             except Exception:
                 self._logger.error(
@@ -179,6 +182,29 @@ class AIService:
             return AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=None)
         finally:
             self._in_flight.discard(actor.id)
+
+    @staticmethod
+    def _is_recipe_shape_valid(recipe: object) -> bool:
+        """Validate a parsed recipe's shape (name/ingredients/plating present with the expected
+        types), shared by every write path that can persist a `generated_recipe` value —
+        `generate_suggestion`'s own OpenAI response (Story 6.1) and `send_message`'s
+        chat-driven `updated_recipe` (Story 6.3) — so the two can never drift into different
+        validation rules.
+
+        Args:
+            recipe: The parsed value to validate. Typed as `object`, not `dict`, since it comes
+                straight from parsed JSON and is not guaranteed to even be a dict.
+
+        Returns:
+            True if recipe is a dict with a "name" string, an "ingredients" list, and a
+            "plating" string; False otherwise.
+        """
+        return (
+            isinstance(recipe, dict)
+            and isinstance(recipe.get("name"), str)
+            and isinstance(recipe.get("ingredients"), list)
+            and isinstance(recipe.get("plating"), str)
+        )
 
     @staticmethod
     def _waste_risk_rank(ingredient: Ingredient) -> Decimal:
@@ -466,10 +492,26 @@ class AIService:
         Rejects a second concurrent send into the *same* session immediately (AC3's "prior
         messages as conversational context" would otherwise race), before any OpenAI call
         (`_chat_in_flight`, keyed by session id, independent of `_in_flight`'s per-Cook guard).
+        A Suggestion-tied session additionally checks `_suggestion_chat_in_flight` (keyed by
+        Suggestion id, this batch's #7): two *different* sessions tied to the *same* Suggestion
+        must not both be allowed to race an update to its `generated_recipe`, which
+        `_chat_in_flight` alone (keyed by session id) does not prevent.
 
         The system message is built from the target's *current* state on every send (a live
         read, never a value captured once at session-creation) — if a Dish's recipe changes
         mid-conversation, the next message the assistant answers reflects the current recipe.
+
+        Branches on `session.suggestion_id is not None`: a Suggestion-tied session calls
+        `LLMClient.send_chat_message_with_recipe_update`, requesting a JSON envelope
+        (`{"reply": ..., "updated_recipe": ...}`, see `_build_chat_system_message`'s Suggestion
+        branch) and validating `updated_recipe`, when not null, against the exact same shape
+        check `generate_suggestion` uses (`_is_recipe_shape_valid`), so the two write paths can
+        never drift into different validation rules. If present, the Suggestion's
+        `generated_recipe` is reassigned (a plain `JSON` column, not `MutableDict`-wrapped, so
+        SQLAlchemy only detects a full attribute reassignment, never an in-place mutation) before
+        the two new Messages are added, so the single `db.commit()` below covers all three writes
+        atomically. A Dish-tied session is unchanged: it still calls `send_chat_message`, the
+        free-text contract.
 
         Args:
             db: The active database session.
@@ -482,12 +524,16 @@ class AIService:
 
         Raises:
             ChatSessionNotFoundError: If no Chat Session matches session_id.
-            ChatMessageInProgressError: If a reply is already generating for this session (AC3).
-            AIChatReplyFailedError: If the OpenAI call fails, times out, or errors (AC4).
+            ChatMessageInProgressError: If a reply is already generating for this session, or (for
+                a Suggestion-tied session) for another session tied to the same Suggestion (AC3).
+            AIChatReplyFailedError: If the OpenAI call fails, times out, errors, or (for a
+                Suggestion-tied session) returns a malformed envelope or updated_recipe (AC4).
         """
         session = await db.get(AIChatSession, session_id)
         if session is None:
             raise ChatSessionNotFoundError()
+
+        is_suggestion_chat = session.suggestion_id is not None
 
         if session_id in self._chat_in_flight:
             self._logger.warning(
@@ -497,7 +543,19 @@ class AIService:
             )
             raise ChatMessageInProgressError()
 
+        if is_suggestion_chat and session.suggestion_id in self._suggestion_chat_in_flight:
+            self._logger.warning(
+                "Chat message rejected for user_id={}: session_id={} suggestion_id={} already"
+                " in flight for another session",
+                actor.id,
+                session_id,
+                session.suggestion_id,
+            )
+            raise ChatMessageInProgressError()
+
         self._chat_in_flight.add(session_id)
+        if is_suggestion_chat:
+            self._suggestion_chat_in_flight.add(session.suggestion_id)
         try:
             dish: Dish | None = None
             suggestion: AIRecipeSuggestion | None = None
@@ -521,10 +579,24 @@ class AIService:
             messages.extend({"role": message.role.value, "content": message.content} for message in prior_messages)
             messages.append({"role": "user", "content": content})
 
+            updated_recipe: dict | None = None
             try:
-                reply = await self._llm_client.send_chat_message(messages)
-                if not isinstance(reply, str) or not reply.strip():
-                    raise ValueError("chat reply missing expected non-empty text content")
+                if is_suggestion_chat:
+                    envelope = await self._llm_client.send_chat_message_with_recipe_update(messages)
+                    if not isinstance(envelope, dict):
+                        raise ValueError("chat envelope missing expected reply/updated_recipe shape")
+                    reply = envelope.get("reply")
+                    if not isinstance(reply, str) or not reply.strip():
+                        raise ValueError("chat reply missing expected non-empty text content")
+                    raw_updated_recipe = envelope.get("updated_recipe")
+                    if raw_updated_recipe is not None:
+                        if not self._is_recipe_shape_valid(raw_updated_recipe):
+                            raise ValueError("updated_recipe missing expected name/ingredients/plating shape")
+                        updated_recipe = raw_updated_recipe
+                else:
+                    reply = await self._llm_client.send_chat_message(messages)
+                    if not isinstance(reply, str) or not reply.strip():
+                        raise ValueError("chat reply missing expected non-empty text content")
             except Exception as exc:
                 self._logger.error(
                     "Chat message failed for user_id={}: session_id={}: {}",
@@ -538,11 +610,17 @@ class AIService:
             assistant_message = AIChatMessage(session_id=session_id, role=ChatRole.assistant, content=reply)
             db.add(user_message)
             db.add(assistant_message)
+            if updated_recipe is not None:
+                assert suggestion is not None  # only set when is_suggestion_chat, which gates updated_recipe
+                suggestion.generated_recipe = updated_recipe
             await db.commit()
             await db.refresh(user_message)
             await db.refresh(assistant_message)
             self._logger.info(
-                "Chat message sent by user_id={}: session_id={}", actor.id, session_id
+                "Chat message sent by user_id={}: session_id={} recipe_updated={}",
+                actor.id,
+                session_id,
+                updated_recipe is not None,
             )
             return [
                 AIChatMessageResponse.model_validate(user_message),
@@ -550,6 +628,8 @@ class AIService:
             ]
         finally:
             self._chat_in_flight.discard(session_id)
+            if is_suggestion_chat:
+                self._suggestion_chat_in_flight.discard(session.suggestion_id)
 
     @staticmethod
     async def _list_messages_ascending(db: AsyncSession, session_id: int) -> Sequence[AIChatMessage]:
@@ -578,10 +658,15 @@ class AIService:
     ) -> dict[str, str]:
         """Build the system message describing the chat's target recipe (Story 6.3).
 
-        Instructs the model it is a chef assistant discussing a specific recipe (naming it),
-        states the recipe's current ingredients/plating so it can reason about it, and asks for
-        plain conversational replies — no JSON mode this time, a system-message instruction
-        rather than `response_format`.
+        Instructs the model it is a chef assistant discussing a specific recipe (naming it) and
+        states the recipe's current ingredients/plating so it can reason about it. The Dish
+        branch asks for plain conversational replies (no JSON mode, a system-message instruction
+        rather than `response_format` — a Dish is a live orderable menu item, bigger blast
+        radius, so its chat stays discussion-only). The Suggestion branch instead requests a JSON
+        envelope (mirroring `_build_prompt`'s own "Respond with only a JSON object" wording),
+        since `send_message` calls `LLMClient.send_chat_message_with_recipe_update` (JSON mode)
+        only for a Suggestion-tied session, letting the Cook ask for a recipe change and have it
+        applied in the same turn (this batch's #7).
 
         Args:
             dish: The Dish this session targets, or None if it targets a Suggestion instead.
@@ -614,6 +699,10 @@ class AIService:
                 f'You are a chef assistant discussing a proposed recipe, "{recipe.get("name")}", a '
                 "Recipe Suggestion not yet confirmed into a Dish.\n\n"
                 f"Ingredients:\n{ingredients_text}\n\nPlating: {recipe.get('plating')}\n\n"
-                "Discuss and help improve this recipe conversationally. Reply in plain text, not JSON."
+                'Respond with only a JSON object of this exact shape: {"reply": "<conversational '
+                'reply text>", "updated_recipe": null or {"name": "<dish name>", "ingredients": '
+                '[{"name": ..., "quantity": ...}], "plating": "<...>"}}. Set updated_recipe only '
+                "if the Cook's message asks for a change to the recipe; otherwise set it to null "
+                "and just answer in reply."
             )
         return {"role": "system", "content": content}

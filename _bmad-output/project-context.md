@@ -170,7 +170,12 @@ backend/
                      free text, not a structured suggestion) and returns the plain string reply
                      directly. Fulfills this class's own Story 6.1 docstring commitment ("future
                      Smart Chef calls extend this same class rather than introducing a second
-                     OpenAI client")
+                     OpenAI client"). Fix (2026-08-27) added a third method,
+                     send_chat_message_with_recipe_update(messages) -> dict, for Suggestion-tied
+                     chat only: same call shape as send_chat_message, but with response_format
+                     JSON mode added back and json.loads on the response, same as generate_recipe -
+                     a separate method rather than a branch inside send_chat_message, keeping each
+                     method's contract to exactly one response shape
   data_models/       7 ORM modules + base.py + auth.py + errors.py, the full schema, already written.
                      recipe.py, menu.py and order.py also hold their own Pydantic request/response
                      schemas colocated with their ORM class, matching user.py's shape. menu.py owns
@@ -194,8 +199,17 @@ backend/
                      commit silently discarding the earlier delta (both StockMovement rows would
                      still insert correctly either way). Sign convention (AD-16): purchase/waste
                      submit a positive magnitude and the service applies +/-; adjustment submits the
-                     already-signed delta directly. current_stock is never floor-capped at zero,
-                     verified by tests asserting the exact negative resulting value. Story 4.2 added
+                     already-signed delta directly. Fix (2026-08-27, AD-16 reversed): current_stock
+                     is now floor-capped at zero — a movement that would drive it negative is
+                     rejected (`StockMovementWouldGoNegativeError`, 409), checked before any
+                     mutation so no rollback is needed, mirroring `_lock_ingredient`'s own
+                     not-found branch's shape. `apply_consumption` (below) gained the identical
+                     check (`InsufficientStockError`). Also gained an `is_active` guard (new
+                     `IngredientNotActiveError`, 409) rejecting a movement against a deactivated
+                     Ingredient — see `deactivate_ingredient`/`reactivate_ingredient` below,
+                     mirroring `UserService.deactivate_user`/`reactivate_user` exactly (idempotent
+                     flag flip, no lock needed, unlike the numeric fields this file's other methods
+                     guard). Story 4.2 added
                      list_alerts (a plain derived-state SELECT, current_stock < min_stock_threshold,
                      no stored entity — see "Domain rules worth restating") and extended
                      record_movement to capture was_low from the row _lock_ingredient already holds,
@@ -258,7 +272,14 @@ backend/
                      pending, sets cook_id, then loops each RecipeIngredient calling the new
                      InventoryService.apply_consumption inside the same transaction, one
                      db.commit() for the status change and every Ingredient decrement together,
-                     AD-6/NFR-3) and mark_item_ready (WHERE status == in_preparation, pure status
+                     AD-6/NFR-3. Fix (2026-08-27, AD-16 reversed): apply_consumption now rejects
+                     (InsufficientStockError) instead of driving current_stock negative;
+                     pick_up_item's except tuple, already catching IngredientNotFoundError with an
+                     explicit db.rollback() (trap 20) before re-raising, was extended to also catch
+                     this — the same rollback discards the guarded status UPDATE plus every
+                     already-applied RecipeIngredient line's deduction from earlier in the same
+                     loop, giving whole-item all-or-nothing rejection with no schema change, the
+                     item simply stays pending) and mark_item_ready (WHERE status == in_preparation, pure status
                      change, no cook_id reassignment). OrderService's first cross-service
                      collaborator: __init__ now also takes inventory_service, which meant
                      container.py's order_service provider had to move below inventory_service's
@@ -350,7 +371,22 @@ backend/
                      null/blank reply would have shipped as a "successful" Chat Message; fixed to
                      validate the reply's shape first (mirrors generate_suggestion's own
                      response-shape-validation precedent) and to log the caught exception's
-                     type/message on failure, previously a static string
+                     type/message on failure, previously a static string. Fix (2026-08-27): chat
+                     can now actually revise a Suggestion's recipe, not just discuss it —
+                     send_message branches on session.suggestion_id is not None. Suggestion-tied:
+                     calls the new LLMClient.send_chat_message_with_recipe_update (JSON-mode
+                     envelope {reply, updated_recipe}) instead of send_chat_message; validates
+                     updated_recipe (when not null) against generate_suggestion's own shape check,
+                     now extracted into a shared _is_recipe_shape_valid staticmethod so the two
+                     write paths can never drift; reassigns (never mutates in place — a plain JSON
+                     column, not MutableDict-wrapped) suggestion.generated_recipe before the same
+                     db.commit() that persists the two new Messages, so all three writes stay
+                     atomic. Dish-tied sessions are unchanged (still free-text send_chat_message —
+                     a Dish is a live orderable menu item, deliberately not chat-mutable). A third
+                     in-process guard, _suggestion_chat_in_flight: set[int] (keyed by suggestion id,
+                     alongside _chat_in_flight's per-session and _in_flight's per-Cook sets on the
+                     same Singleton), closes a race _chat_in_flight alone could not: two different
+                     Chat Sessions tied to the same Suggestion racing to overwrite generated_recipe
   exceptions/__init__.py    AuthError family (401), ForbiddenError (403), ConflictError family (409),
                      NotFoundError family (404, one shared base since Story 2.3, see trap 17).
                      Story 6.1 added a fifth family, ExternalServiceError (502) — the first
@@ -362,7 +398,14 @@ backend/
                      more, one per existing family (ChatSessionNotFoundError extends
                      NotFoundError, ChatMessageInProgressError extends ConflictError,
                      AIChatReplyFailedError extends ExternalServiceError) — again no new handler
-                     needed
+                     needed. Fix (2026-08-27) added three more ConflictError subclasses:
+                     StockMovementWouldGoNegativeError and InsufficientStockError (AD-16 reversed,
+                     the manual-movement and pick-up-consumption floor-check rejections
+                     respectively — distinct classes per call site, matching this file's existing
+                     TableInUseError-vs-TableNotAvailableError precedent) and
+                     IngredientNotActiveError (blocks a new Recipe Ingredient line or Stock
+                     Movement against a deactivated Ingredient, mirrors DishNotAvailableError's
+                     shape)
   exceptions/handlers.py    register_exception_handlers(app); five handlers as of Story 6.1, one
                      per family
 ```
@@ -521,7 +564,12 @@ frontend/src/
                         error Alert on a failed send (AC4). Rendered from two call sites on
                         SmartChefPage.tsx: a suggestion's own "Discuss via chat" action (a new
                         session), and a row in the new Chat Sessions list (reopening an existing
-                        one)
+                        one). Fix (2026-08-27) added an optional suggestionId prop, passed through
+                        to useSendChatMessage so its onSettled can invalidate SUGGESTIONS_QUERY_KEY
+                        alongside chatMessagesQueryKey - without this, a chat turn that revises a
+                        Suggestion's generated_recipe (see ai_service.py's send_message fix) would
+                        persist server-side but never appear in SuggestionSummary.tsx's already-live
+                        read of the suggestion prop
   components/orders/OrderItemStatusBadge.tsx  Story 3.2: the shared Order Item status badge
                         (UX-DR1, MUI Chip + icon + spelled label), built as its own file rather
                         than inlined so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can
@@ -562,7 +610,14 @@ frontend/src/
                         RowsSkeleton, navigationConfig.ts (ROLE_HOME_PATH/ROLE_NAV_ITEMS/
                         ROLE_PATH_PREFIX + canRoleVisit(), the single source of truth the nav and
                         the guard both read; Story 2.6 made reachability derive from ROLE_NAV_ITEMS
-                        so Admin's cross-prefix Ingredients grant cannot drift from its nav entry)
+                        so Admin's cross-prefix Ingredients grant cannot drift from its nav entry.
+                        Fix (2026-08-27): a nav item's `includeSubroutes?: boolean` opt-in flag,
+                        unset everywhere except Admin's Ingredients entry, extends canRoleVisit's
+                        exact-match nav clause to that entry's own subtree only (segment-aware,
+                        same shape as the prefix clause) - closes the gap where Admin could open
+                        the Ingredients list but not an individual Ingredient's detail page
+                        (`/warehouse/ingredients/:id`), which Story 2.6's own review had
+                        deliberately withheld from Admin at the time)
   pages/{role}/           every routed IA surface is now a real screen (last one, Admin's Users
                         screen, shipped in Story 1.6) - no placeholder components remain:
                         admin/MenuManagementPage.tsx (Story 2.3; Story 2.6 added the always-visible
@@ -587,7 +642,18 @@ frontend/src/
                         cache; Admin (who can also reach this screen) gets correct data on load but
                         no live re-highlighting, since the backend only broadcasts to
                         warehouse_manager — a known, deferred gap, not a regression, since no AC
-                        asks for Admin live updates),
+                        asks for Admin live updates. Fix (2026-08-27) added standard MUI
+                        TableSortLabel sorting on all four columns (no prior sortable-table
+                        precedent anywhere in this frontend, built from scratch): the
+                        shortage-first-then-alphabetical view above stays the *initial* state,
+                        clicking a header switches to sorting the full list by that column, and
+                        shortage highlighting keeps rendering regardless of the active sort - an
+                        orthogonal visual treatment, not a sort key. Also added a Status column
+                        (Active/Inactive Chip) and a per-row Deactivate/Reactivate action, mirroring
+                        UsersPage.tsx's own in-row "Deactivate {name}?" inline-confirm pattern
+                        exactly, backed by new useDeactivateIngredient/useReactivateIngredient
+                        mutations in inventoryService.ts, both invalidating the ingredients and
+                        alerts query keys on settle like useCreateIngredient already does),
                         warehouse/IngredientDetailPage.tsx (Story 4.1, replacing Story 1.4's
                         placeholder: stat cards for current stock and minimum threshold, a
                         log-movement form restricted to Purchase/Waste/Adjustment (Consumption is

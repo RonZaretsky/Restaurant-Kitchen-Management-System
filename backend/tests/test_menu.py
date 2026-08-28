@@ -696,6 +696,32 @@ async def test_adding_a_recipe_ingredient_for_a_nonexistent_ingredient_is_reject
 
 
 @pytest.mark.asyncio
+async def test_adding_a_recipe_ingredient_for_a_deactivated_ingredient_is_rejected(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: this batch's #4 guard — a *new* Recipe Ingredient line is blocked against a
+    # deactivated Ingredient.
+    await _login_as_admin(client, db_session)
+    category = await _create_category(client, "Pizza")
+    dish = await _create_dish(client, category["id"])
+    ingredient = await _create_ingredient(db_session)
+    deactivate_response = await client.post(f"/api/inventory/ingredients/{ingredient.id}/deactivate")
+    assert deactivate_response.status_code == 200
+
+    # Act
+    response = await client.post(
+        f"/api/menu/dishes/{dish['id']}/recipe-ingredients",
+        json={"ingredient_id": ingredient.id, "quantity": "0.300", "unit": "kg"},
+    )
+
+    # Assert
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Rejected, ingredient is deactivated"
+    read_response = await client.get(f"/api/menu/dishes/{dish['id']}/recipe-ingredients")
+    assert read_response.json() == []
+
+
+@pytest.mark.asyncio
 async def test_adding_a_duplicate_recipe_ingredient_is_rejected(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

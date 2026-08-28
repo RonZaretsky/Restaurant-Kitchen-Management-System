@@ -80,6 +80,11 @@ class FakeLLMClient:
         self.chat_error: Exception | None = None
         self.chat_calls: list[list[dict[str, str]]] = []
         self.chat_started = asyncio.Event()
+        # This batch's #7 (Suggestion-tied chat mutates the recipe): send_chat_message_with_
+        # recipe_update reuses chat_calls/chat_started/block_event/chat_error, the same shape
+        # send_chat_message already uses, rather than a second set of fields — only the returned
+        # envelope shape differs (adds updated_recipe alongside reply).
+        self.chat_updated_recipe: dict | None = None
 
     async def generate_recipe(self, prompt: str) -> dict:
         self.calls.append(prompt)
@@ -113,6 +118,18 @@ class FakeLLMClient:
             raise self.chat_error
         assert self.chat_response is not None
         return self.chat_response
+
+    async def send_chat_message_with_recipe_update(self, messages: list[dict[str, str]]) -> dict:
+        self.chat_calls.append(messages)
+        is_first_call = len(self.chat_calls) == 1
+        if is_first_call:
+            self.chat_started.set()
+        if self.block_event is not None and is_first_call:
+            await self.block_event.wait()
+        if self.chat_error is not None:
+            raise self.chat_error
+        assert self.chat_response is not None
+        return {"reply": self.chat_response, "updated_recipe": self.chat_updated_recipe}
 
 
 @pytest_asyncio.fixture
@@ -910,6 +927,166 @@ async def test_a_different_sessions_send_is_not_blocked_by_another_sessions_in_f
     # Assert
     assert first_response.status_code == 201
     assert second_response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_a_suggestion_chat_revision_request_updates_the_generated_recipe(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange (this batch's #7): the Cook asks for a change, the model returns an updated_recipe.
+    # suggestion_id is captured as a plain int up front (not suggestion.id read later), matching
+    # this file's own established pattern: accessing an attribute on an ORM object after
+    # db_session.expire_all() triggers a synchronous lazy-load an AsyncSession cannot perform
+    # outside an explicit await.
+    cook = await _login_as(client, db_session, UserRole.cook, "amir")
+    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
+    suggestion_id = suggestion.id
+    session_id = (
+        await client.post("/api/smart-chef/chat-sessions", json={"suggestion_id": suggestion_id})
+    ).json()["id"]
+    updated_recipe = {
+        "name": "Vegan Roasted Zucchini Flatbread",
+        "ingredients": [{"name": "Zucchini", "quantity": "1.2 kg"}],
+        "plating": "Sliced thin, served on a wooden board, no cheese.",
+    }
+    fake_llm_client.chat_updated_recipe = updated_recipe
+
+    # Act
+    response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "Make it vegan"}
+    )
+
+    # Assert: the response's own two messages persist as usual...
+    assert response.status_code == 201
+    messages = response.json()
+    assert messages[1]["content"] == fake_llm_client.chat_response
+
+    # ...and the Suggestion's generated_recipe is updated in the same transaction.
+    db_session.expire_all()
+    saved = await db_session.get(AIRecipeSuggestion, suggestion_id)
+    assert saved.generated_recipe == updated_recipe
+
+    # The Admin-facing list also reflects the update once refetched.
+    list_response = await client.get("/api/smart-chef/suggestions")
+    body = {item["id"]: item for item in list_response.json()}
+    assert body[suggestion_id]["generated_recipe"] == updated_recipe
+
+
+@pytest.mark.asyncio
+async def test_a_suggestion_chat_with_no_revision_requested_leaves_the_recipe_untouched(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: updated_recipe stays None (the FakeLLMClient's default), matching "just answer,
+    # no revision requested".
+    cook = await _login_as(client, db_session, UserRole.cook, "amir")
+    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
+    suggestion_id = suggestion.id
+    original_recipe = suggestion.generated_recipe
+    session_id = (
+        await client.post("/api/smart-chef/chat-sessions", json={"suggestion_id": suggestion_id})
+    ).json()["id"]
+
+    # Act
+    response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "What herbs would work well?"}
+    )
+
+    # Assert
+    assert response.status_code == 201
+    db_session.expire_all()
+    saved = await db_session.get(AIRecipeSuggestion, suggestion_id)
+    assert saved.generated_recipe == original_recipe
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_updated_recipe_shape_is_rejected_and_persists_no_messages(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: syntactically valid JSON, but updated_recipe is missing the expected keys.
+    cook = await _login_as(client, db_session, UserRole.cook, "amir")
+    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
+    suggestion_id = suggestion.id
+    original_recipe = suggestion.generated_recipe
+    session_id = (
+        await client.post("/api/smart-chef/chat-sessions", json={"suggestion_id": suggestion_id})
+    ).json()["id"]
+    fake_llm_client.chat_updated_recipe = {"unexpected": "shape"}
+
+    # Act
+    response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "Make it vegan"}
+    )
+
+    # Assert
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Couldn't get a response right now"
+    result = await db_session.execute(select(AIChatMessage).where(AIChatMessage.session_id == session_id))
+    assert result.scalars().all() == []
+    db_session.expire_all()
+    saved = await db_session.get(AIRecipeSuggestion, suggestion_id)
+    assert saved.generated_recipe == original_recipe
+
+
+@pytest.mark.asyncio
+async def test_a_dish_tied_session_never_calls_the_recipe_update_method(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: a Dish-tied session stays on the free-text contract even when the fake would
+    # otherwise report an updated_recipe, proving the branch, not just the response shape.
+    await _login_as(client, db_session, UserRole.cook, "amir")
+    dish = await _create_dish(db_session, "Flatbread")
+    session_id = (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})).json()["id"]
+    fake_llm_client.chat_updated_recipe = {
+        "name": "Should never apply",
+        "ingredients": [],
+        "plating": "n/a",
+    }
+
+    # Act
+    response = await client.post(
+        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "Any tips?"}
+    )
+
+    # Assert: succeeds via the plain free-text reply, never the JSON envelope method.
+    assert response.status_code == 201
+    assert response.json()[1]["content"] == fake_llm_client.chat_response
+
+
+@pytest.mark.asyncio
+async def test_two_sessions_on_the_same_suggestion_sending_concurrently_only_one_succeeds(
+    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
+) -> None:
+    # Arrange: two different Chat Sessions both tied to the same Suggestion (e.g. two Cooks each
+    # opening their own "Discuss via chat" thread on it) must not race an update to its
+    # generated_recipe — _suggestion_chat_in_flight (keyed by suggestion id, independent of
+    # _chat_in_flight's per-session guard) is what rejects the second.
+    cook = await _login_as(client, db_session, UserRole.cook, "amir")
+    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
+    first_session_id = (
+        await client.post("/api/smart-chef/chat-sessions", json={"suggestion_id": suggestion.id})
+    ).json()["id"]
+    second_session_id = (
+        await client.post("/api/smart-chef/chat-sessions", json={"suggestion_id": suggestion.id})
+    ).json()["id"]
+    fake_llm_client.block_event = asyncio.Event()
+
+    # Act
+    first_task = asyncio.create_task(
+        client.post(
+            f"/api/smart-chef/chat-sessions/{first_session_id}/messages", json={"content": "First message"}
+        )
+    )
+    await asyncio.wait_for(fake_llm_client.chat_started.wait(), timeout=2)
+    second_response = await client.post(
+        f"/api/smart-chef/chat-sessions/{second_session_id}/messages", json={"content": "Second message"}
+    )
+    fake_llm_client.block_event.set()
+    first_response = await first_task
+
+    # Assert
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+    assert second_response.json()["detail"] == "Rejected, a reply is already generating for this session"
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ from exceptions import (
     DishNotAvailableError,
     DishNotFoundError,
     IngredientNotFoundError,
+    InsufficientStockError,
     OrderItemNotCancellableError,
     OrderItemNotFoundError,
     OrderItemNotInPreparationError,
@@ -434,9 +435,10 @@ class OrderService:
         deduction and StockMovement insert (InventoryService.apply_consumption, trap 9's row lock,
         composed here rather than duplicated). Guarding on status == pending is also what rejects
         a re-trigger on an already in_preparation/ready/cancelled item (AC2/AC5): the precondition
-        simply no longer holds, regardless of what the current status actually is. Deduction never
-        floor-caps at zero (AD-16, AC7) — a Recipe requiring more than is currently in stock still
-        deducts in full, and Epic 4's existing low-stock crossing check still fires for it (AC7),
+        simply no longer holds, regardless of what the current status actually is. Deduction is
+        rejected, whole-item and all-or-nothing, if any Recipe Ingredient line would drive its
+        Ingredient's current_stock negative (AD-16 reversed) — see InsufficientStockError below.
+        Epic 4's existing low-stock crossing check still fires on a successful pick-up (AC7),
         broadcast only after this transaction's own commit succeeds.
 
         Args:
@@ -451,6 +453,10 @@ class OrderService:
         Raises:
             OrderItemNotFoundError: If no Order Item matches item_id on order_id.
             OrderItemNotPendingError: If the item's status is not pending at the moment of the write.
+            InsufficientStockError: If any Recipe Ingredient line would drive its Ingredient's
+                current_stock negative (whole-item, all-or-nothing: the guarded status UPDATE and
+                every already-applied deduction from an earlier line in this same pick-up are all
+                rolled back together, the item stays pending).
         """
         item = await self._get_item(db, actor, order_id, item_id)
 
@@ -497,13 +503,17 @@ class OrderService:
                 )
                 if crossed:
                     crossed_ingredient_ids.append(recipe_ingredient.ingredient_id)
-        except IngredientNotFoundError:
+        except (IngredientNotFoundError, InsufficientStockError):
             # Explicit rollback, matching every other rejection branch in this file (trap 20):
             # the guarded status UPDATE above already ran on this session but was never committed,
             # so this discards it rather than relying on the session's own close-time behavior.
+            # Also discards every already-applied deduction from an earlier RecipeIngredient line
+            # in this same loop (whole-item, all-or-nothing rejection): apply_consumption stages
+            # its mutation on this same session without committing, so a later line's rejection
+            # rolls every earlier line's deduction back too.
             self._logger.error(
                 "Order item pick-up failed for user_id={}: order_id={} item_id={} references a"
-                " missing ingredient",
+                " missing ingredient or insufficient stock",
                 actor.id,
                 order_id,
                 item_id,

@@ -1,21 +1,29 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type MouseEvent } from "react";
 import { useNavigate } from "react-router";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import MenuItem from "@mui/material/MenuItem";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import TableSortLabel from "@mui/material/TableSortLabel";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import { RowsSkeleton } from "../../components/shell/RowsSkeleton";
 import { ApiError } from "../../services/httpClient";
-import { useAlerts, useCreateIngredient, useIngredients } from "../../services/inventoryService";
+import {
+  useAlerts,
+  useCreateIngredient,
+  useDeactivateIngredient,
+  useIngredients,
+  useReactivateIngredient,
+} from "../../services/inventoryService";
 import type { Ingredient } from "../../types/inventory";
 import type { Unit } from "../../types/menu";
 
@@ -26,6 +34,17 @@ const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
 const INVALID_AMOUNT_MESSAGE = "Enter a number, zero or greater";
 
 const UNIT_OPTIONS: Unit[] = ["kg", "liter", "piece"];
+
+/** The four sortable columns (this batch's #6). */
+type SortableColumn = "name" | "unit" | "current_stock" | "min_stock_threshold";
+type SortOrder = "asc" | "desc";
+
+const COLUMNS: { key: SortableColumn; label: string }[] = [
+  { key: "name", label: "Name" },
+  { key: "unit", label: "Unit" },
+  { key: "current_stock", label: "Current stock" },
+  { key: "min_stock_threshold", label: "Threshold" },
+];
 
 /**
  * Reads the human-readable message off a failed request.
@@ -61,14 +80,156 @@ function parseNonNegativeAmount(raw: string): string | null {
 }
 
 /**
+ * Compares two Ingredients by one sortable column (this batch's #6).
+ *
+ * `current_stock`/`min_stock_threshold` compare numerically (parsed off their
+ * Decimal-as-string wire shape), `name`/`unit` compare via `localeCompare`,
+ * matching the default shortage-sort's own alphabetical tiebreak.
+ *
+ * @param a - The first Ingredient.
+ * @param b - The second Ingredient.
+ * @param column - The column to compare by.
+ * @returns A negative, zero, or positive number, ascending order.
+ */
+function compareByColumn(a: Ingredient, b: Ingredient, column: SortableColumn): number {
+  if (column === "current_stock" || column === "min_stock_threshold") {
+    return Number(a[column]) - Number(b[column]);
+  }
+  return a[column].localeCompare(b[column]);
+}
+
+interface IngredientRowProps {
+  ingredient: Ingredient;
+  inShortage: boolean;
+  onNavigate: () => void;
+}
+
+/**
+ * One row of the Ingredients list, owning its own deactivate-confirmation state.
+ *
+ * Mirrors UsersPage's UserListRow: an Active/Inactive Chip plus an in-row
+ * Deactivate/Reactivate action (this batch's #3/#4), the same
+ * `"Deactivate {name}?"` inline-confirm pattern rather than a new dialog.
+ * Action buttons stop click propagation so they never also trigger the row's
+ * own navigate-to-detail click handler.
+ *
+ * @param props - The Ingredient this row displays, its shortage flag, and the
+ *   navigate callback for a plain row click.
+ * @returns The table row(s): the data row, plus an inline error row when a
+ *   mutation on this row has failed.
+ */
+function IngredientRow({ ingredient, inShortage, onNavigate }: IngredientRowProps) {
+  const [isConfirmingDeactivate, setIsConfirmingDeactivate] = useState(false);
+  const deactivateMutation = useDeactivateIngredient();
+  const reactivateMutation = useReactivateIngredient();
+
+  const cellSx = inShortage ? { color: "error.main" } : undefined;
+
+  const stopPropagation = (event: MouseEvent) => event.stopPropagation();
+
+  const activeError = deactivateMutation.isError
+    ? deactivateMutation.error
+    : reactivateMutation.isError
+      ? reactivateMutation.error
+      : undefined;
+
+  return (
+    <>
+      <TableRow hover onClick={onNavigate} sx={{ cursor: "pointer" }}>
+        <TableCell sx={cellSx}>
+          {inShortage && (
+            <WarningAmberIcon
+              fontSize="small"
+              color="error"
+              sx={{ verticalAlign: "text-bottom", marginRight: 0.5 }}
+            />
+          )}
+          {ingredient.name}
+        </TableCell>
+        <TableCell sx={cellSx}>{ingredient.unit}</TableCell>
+        <TableCell sx={cellSx}>{ingredient.current_stock}</TableCell>
+        <TableCell sx={cellSx}>{ingredient.min_stock_threshold}</TableCell>
+        <TableCell>
+          <Chip
+            size="small"
+            label={ingredient.is_active ? "Active" : "Inactive"}
+            color={ingredient.is_active ? "success" : "default"}
+          />
+        </TableCell>
+        <TableCell align="right" onClick={stopPropagation}>
+          {isConfirmingDeactivate ? (
+            <Box sx={{ display: "flex", gap: 1, alignItems: "center", justifyContent: "flex-end" }}>
+              <Typography variant="caption">{`Deactivate ${ingredient.name}?`}</Typography>
+              <Button
+                size="small"
+                variant="contained"
+                color="error"
+                onClick={() =>
+                  deactivateMutation.mutate(ingredient.id, {
+                    onSuccess: () => setIsConfirmingDeactivate(false),
+                  })
+                }
+                disabled={deactivateMutation.isPending}
+              >
+                Confirm
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setIsConfirmingDeactivate(false)}
+                disabled={deactivateMutation.isPending}
+              >
+                Cancel
+              </Button>
+            </Box>
+          ) : ingredient.is_active ? (
+            <Button
+              size="small"
+              color="error"
+              onClick={() => {
+                deactivateMutation.reset();
+                reactivateMutation.reset();
+                setIsConfirmingDeactivate(true);
+              }}
+              disabled={deactivateMutation.isPending}
+            >
+              Deactivate
+            </Button>
+          ) : (
+            <Button
+              size="small"
+              onClick={() => {
+                deactivateMutation.reset();
+                reactivateMutation.reset();
+                reactivateMutation.mutate(ingredient.id);
+              }}
+              disabled={reactivateMutation.isPending}
+            >
+              Reactivate
+            </Button>
+          )}
+        </TableCell>
+      </TableRow>
+      {activeError && (
+        <TableRow>
+          <TableCell colSpan={6}>
+            <Alert severity="error">{errorMessage(activeError)}</Alert>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+/**
  * The Ingredients surface (Story 2.6, replacing Story 1.4's placeholder).
  *
  * An always-visible "Add ingredient" form and a dense-row list (Name / Unit /
- * Current stock / Threshold) of every Ingredient (AC4). Story 4.1 added row
- * click-through to the Ingredient detail page, since that is plain navigation
- * and needs no comparison logic (unlike sorting/highlighting), and without it
- * Story 4.1's own detail page (stat cards, log-movement form, movement
- * history) had no discoverable entry point from this screen.
+ * Current stock / Threshold / Status / Actions) of every Ingredient (AC4).
+ * Story 4.1 added row click-through to the Ingredient detail page, since that
+ * is plain navigation and needs no comparison logic (unlike sorting/
+ * highlighting), and without it Story 4.1's own detail page (stat cards,
+ * log-movement form, movement history) had no discoverable entry point from
+ * this screen.
  *
  * Story 4.3 added the shortage row treatment: in-shortage rows (reusing
  * useAlerts()'s already-derived shortage list, Story 4.2, not a second
@@ -80,6 +241,18 @@ function parseNonNegativeAmount(raw: string): string | null {
  * ALERTS_QUERY_KEY this page's own useAlerts() call reads from — no second
  * subscription needed here.
  *
+ * This batch's #6 added standard MUI TableSortLabel sorting on all four
+ * original columns: the shortage-first-then-alphabetical order above stays
+ * the *initial* state (`sortColumn === null`); clicking a header switches to
+ * sorting the full list by that column (asc, then desc on a repeated click of
+ * the same header), and shortage highlighting keeps rendering regardless of
+ * the active sort order — it is an orthogonal visual treatment, not a sort
+ * key.
+ *
+ * This batch's #3/#4 added a Status column (Active/Inactive Chip) and a
+ * per-row Deactivate/Reactivate action mirroring UsersPage's own in-row
+ * confirm pattern, backed by useDeactivateIngredient/useReactivateIngredient.
+ *
  * @returns The Ingredients page.
  */
 export function IngredientsPage() {
@@ -88,6 +261,8 @@ export function IngredientsPage() {
   const [unit, setUnit] = useState<Unit | "">("");
   const [threshold, setThreshold] = useState("");
   const [currentStock, setCurrentStock] = useState("");
+  const [sortColumn, setSortColumn] = useState<SortableColumn | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
 
   const {
     data: ingredients,
@@ -115,10 +290,24 @@ export function IngredientsPage() {
 
   const shortageIds = useMemo(() => new Set(alerts?.map((alert) => alert.id) ?? []), [alerts]);
 
+  const handleRequestSort = (column: SortableColumn) => {
+    if (sortColumn === column) {
+      setSortOrder((previous) => (previous === "asc" ? "desc" : "asc"));
+    } else {
+      setSortColumn(column);
+      setSortOrder("asc");
+    }
+  };
+
   const sortedIngredients = useMemo(() => {
     if (!ingredients) {
       return undefined;
     }
+    if (sortColumn !== null) {
+      const direction = sortOrder === "asc" ? 1 : -1;
+      return [...ingredients].sort((a, b) => direction * compareByColumn(a, b, sortColumn));
+    }
+    // The default view: shortage-first, then alphabetical (Story 4.3, unchanged).
     const withShortageFlag = ingredients.map((ingredient) => ({
       ingredient,
       inShortage: shortageIds.has(ingredient.id),
@@ -130,7 +319,7 @@ export function IngredientsPage() {
       return a.ingredient.name.localeCompare(b.ingredient.name);
     });
     return withShortageFlag.map(({ ingredient }) => ingredient);
-  }, [ingredients, shortageIds]);
+  }, [ingredients, shortageIds, sortColumn, sortOrder]);
 
   const parsedThreshold = parseNonNegativeAmount(threshold);
   const currentStockTrimmed = currentStock.trim();
@@ -265,42 +454,30 @@ export function IngredientsPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Name</TableCell>
-              <TableCell>Unit</TableCell>
-              <TableCell>Current stock</TableCell>
-              <TableCell>Threshold</TableCell>
+              {COLUMNS.map((column) => (
+                <TableCell key={column.key}>
+                  <TableSortLabel
+                    active={sortColumn === column.key}
+                    direction={sortColumn === column.key ? sortOrder : "asc"}
+                    onClick={() => handleRequestSort(column.key)}
+                  >
+                    {column.label}
+                  </TableSortLabel>
+                </TableCell>
+              ))}
+              <TableCell>Status</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {sortedIngredients.map((ingredient: Ingredient) => {
-              const inShortage = shortageIds.has(ingredient.id);
-              return (
-                <TableRow
-                  key={ingredient.id}
-                  hover
-                  onClick={() => navigate(`/warehouse/ingredients/${ingredient.id}`)}
-                  sx={{ cursor: "pointer" }}
-                >
-                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>
-                    {inShortage && (
-                      <WarningAmberIcon
-                        fontSize="small"
-                        color="error"
-                        sx={{ verticalAlign: "text-bottom", marginRight: 0.5 }}
-                      />
-                    )}
-                    {ingredient.name}
-                  </TableCell>
-                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>{ingredient.unit}</TableCell>
-                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>
-                    {ingredient.current_stock}
-                  </TableCell>
-                  <TableCell sx={inShortage ? { color: "error.main" } : undefined}>
-                    {ingredient.min_stock_threshold}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {sortedIngredients.map((ingredient: Ingredient) => (
+              <IngredientRow
+                key={ingredient.id}
+                ingredient={ingredient}
+                inShortage={shortageIds.has(ingredient.id)}
+                onNavigate={() => navigate(`/warehouse/ingredients/${ingredient.id}`)}
+              />
+            ))}
           </TableBody>
         </Table>
       )}

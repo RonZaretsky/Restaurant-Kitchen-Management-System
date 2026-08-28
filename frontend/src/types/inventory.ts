@@ -11,6 +11,8 @@ export interface Ingredient {
   unit: Unit;
   current_stock: string;
   min_stock_threshold: string;
+  /** Soft-deactivate flag (this batch's #3/#4), mirrors User.is_active. */
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }

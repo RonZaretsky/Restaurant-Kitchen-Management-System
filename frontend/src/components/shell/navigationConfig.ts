@@ -29,14 +29,21 @@ export const ROLE_HOME_PATH: Record<UserRole, string> = {
  * Admin". Without this entry the backend's grant would be unreachable from the
  * UI for one of the two Roles it names. AC2's wording was amended in the same
  * story rather than left contradicting the code (Story 2.6 review).
+ *
+ * `includeSubroutes` (this batch's #2) is an opt-in flag, unset (no behavior change) on every
+ * entry except Admin's Ingredients one: FR-16 gives Admin the same ingredient-management rights
+ * as Warehouse Manager, including the Ingredient detail page
+ * (`/warehouse/ingredients/:ingredientId`, Story 4.1's surface), which the nav clause's exact-
+ * match rule otherwise withholds. Scoped to this one entry rather than loosening the nav clause
+ * globally, so no other Role's existing exact-match grant silently widens.
  */
-export const ROLE_NAV_ITEMS: Record<UserRole, { label: string; path: string }[]> = {
+export const ROLE_NAV_ITEMS: Record<UserRole, { label: string; path: string; includeSubroutes?: boolean }[]> = {
   admin: [
     { label: "Menu Management", path: "/admin/menu" },
     { label: "Recipe Suggestions", path: "/admin/recipe-suggestions" },
     { label: "Users", path: "/admin/users" },
     { label: "Tables setup", path: "/admin/tables" },
-    { label: "Ingredients", path: "/warehouse/ingredients" },
+    { label: "Ingredients", path: "/warehouse/ingredients", includeSubroutes: true },
   ],
   waiter: [{ label: "Tables", path: "/waiter/tables" }],
   cook: [
@@ -75,10 +82,10 @@ const ROLE_PATH_PREFIX: Record<UserRole, string> = {
  * Two matching rules, and the difference matters:
  *   - The prefix clause is segment-aware, so "/admin" does not also match
  *     "/administration" should such a route ever exist.
- *   - The nav clause is an *exact* match, so an entry grants exactly the one
- *     surface it names and never its subtree. Admin's Ingredients entry must
- *     not silently also open /warehouse/ingredients/:ingredientId, which is
- *     Story 4.3's surface and nobody's to grant here (Story 2.6 review).
+ *   - The nav clause is an *exact* match by default, so an entry grants exactly the one
+ *     surface it names and never its subtree — unless that entry opts in via
+ *     `includeSubroutes` (this batch's #2), which extends its grant to its own subtree only
+ *     (segment-aware, same shape as the prefix clause), still never any other entry's.
  *
  * Still a navigation affordance, not a security boundary. The backend's
  * require_role remains the only real enforcement.
@@ -94,5 +101,10 @@ export function canRoleVisit(role: UserRole, pathname: string): boolean {
   // Role arrives as a string off the wire, so a Role added backend-first would
   // otherwise throw inside the route guard and blank the whole app.
   const navItems = ROLE_NAV_ITEMS[role] ?? [];
-  return isUnderOwnPrefix || navItems.some((item) => pathname === item.path);
+  return (
+    isUnderOwnPrefix ||
+    navItems.some(
+      (item) => pathname === item.path || (item.includeSubroutes === true && pathname.startsWith(`${item.path}/`)),
+    )
+  );
 }
