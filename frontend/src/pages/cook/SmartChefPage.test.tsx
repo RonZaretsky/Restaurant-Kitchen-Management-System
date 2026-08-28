@@ -218,7 +218,34 @@ describe("SmartChefPage", () => {
     await user.click(screen.getByRole("button", { name: "Request suggestion" }));
 
     // Assert
-    await vi.waitFor(() => expect(submitted).toEqual({ direction: "something for dessert" }));
+    await vi.waitFor(() =>
+      expect(submitted).toEqual({ direction: "something for dessert", prioritize_waste: false }),
+    );
+  });
+
+  it("includes prioritize_waste: true in the submitted request body when the checkbox is checked", async () => {
+    // Arrange
+    let submitted: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        if (init.method === "POST" && String(url).endsWith("/api/smart-chef/suggestions")) {
+          submitted = JSON.parse(String(init.body));
+          return Promise.resolve(jsonResponse(201, SUGGESTION));
+        }
+        return mockFetch({})(url, init);
+      }),
+    );
+    const user = userEvent.setup();
+
+    // Act
+    renderPage();
+    await screen.findByText("No recipe suggestions yet.");
+    await user.click(screen.getByLabelText("Prioritize reducing food waste"));
+    await user.click(screen.getByRole("button", { name: "Request suggestion" }));
+
+    // Assert
+    await vi.waitFor(() => expect(submitted).toEqual({ direction: undefined, prioritize_waste: true }));
   });
 
   it('shows "No chat sessions yet." when there are no chat sessions (AC6)', async () => {

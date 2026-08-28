@@ -79,7 +79,7 @@ class AIService:
         self._suggestion_chat_in_flight: set[int] = set()
 
     async def generate_suggestion(
-        self, db: AsyncSession, actor: User, direction: str | None
+        self, db: AsyncSession, actor: User, direction: str | None, prioritize_waste: bool = False
     ) -> AIRecipeSuggestionResponse:
         """Generate and persist a Recipe Suggestion from a snapshot of current stock (AC1, AC2).
 
@@ -109,6 +109,10 @@ class AIService:
             actor: The Cook requesting the suggestion.
             direction: Optional free-text steering hint, folded into the prompt but never
                 overriding the stock-availability constraint (AC2).
+            prioritize_waste: Opt-in (default off, manual-test feedback): when True, folds the
+                waste-reduction framing back into the prompt (steer toward the most-overstocked
+                ingredients, listed first in `snapshot`) — off by default because that framing
+                made repeated suggestions converge on the same few ingredients every time.
 
         Returns:
             The newly created, persisted Recipe Suggestion.
@@ -150,7 +154,7 @@ class AIService:
                 for ingredient in sorted_ingredients
             ]
 
-            prompt = self._build_prompt(snapshot, direction)
+            prompt = self._build_prompt(snapshot, direction, prioritize_waste)
 
             try:
                 generated_recipe = await self._llm_client.generate_recipe(prompt)
@@ -339,13 +343,24 @@ class AIService:
         result = await db.execute(select(Dish.id).where(Dish.source_suggestion_id == suggestion_id))
         return result.scalar_one_or_none()
 
-    def _build_prompt(self, snapshot: list[dict[str, str]], direction: str | None) -> str:
+    def _build_prompt(
+        self, snapshot: list[dict[str, str]], direction: str | None, prioritize_waste: bool = False
+    ) -> str:
         """Build the generation prompt from a stock snapshot and an optional direction (AC1, AC2).
 
+        No waste-priority steering in the prompt by default (per manual-test feedback: it made the
+        model anchor on the same few overstocked ingredients across separate suggestions instead
+        of proposing something different each time) — `direction`, when given, is otherwise the
+        only steering signal. `prioritize_waste` opts back into that framing per request (this
+        batch's own checkbox); `snapshot`'s surplus-relative-to-threshold ordering is retained on
+        the persisted row regardless, for audit purposes, but only shapes the prompt when the flag
+        is set.
+
         Args:
-            snapshot: The stock snapshot, already sorted by surplus-relative-to-threshold
-                descending — the order itself is the prioritization signal passed to the model.
+            snapshot: The stock snapshot to list as available ingredients.
             direction: Optional free-text steering hint.
+            prioritize_waste: When True, steers the model toward the ingredients listed first in
+                `snapshot` (the most overstocked relative to their own minimum threshold).
 
         Returns:
             The full prompt to send to the LLM client.
@@ -359,13 +374,18 @@ class AIService:
             if direction
             else ""
         )
+        priority_text = (
+            " Prioritize the ingredients listed first — they are the most overstocked relative to "
+            "their normal minimum level, so using them helps reduce food waste."
+            if prioritize_waste
+            else ""
+        )
         return (
             "You are a chef assistant for a restaurant kitchen. Propose exactly one recipe, sized for "
-            "a single portion (one serving) only, using only the ingredients listed below, "
-            "prioritizing the ones listed first (they are the most overstocked relative to their "
-            "normal minimum level, so using them helps reduce food waste) — but only in the small "
-            "quantity one portion actually needs, never anywhere close to the full available stock.\n\n"
-            f"Available ingredients (most at risk of waste first):\n{ingredients_text}"
+            "a single portion (one serving) only, using only the ingredients listed below — in "
+            "whatever quantity one portion actually needs, never anywhere close to the full "
+            f"available stock.{priority_text}\n\n"
+            f"Available ingredients:\n{ingredients_text}"
             f"{direction_text}\n\n"
             'Respond with only a JSON object of this exact shape: {"name": "<dish name>", '
             '"ingredients": [{"name": "<ingredient name>", "quantity": "<decimal amount followed by '

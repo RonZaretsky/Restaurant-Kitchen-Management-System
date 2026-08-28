@@ -4,7 +4,9 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardActionArea from "@mui/material/CardActionArea";
+import Checkbox from "@mui/material/Checkbox";
 import CircularProgress from "@mui/material/CircularProgress";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
@@ -176,6 +178,7 @@ function ChatSessionRow({
  */
 export function SmartChefPage() {
   const [direction, setDirection] = useState("");
+  const [prioritizeWaste, setPrioritizeWaste] = useState(false);
   const { data: suggestions, isLoading, isError, error } = useSuggestions();
   const generateMutation = useGenerateSuggestion();
   const { data: currentUser } = useCurrentUser();
@@ -206,7 +209,7 @@ export function SmartChefPage() {
     }
     const trimmedDirection = direction.trim();
     generateMutation.mutate(
-      { direction: trimmedDirection === "" ? undefined : trimmedDirection },
+      { direction: trimmedDirection === "" ? undefined : trimmedDirection, prioritize_waste: prioritizeWaste },
       { onSuccess: () => setDirection("") },
     );
   };
@@ -229,6 +232,16 @@ export function SmartChefPage() {
           value={direction}
           onChange={(event) => setDirection(event.target.value)}
           sx={{ minWidth: 320 }}
+        />
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={prioritizeWaste}
+              onChange={(event) => setPrioritizeWaste(event.target.checked)}
+            />
+          }
+          label="Prioritize reducing food waste"
+          sx={{ marginRight: 0 }}
         />
         <Button type="submit" variant="contained" disabled={generateMutation.isPending}>
           Request suggestion

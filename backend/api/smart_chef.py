@@ -105,7 +105,7 @@ async def generate_suggestion(
     """Generate and persist a Recipe Suggestion from current stock (AC1, AC2).
 
     Args:
-        payload: The optional free-text direction.
+        payload: The optional free-text direction and the opt-in waste-prioritization flag.
         actor: The authenticated Cook making the request.
         db: The active database session.
         ai_service: Injected service handling the generation.
@@ -119,7 +119,7 @@ async def generate_suggestion(
         AIGenerationFailedError: Propagated from ai_service, handled globally as a 502, if the
             OpenAI call fails, times out, or returns unparseable content (AC4).
     """
-    return await ai_service.generate_suggestion(db, actor, payload.direction)
+    return await ai_service.generate_suggestion(db, actor, payload.direction, payload.prioritize_waste)
 
 
 @router.get(
