@@ -5,6 +5,7 @@ import { apiRequest } from "./httpClient";
 
 interface GenerateSuggestionPayload {
   direction?: string;
+  prioritize_waste?: boolean;
 }
 
 // Matches backend/clients/llm.py's own _REQUEST_TIMEOUT_SECONDS (45s) with a small margin, so

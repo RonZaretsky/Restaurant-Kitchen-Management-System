@@ -64,9 +64,15 @@ class CreateRecipeSuggestionRequest(BaseModel):
 
     `direction` steers the suggestion but never overrides the stock-availability constraint, and
     is folded into the persisted `prompt_used` rather than stored as its own field (AC2).
+
+    `prioritize_waste` is opt-in (manual-test feedback, this batch): defaulting it off keeps the
+    plain "any available ingredient" prompt as the normal path, since always steering toward the
+    most-overstocked items made repeated suggestions converge on the same few ingredients. A Cook
+    can still opt back into that waste-reduction framing per request via the UI's checkbox.
     """
 
     direction: str | None = None
+    prioritize_waste: bool = False
 
 
 class AIRecipeSuggestionResponse(BaseModel):

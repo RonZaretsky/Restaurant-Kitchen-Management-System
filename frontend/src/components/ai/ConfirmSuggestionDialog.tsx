@@ -41,17 +41,47 @@ interface DraftIngredientRow {
   unit: Unit;
 }
 
+/** Unit tokens the LLM's free text might use, mapped to the amount-scaling factor that converts
+ * them into `targetUnit`'s own scale (e.g. "g" -> kg divides by 1000). */
+const UNIT_ALIASES: Record<Unit, Record<string, number>> = {
+  kg: { "": 1, kg: 1, kilogram: 1, kilograms: 1, g: 1 / 1000, gram: 1 / 1000, grams: 1 / 1000 },
+  liter: {
+    "": 1,
+    l: 1,
+    liter: 1,
+    liters: 1,
+    litre: 1,
+    litres: 1,
+    ml: 1 / 1000,
+    milliliter: 1 / 1000,
+    milliliters: 1 / 1000,
+  },
+  piece: { "": 1, piece: 1, pieces: 1, pc: 1, pcs: 1 },
+};
+
 /**
- * Extracts the leading decimal amount from the LLM's free-text quantity string (e.g. "1.2 kg" ->
- * "1.2"), best-effort only — the Admin reviews and can correct every prefilled row before
- * submitting, so an unparseable string just leaves the field blank rather than guessing wrong.
+ * Parses the LLM's free-text quantity (e.g. "200 g", "1.2kg", "3 pieces") into a decimal amount
+ * expressed in `targetUnit`'s own scale, converting the finer-grained units (grams, milliliters)
+ * the model sometimes uses instead of the recipe's kg/liter — without this, "200 g" paired with
+ * an ingredient recorded in kg would submit as 200 kg instead of 0.2 kg. Best-effort only — the
+ * Admin reviews and can correct every prefilled row before submitting, so an unparseable or
+ * incompatible unit (e.g. "3 pieces" against a kg-tracked ingredient) leaves the field blank
+ * rather than guessing wrong.
  *
  * @param rawQuantity - The suggestion's own free-text quantity for one ingredient.
- * @returns The parsed leading amount, or "" if none is found.
+ * @param targetUnit - The unit the parsed amount must be expressed in.
+ * @returns The parsed amount in targetUnit's scale, or "" if none is found or convertible.
  */
-function parseLeadingAmount(rawQuantity: string): string {
-  const match = /^\s*(\d+(?:\.\d+)?)/.exec(rawQuantity);
-  return match ? match[1] : "";
+function parseQuantityForUnit(rawQuantity: string, targetUnit: Unit): string {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]*)/.exec(rawQuantity);
+  if (!match) {
+    return "";
+  }
+  const factor = UNIT_ALIASES[targetUnit][match[2].toLowerCase()];
+  if (factor === undefined) {
+    return "";
+  }
+  return String(Number(match[1]) * factor);
 }
 
 /**
@@ -110,7 +140,7 @@ export function ConfirmSuggestionDialog({
       key: nextRowKey++,
       sourceLabel: `${ingredient.name}, ${ingredient.quantity}`,
       ingredientId: "",
-      quantity: parseLeadingAmount(ingredient.quantity),
+      quantity: parseQuantityForUnit(ingredient.quantity, "kg"),
       unit: "kg" as Unit,
     })),
   );
@@ -133,7 +163,12 @@ export function ConfirmSuggestionDialog({
           ? ingredients.find((candidate) => candidate.name.toLowerCase() === suggested.name.toLowerCase())
           : undefined;
         return realIngredient
-          ? { ...row, ingredientId: String(realIngredient.id), unit: realIngredient.unit }
+          ? {
+              ...row,
+              ingredientId: String(realIngredient.id),
+              unit: realIngredient.unit,
+              quantity: parseQuantityForUnit(suggested!.quantity, realIngredient.unit),
+            }
           : row;
       }),
     );
