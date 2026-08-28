@@ -360,14 +360,17 @@ class AIService:
             else ""
         )
         return (
-            "You are a chef assistant for a restaurant kitchen. Propose exactly one recipe using "
-            "only the ingredients listed below, prioritizing the ones listed first (they are the "
-            "most overstocked relative to their normal minimum level, so using them helps reduce "
-            "food waste).\n\n"
+            "You are a chef assistant for a restaurant kitchen. Propose exactly one recipe, sized for "
+            "a single portion (one serving) only, using only the ingredients listed below, "
+            "prioritizing the ones listed first (they are the most overstocked relative to their "
+            "normal minimum level, so using them helps reduce food waste) — but only in the small "
+            "quantity one portion actually needs, never anywhere close to the full available stock.\n\n"
             f"Available ingredients (most at risk of waste first):\n{ingredients_text}"
             f"{direction_text}\n\n"
             'Respond with only a JSON object of this exact shape: {"name": "<dish name>", '
-            '"ingredients": [{"name": "<ingredient name>", "quantity": "<amount with unit>"}], '
+            '"ingredients": [{"name": "<ingredient name>", "quantity": "<decimal amount followed by '
+            "the exact same unit shown for that ingredient above (kg, liter, or piece) — e.g. "
+            '\\"0.2 kg\\", never grams or milliliters, sized for a single portion>"}], '
             '"plating": "<a short plating/serving description>"}.'
         )
 
@@ -560,6 +563,7 @@ class AIService:
             dish: Dish | None = None
             suggestion: AIRecipeSuggestion | None = None
             recipe_lines: Sequence[tuple[str, Decimal, Unit]] | None = None
+            available_ingredients: Sequence[Ingredient] | None = None
 
             if session.dish_id is not None:
                 dish = await db.get(Dish, session.dish_id)
@@ -571,8 +575,14 @@ class AIService:
                 recipe_lines = lines_result.all()
             else:
                 suggestion = await db.get(AIRecipeSuggestion, session.suggestion_id)
+                # A live read (not the suggestion's own `ingredients_snapshot`, which is frozen at
+                # generation time, AC2) — a chat can happen long after generation, and stock may
+                # have moved since. Constrains `updated_recipe` to what is actually available right
+                # now, the same rule `generate_suggestion`'s own prompt already enforces.
+                stock_result = await db.execute(select(Ingredient).where(Ingredient.current_stock > 0))
+                available_ingredients = stock_result.scalars().all()
 
-            system_message = self._build_chat_system_message(dish, suggestion, recipe_lines)
+            system_message = self._build_chat_system_message(dish, suggestion, recipe_lines, available_ingredients)
             prior_messages = await self._list_messages_ascending(db, session_id)
 
             messages = [system_message]
@@ -655,6 +665,7 @@ class AIService:
         dish: Dish | None,
         suggestion: AIRecipeSuggestion | None,
         recipe_lines: Sequence[tuple[str, Decimal, Unit]] | None,
+        available_ingredients: Sequence[Ingredient] | None = None,
     ) -> dict[str, str]:
         """Build the system message describing the chat's target recipe (Story 6.3).
 
@@ -674,10 +685,21 @@ class AIService:
                 instead.
             recipe_lines: The Dish's current Recipe Ingredient lines as (ingredient name,
                 quantity, unit) tuples, or None when the target is a Suggestion.
+            available_ingredients: The live, currently-in-stock Ingredients, used only in the
+                Suggestion branch to constrain `updated_recipe` to what is actually available and
+                to state each one's real unit (AC2's "never include an ingredient that is not
+                listed" rule, mirrored from `_build_prompt`) — None in the Dish branch, which
+                never produces an `updated_recipe`.
 
         Returns:
             The system message to prepend to the OpenAI chat request.
         """
+        off_topic_guard = (
+            "Only discuss topics related to this recipe and cooking it — ingredients, quantities, "
+            "preparation, substitutions, plating, nutrition. If the Cook's message is not related to "
+            "this recipe or cooking, politely decline and steer the conversation back to the recipe "
+            "instead of answering it."
+        )
         if dish is not None:
             ingredients_text = (
                 "\n".join(f"- {name}: {quantity} {unit.value}" for name, quantity, unit in recipe_lines)
@@ -688,21 +710,32 @@ class AIService:
             content = (
                 f'You are a chef assistant discussing the recipe for "{dish.name}", a Dish on the '
                 f"menu.{description_text}\n\nCurrent recipe ingredients:\n{ingredients_text}\n\n"
-                "Discuss and help improve this recipe conversationally. Reply in plain text, not JSON."
+                "Discuss and help improve this recipe conversationally. Reply in plain text, not "
+                f"JSON. {off_topic_guard}"
             )
         else:
             recipe = suggestion.generated_recipe
             ingredients_text = "\n".join(
                 f"- {item.get('name')}: {item.get('quantity')}" for item in recipe.get("ingredients", [])
             )
+            stock_text = "\n".join(
+                f"- {ingredient.name}: {ingredient.current_stock} {ingredient.unit.value}"
+                for ingredient in (available_ingredients or [])
+            )
             content = (
                 f'You are a chef assistant discussing a proposed recipe, "{recipe.get("name")}", a '
                 "Recipe Suggestion not yet confirmed into a Dish.\n\n"
                 f"Ingredients:\n{ingredients_text}\n\nPlating: {recipe.get('plating')}\n\n"
+                f"Ingredients currently in stock (the only ones updated_recipe may ever use):\n"
+                f"{stock_text}\n\n"
                 'Respond with only a JSON object of this exact shape: {"reply": "<conversational '
                 'reply text>", "updated_recipe": null or {"name": "<dish name>", "ingredients": '
                 '[{"name": ..., "quantity": ...}], "plating": "<...>"}}. Set updated_recipe only '
                 "if the Cook's message asks for a change to the recipe; otherwise set it to null "
-                "and just answer in reply."
+                "and just answer in reply. When you do set it: the recipe stays sized for a single "
+                "portion (one serving) only, every ingredient must come from the stock list above "
+                "(never invent one that is not listed), and every quantity is a decimal amount in "
+                'that exact same unit (kg, liter, or piece) — e.g. "0.15 kg", never grams or '
+                f"milliliters. {off_topic_guard}"
             )
         return {"role": "system", "content": content}
