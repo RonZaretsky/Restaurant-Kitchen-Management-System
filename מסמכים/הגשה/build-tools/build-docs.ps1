@@ -44,6 +44,10 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $maxImageWidthCm  = 15.0
 $maxImageHeightCm = 20.0
 
+# Screenshots are landscape and all get the same width, so the guide reads as a
+# consistent column of images rather than a set of differently-sized ones.
+$screenshotWidthCm = 14.0
+
 # pandoc's installer puts it on the PATH, but a shell started before the install
 # will not have picked that up yet, so fall back to the known install locations.
 $pandoc = (Get-Command pandoc -ErrorAction SilentlyContinue).Source
@@ -116,6 +120,12 @@ if (-not $SkipDiagrams) {
     & (Join-Path $buildDir "render-diagrams.ps1")
     Write-Output ""
 }
+
+# Stands in for any screenshot a chapter refers to but nobody has captured yet,
+# so a half-illustrated guide still builds. Never overwrites a real capture.
+Write-Output "=== Screenshots ==="
+& (Join-Path $buildDir "make-screenshot-placeholders.ps1")
+Write-Output ""
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -217,6 +227,15 @@ function Merge-Chapters {
             param($m)
             Expand-DiagramMarker -Name $m.Groups[1].Value
         })
+
+        # Screenshots are written as plain Markdown images so the chapters stay
+        # readable, but at their natural pixel size they would run off the page.
+        # One rule here beats repeating a width attribute on every one of them.
+        $text = [regex]::Replace(
+            $text,
+            '(!\[[^\]]*\]\(screenshots/[A-Za-z0-9\-_]+\.png\))(?!\{)',
+            "`$1{ width=$screenshotWidthCm" + "cm }"
+        )
 
         [void]$sb.AppendLine($text.TrimEnd())
         [void]$sb.AppendLine('')
