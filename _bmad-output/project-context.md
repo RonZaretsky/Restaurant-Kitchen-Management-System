@@ -223,7 +223,16 @@ backend/
                      but deliberately does not commit or broadcast itself, since it must
                      participate in the caller's own transaction (AD-6/NFR-3); record_movement's
                      CreateStockMovementRequest already rejects a manually-submitted consumption
-                     type, which is why this is a separate method rather than a call to it
+                     type, which is why this is a separate method rather than a call to it.
+                     Fix (2026-08-28) added max_preparable_quantity(dish_id)/
+                     max_preparable_quantities(dish_ids) (plural batches one query over many
+                     Dishes rather than one round-trip each, singular is a one-line wrapper over
+                     it): a read-only, unlocked, advisory computation — min over a Dish's Recipe
+                     Ingredient lines of floor(current_stock / RecipeIngredient.quantity) — used by
+                     KitchenService's live insufficient-stock display and OrderService.reject_item's
+                     message, never the write-path authority (apply_consumption's own guard still
+                     decides an actual pick-up; a stock change between this read and that write is
+                     expected, not a bug)
   services/menu_service.py  Story 2.2: Category/Dish creation and edits, AD-8's availability gate.
                      Story 2.3 added list_categories/list_dishes, Recipe Ingredient CRUD, AD-8's
                      second half, a unit-mismatch guard, and _lock_dish (see trap 9, now joined by
@@ -310,7 +319,31 @@ backend/
                      conditional on the Table UPDATE's own rowcount actually succeeding (review
                      finding — a client must never be told the table freed up when it didn't).
                      These are the project's first guarded UPDATEs against Order.status itself
-                     (contrast _recompute_order_status above, which deliberately is not one)
+                     (contrast _recompute_order_status above, which deliberately is not one).
+                     Fix (2026-08-28) added reject_item (9th guarded-UPDATE application; WHERE
+                     status == pending, same shape as pick_up_item/cancel_item): a Cook rejects a
+                     pending item the kitchen cannot currently prepare, no partial-quantity
+                     fulfillment — the whole item's quantity is rejected together. Never deducts
+                     stock (a rejected item is never picked up); records a reject_reason message
+                     (new nullable OrderItem column, new "rejected" OrderItemStatus value, both via
+                     a hand-written Alembic migration, a1b2c3d4e5f6, same ALTER TYPE ... ADD VALUE
+                     shape as Story 3.4's own "cancelled" addition) computed from
+                     InventoryService.max_preparable_quantity at write time, purely to word the
+                     message — not re-checked as a hard precondition, since the Kitchen Display's
+                     own read and this write can legitimately disagree by the time it lands.
+                     Broadcasts order.item_status_changed (reusing pick_up_item/mark_item_ready's
+                     event) plus order.status_changed when the aggregate changes. "rejected" is
+                     excluded from Order-status derivation/total_amount/close_order's readiness
+                     check the same way "cancelled" always has been (_recompute_order_status,
+                     close_order's total sum, mark_served's guard) — every "non-cancelled" mention
+                     in this file from Story 3.4 onward became "non-cancelled, non-rejected" at the
+                     same call sites. Also fixed a real bug this batch's own review caught:
+                     _recompute_order_status previously never revisited a served Order, so a new
+                     pending item added to an already-served Order (add_item has no guard against
+                     this) sat invisibly outside KitchenService's own Order.status not in (served,
+                     closed) filter forever; served is now included in the guard's accepted prior-
+                     status set specifically so a fresh item pulls the Order back to pending/
+                     in_preparation and reappears on the board
   services/kitchen_service.py  Story 5.1 (new): list_active_items — the FIRST genuine join in
                      backend/services/ (every prior story returned raw ids and resolved names
                      client-side instead). Joins OrderItem to Order to resolve table_id, since
@@ -320,7 +353,18 @@ backend/
                      5.3/5.4 — flagged explicitly in the method's own docstring as a
                      forward-compatibility gap for whichever of those ships next. **RESOLVED by
                      Story 5.4**: the filter now also excludes Order.status IN (served, closed),
-                     since this story is what first makes those reachable
+                     since this story is what first makes those reachable. Fix (2026-08-28): the
+                     filter also excludes OrderItemStatus.rejected now (a rejected item is done as
+                     far as the board is concerned, same as cancelled — its message lives on the
+                     Waiter's own order view instead), and the service gained an inventory_service
+                     collaborator (container.py provider now takes it too) used to batch-compute
+                     max_preparable_quantity per distinct pending Dish in one call
+                     (InventoryService.max_preparable_quantities) rather than one query per item.
+                     KitchenItemResponse.from_item now takes that value explicitly: a non-pending
+                     item passes its own quantity (never flags a false shortage on a row with no
+                     pick-up/reject action left to take), only a pending item gets its live
+                     computed value — what the Kitchen Display reads to swap "Pick up" for
+                     "Reject" once it falls below quantity
   services/realtime_service.py  Story 1.5: thin wrapper over ConnectionRegistry so api/ only ever
                      calls into services/ (AD-1); broadcast(roles, event, payload).
                      **RESOLVED by Story 3.3**: OrderService is now its first producer (see above).
@@ -450,7 +494,11 @@ frontend/src/
   types/order.ts          OrderStatus, Order (Story 3.1); OrderItemStatus, OrderItem,
                         MAX_ORDER_ITEM_QUANTITY (Story 3.2, mirrors the backend's own cap by hand).
                         Story 3.4 added "cancelled" to the OrderItemStatus union, mirroring the
-                        backend's new enum value by hand, same as MAX_ORDER_ITEM_QUANTITY above
+                        backend's new enum value by hand, same as MAX_ORDER_ITEM_QUANTITY above.
+                        Fix (2026-08-28) added "rejected" to the union and OrderItem.reject_reason
+                        (nullable, mirroring the backend's a1b2c3d4e5f6 migration by hand, same
+                        pattern as "cancelled"); types/kitchen.ts's KitchenItem got the same
+                        reject_reason plus a new max_preparable_quantity number field
   services/httpClient.ts   fetch wrapper: credentials "include", ApiError, detail-envelope parsing.
                         Every failure leaves as an ApiError, including an unreachable backend and a
                         timeout, which carry status 0 (see trap 12). `apiRequest`'s global timeout
@@ -532,7 +580,11 @@ frontend/src/
                         reconstructing the array by hand) and added OPEN_ORDERS_QUERY_KEY /
                         useOpenOrders() (GET /api/orders, the first bulk Order read), which
                         TablesPage.tsx resolves client-side into a table_id -> status lookup to
-                        drive the attention-state tile treatment
+                        drive the attention-state tile treatment. Fix (2026-08-28) added
+                        useRejectItem, same { orderId, itemId }-per-call shape and
+                        KITCHEN_ITEMS_QUERY_KEY-only invalidation as usePickUpItem/
+                        useMarkItemReady (the Waiter's page still refreshes from the live
+                        order.item_status_changed push, which now also carries reject_reason)
   components/menu/DishRecipeEditor.tsx  Story 2.3: the per-dish recipe editor (first domain
                         component folder outside components/shell/)
   components/ai/SuggestionSummary.tsx  Story 6.2 (new folder): the read-only Recipe Suggestion
@@ -576,7 +628,9 @@ frontend/src/
                         import it verbatim. Scoped to today's 3-member OrderItemStatus, no fallback
                         case for a value outside it (deferred, same call Story 3.1's review made
                         for TableTile.badgeColor). Story 3.4 added the 4th member: "Cancelled"
-                        label, Cancel icon, "error" MUI color (COLORS' type widened to include it)
+                        label, Cancel icon, "error" MUI color (COLORS' type widened to include it).
+                        Fix (2026-08-28) added the 5th member: "Rejected" label, MUI's BlockIcon,
+                        also "error" MUI color (same as cancelled — both are terminal/non-fulfilled)
   components/inventory/MovementTypeChip.tsx  Story 4.1: the Stock Movement type chip (AC3/UX-DR14),
                         first file in a new components/inventory/ folder. A neutral-palette MUI Chip
                         (primary/info/default/secondary), deliberately not reusing
@@ -696,7 +750,13 @@ frontend/src/
                         stuck mid-edit falls back to read-only if its item transitions away from
                         pending under it. Deliberately NOT in this story: live updates for edit/
                         cancel (Story 3.3 added live push for open/add only), the Close-order
-                        bar/total (FR-8, a later story), and
+                        bar/total (FR-8, a later story). Fix (2026-08-28): a rejected item's row
+                        now renders its reject_reason as an inline warning Alert, same placement as
+                        the existing per-row error state; computeClientSideTotal excludes
+                        "rejected" alongside "cancelled" (mirrors close_order's own backend sum);
+                        OrderTotalBar's canMarkServed now also treats an Order whose every item is
+                        cancelled-or-rejected as servable, matching mark_served's own widened
+                        guard, and
                         warehouse/AlertsPage.tsx (Story 4.2, replacing Story 4.1's placeholder:
                         useAlerts()-driven loading/error/empty("No active shortages")/loaded states,
                         one row per Ingredient in shortage reading "Stock low: {name}
@@ -727,7 +787,14 @@ frontend/src/
                         derived from the shared mutation's own .variables field (review fix: that
                         field only ever reflects the most recent call, so two rapid clicks on
                         different rows could leave an earlier row's button incorrectly re-enabled
-                        mid-flight)),
+                        mid-flight). Fix (2026-08-28) added live insufficient-stock awareness: a
+                        pending row whose server-computed max_preparable_quantity (recomputed on
+                        every kitchen-items fetch, including the ones this page's own mutations
+                        already trigger) falls below its own quantity swaps "Pick up" for a
+                        "Reject" button (wired to the new useRejectItem) plus an inline warning
+                        stating how many portions actually can be prepared; a rejected row shows
+                        its reject_reason instead — no client-side computation, purely reading
+                        fields the server already recomputes),
                         cook/SmartChefPage.tsx (Story 6.1: a request bar (optional free-text
                         direction) plus the Cook's own persisted Recipe Suggestions, newest first,
                         each card via the shared SuggestionSummary component. Deliberately no
