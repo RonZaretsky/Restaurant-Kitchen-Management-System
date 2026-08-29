@@ -26,10 +26,10 @@ powershell -File "מסמכים\הגשה\build\build-docs.ps1" -SkipPdf
 
 | כלי | לְמה | התקנה |
 |---|---|---|
-| pandoc | Markdown ← DOCX | `winget install --id JohnMacFarlane.Pandoc` |
-| mermaid-cli | דיאגרמות ← PNG | `npm install -g @mermaid-js/mermaid-cli` |
+| pandoc | Markdown <- DOCX | `winget install --id JohnMacFarlane.Pandoc` |
+| mermaid-cli | דיאגרמות <- PNG | `npm install -g @mermaid-js/mermaid-cli` |
 | Python 3 | תיקון ה-RTL בקובץ ה-DOCX | קיים במחשב |
-| Microsoft Word | DOCX ← PDF | קיים במחשב |
+| Microsoft Word | DOCX <- PDF | קיים במחשב |
 | poppler *(רשות)* | הצצה בעמודי ה-PDF כתמונות | `winget install --id oschwartz10612.Poppler` |
 
 `mermaid-cli` מוריד Chromium משלו בהתקנה. אם npm חוסם את שלב ה-postinstall, מריצים ידנית:
@@ -43,7 +43,7 @@ node "lib\puppeteer\node\cli.js" install chrome
 
 | קובץ | תפקיד |
 |---|---|
-| `build-docs.ps1` | הפייפליין המלא: איחוד פרקים ← pandoc ← RTL ← Word |
+| `build-docs.ps1` | הפייפליין המלא: איחוד פרקים <- pandoc <- RTL <- Word |
 | `render-diagrams.ps1` | מרנדר כל `diagrams/*.md` ל-`diagrams/rendered/<שם>.png` |
 | `apply-rtl.py` | מזריק לקובץ ה-DOCX את מאפייני ה-RTL של OOXML |
 
@@ -81,10 +81,19 @@ node "lib\puppeteer\node\cli.js" install chrome
 סדר האלמנטים בתוך `<w:pPr>` ו-`<w:tblPr>` נקבע בסכמה של OOXML, ו-Word פשוט מסרב לפתוח
 קובץ שהסדר בו שגוי. לכן הקוד מזריק בנקודות מפורשות ולא מוסיף בסוף.
 
+## יישור RTL: מה נכשל לפני שזה עבד
+
+השלב שהכי קל לטעות בו. `<w:jc w:val="right"/>` נראה כמו הדבר הנכון לעשות, והוא **הפוך**:
+ב-OOXML הערכים `left` ו-`right` פירושם `start` ו-`end`, כך שתחת `<w:bidi/>` הערך
+`right` מיישר לשוליים ה**שמאליים**. התוצאה מטעה, כי הפיסוק והניקוד נראים נכון והטקסט
+עצמו נדבק לצד הלא נכון. הפתרון: **לא לכתוב `w:jc` בכלל.** בלי `jc` הפסקה נופלת ל-`start`,
+שתחת `bidi` הוא הצד הימני. `SourceCode` הוא היוצא מן הכלל, שם כן כתוב `jc="left"` יחד עם
+`bidi="0"`, כלומר LTR אמיתי.
+
 ## מלכודות שכבר נפלנו בהן
 
 - **קובץ `.ps1` עם עברית חייב BOM.** Windows PowerShell 5.1 קורא סקריפט בלי BOM
-  כ-ANSI, וכל מחרוזת עברית בקובץ הופכת לג׳יבריש ולשגיאת פרסור.
+  כ-ANSI, וכל מחרוזת עברית בקובץ הופכת לג'יבריש ולשגיאת פרסור.
 - **`Out-File -Encoding utf8` מוסיף BOM.** קובץ ה-JSON של puppeteer נכשל בגללו.
   משתמשים ב-`[System.IO.File]::WriteAllText` עם `UTF8Encoding($false)`.
 - **`2>&1` על תוכנית חיצונית ב-PowerShell 5.1** עוטף כל שורת stderr ב-ErrorRecord
@@ -94,6 +103,9 @@ node "lib\puppeteer\node\cli.js" install chrome
 - **`Write-Output` בתוך פונקציה ב-PowerShell נכנס לערך ההחזרה שלה.** להדפסת התקדמות
   מתוך פונקציה משתמשים ב-`Write-Host`.
 - **`ReadingOrder` ב-Word COM מקבל 0 או 1 בלבד**, לא 2 כפי שחלק מהמקורות מציינים.
+- **הסקריפט סוגר את Word בסיום.** לכן `Assert-WordClosed` עוצר מראש אם Word כבר פתוח,
+  ומבקש מכם לסגור אותו ידנית. **אין לעקוף את זה ב-`Stop-Process`:** אם פתוחים אצלכם
+  מסמכים אחרים, הם ייסגרו יחד איתו. מי שרק צריך DOCX יריץ עם `-SkipPdf` ולא יגע ב-Word.
 
 ## מה לא נכנס ל-git
 

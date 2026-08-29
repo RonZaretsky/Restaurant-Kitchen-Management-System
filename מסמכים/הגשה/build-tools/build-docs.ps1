@@ -58,6 +58,34 @@ if (-not $pandoc) {
     throw "pandoc not found. Install it with: winget install --id JohnMacFarlane.Pandoc"
 }
 
+function Assert-WordClosed {
+    <#
+        Refuses to continue while Word is already open.
+
+        This script drives Word over COM and quits it when it is done. If Word
+        is already running with the user's own documents, that quit takes those
+        documents down with it, so an already-running Word is a hard stop here,
+        never something to close automatically.
+    #>
+    if (-not (Get-Process WINWORD -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    throw @"
+Word is currently open, and this script would close it along with whatever you
+have open in it. Nothing has been closed.
+
+Please save and close Word yourself, then run this again. To build the DOCX now
+and leave the PDF for later, re-run with -SkipPdf.
+"@
+}
+
+# Checked up front, before any work: finding out that Word is in the way after
+# the diagrams have been rendered and the DOCX built wastes the whole run.
+if (-not $SkipPdf) {
+    Assert-WordClosed
+}
+
 $documents = @(
     [pscustomobject]@{
         Key       = "analysis"
@@ -211,6 +239,8 @@ function Export-Pdf {
         The RTL work itself is done by apply-rtl.py against the OOXML, because
         Word's COM ReadingOrder does not persist and never flips a table's own
         column order.
+
+        Call Assert-WordClosed first: this function quits Word on the way out.
     #>
     param([string]$DocxPath, [string]$PdfPath)
 

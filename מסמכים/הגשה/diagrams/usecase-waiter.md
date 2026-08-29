@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart LR
-    waiter(["👤<br/>מלצר"])
+    waiter(["&lt;&lt;actor&gt;&gt;<br/>מלצר"])
 
     subgraph SYS["מערכת ניהול מטבח ומסעדה"]
         direction TB

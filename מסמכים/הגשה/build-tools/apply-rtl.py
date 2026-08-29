@@ -55,7 +55,12 @@ def patch_styles(xml):
         raise ValueError("word/styles.xml has no <w:pPrDefault><w:pPr> to patch")
 
     if "<w:bidi/>" not in match.group(2):
-        patched = match.group(1) + "<w:bidi/>" + match.group(2) + '<w:jc w:val="right"/>' + match.group(3)
+        # No w:jc here, deliberately. OOXML's "left" and "right" mean "start"
+        # and "end", so under w:bidi a jc of "right" resolves to the LEFT edge,
+        # which is exactly backwards. With no jc at all the paragraph falls back
+        # to "start", which under w:bidi is the right edge. Any jc already
+        # present on a specific style is left alone.
+        patched = match.group(1) + "<w:bidi/>" + match.group(2) + match.group(3)
         xml = xml.replace(match.group(0), patched)
 
     # Code blocks stay left-to-right: they hold English identifiers and paths.

@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart LR
-    admin(["👤<br/>מנהל"])
+    admin(["&lt;&lt;actor&gt;&gt;<br/>מנהל"])
 
     subgraph SYS["מערכת ניהול מטבח ומסעדה"]
         direction TB
