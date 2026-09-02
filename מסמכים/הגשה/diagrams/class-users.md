@@ -23,8 +23,8 @@ classDiagram
         +update_user(db, actor, user_id, payload) User
         +deactivate_user(db, actor, user_id) User
         +reactivate_user(db, actor, user_id) User
-        +reset_password(db, actor, user_id, payload) User
-        -_reject_if_last_active_admin(db, user, actor)
+        +reset_password(db, actor, user_id, new_password) User
+        -_reject_if_last_active_admin(db, user, actor, action)
     }
 
     class TableService {

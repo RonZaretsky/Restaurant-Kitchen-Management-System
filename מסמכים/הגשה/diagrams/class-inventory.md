@@ -15,7 +15,7 @@ classDiagram
         +reactivate_ingredient(db, actor, ingredient_id) Ingredient
         +list_movements(db, ingredient_id) StockMovement[]
         +record_movement(db, actor, ingredient_id, payload) StockMovement
-        +apply_consumption(db, ingredient_id, quantity, order_id)
+        +apply_consumption(db, ingredient_id, quantity, actor_id, order_id) bool
         +max_preparable_quantity(db, dish_id) int
         +max_preparable_quantities(db, dish_ids) dict
         -_get_ingredient(db, ingredient_id) Ingredient

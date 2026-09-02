@@ -28,7 +28,7 @@ classDiagram
     }
 
     class InventoryService {
-        +apply_consumption(db, ingredient_id, quantity, order_id)
+        +apply_consumption(db, ingredient_id, quantity, actor_id, order_id) bool
         +max_preparable_quantity(db, dish_id) int
     }
 

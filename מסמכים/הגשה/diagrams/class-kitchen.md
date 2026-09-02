@@ -24,7 +24,7 @@ classDiagram
         +str notes
         +str reject_reason
         +int max_preparable_quantity
-        +from_item(item, table_id, max_preparable) KitchenItemResponse
+        +from_item(item, table_id, max_preparable_quantity)$ KitchenItemResponse
     }
 
     class OrderItem {

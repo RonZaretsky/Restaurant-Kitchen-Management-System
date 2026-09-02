@@ -18,11 +18,11 @@ classDiagram
         +remove_recipe_ingredient(db, actor, dish_id, ingredient_id)
         -_lock_dish(db, dish_id) Dish
         -_reject_if_recipe_empty(db, dish, actor)
-        -_reject_if_unit_mismatched(recipe_unit, ingredient)
+        -_reject_if_unit_mismatched(ingredient, unit, actor, dish_id)
         -_validate_source_suggestion(db, actor, suggestion_id)
         -_get_category(db, actor, category_id) Category
         -_get_ingredient(db, actor, ingredient_id) Ingredient
-        -_get_recipe_ingredient(db, dish_id, ingredient_id) RecipeIngredient
+        -_get_recipe_ingredient(db, actor, dish_id, ingredient_id) RecipeIngredient
     }
 
     class Category {
