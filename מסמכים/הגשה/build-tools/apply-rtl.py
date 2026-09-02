@@ -14,6 +14,8 @@ never flips a table's own column order, so this patches the OOXML directly:
                 borders so every cell boundary is drawn
   document.xml  a diagram's caption is pulled tight under its image, and a gap
                 is opened between a table and the text that follows it
+  document.xml  a page break on each side of the table of contents, so the
+                title page stands alone and chapter 1 opens a page of its own
 
 Element order inside <w:pPr> and <w:tblPr> is fixed by the OOXML schema, and
 Word rejects a file whose elements are out of order, hence the explicit
@@ -63,6 +65,15 @@ _TBL_BORDERS = (
 
 # w:tblBorders sits after w:tblInd and before any of these, per the schema.
 _AFTER_BORDERS = ("<w:shd", "<w:tblLayout", "<w:tblCellMar", "<w:tblLook")
+
+# The table of contents, which pandoc emits as a structured document tag
+# between the title block and the first chapter. Matched by the gallery name
+# rather than by position, so an unrelated tag elsewhere cannot be mistaken
+# for it.
+_TOC_SDT = re.compile(
+    r"<w:sdt>(?:(?!</w:sdt>).)*?Table of Contents(?:(?!</w:sdt>).)*?</w:sdt>", re.S
+)
+_PAGE_BREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
 
 # A paragraph holding an image, and the paragraph that follows a table.
 _IMAGE_P = re.compile(r"<w:p\b[^>]*>(?:(?!</w:p>).)*?<w:drawing>.*?</w:p>", re.S)
@@ -165,6 +176,10 @@ def patch_document(xml):
             at = min(positions) if positions else block.find("</w:tblPr>")
             block = block[:at] + _TBL_BORDERS + block[at:]
         return block
+
+    # The title page stands alone, and the first chapter opens a page of its
+    # own: a page break on each side of the table of contents gives both.
+    xml = _TOC_SDT.sub(lambda m: _PAGE_BREAK + m.group(0) + _PAGE_BREAK, xml, count=1)
 
     xml = _TBL_PR.sub(patch_table_properties, xml)
 

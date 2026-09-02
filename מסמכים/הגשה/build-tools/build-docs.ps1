@@ -90,19 +90,30 @@ if (-not $SkipPdf) {
     Assert-WordClosed
 }
 
+# The title page. Shared by both documents, since only the subtitle differs.
+# Ron's identity number is still a placeholder, and is deliberately written in
+# a form nobody could mistake for a real one.
+$course        = "סדנה בתכנות מונחה עצמים (20586)"
+$supervisor    = "מנחה: דני כלפון"
+$submissionDay = "8 בספטמבר 2026"
+$authors       = @(
+    "אופק רותם, ת.ז. 204365092",
+    "רון זרצקי, ת.ז. להשלמה"
+)
+
 $documents = @(
     [pscustomobject]@{
         Key       = "analysis"
         SourceDir = Join-Path $submissionDir "אפיון-וניתוח"
         BaseName  = "מסמך-אפיון-וניתוח"
-        Title     = "מערכת ניהול מטבח ומסעדה"
+        Title     = "Restaurant Kitchen Management System"
         Subtitle  = "מסמך אפיון וניתוח"
     },
     [pscustomobject]@{
         Key       = "design"
         SourceDir = Join-Path $submissionDir "עיצוב-פתרון"
         BaseName  = "מסמך-עיצוב-פתרון"
-        Title     = "מערכת ניהול מטבח ומסעדה"
+        Title     = "Restaurant Kitchen Management System"
         Subtitle  = "מסמך עיצוב הפתרון"
     }
 )
@@ -203,14 +214,21 @@ function Merge-Chapters {
 
     $sb = New-Object System.Text.StringBuilder
 
-    # Pandoc reads this block as document metadata, not as body text.
+    # Pandoc reads this block as document metadata, not as body text, and the
+    # docx writer renders it as the title page ahead of the table of contents.
+    # The course and the supervisor ride in the author list rather than in
+    # fields of their own: those are the only repeatable title-page lines the
+    # writer offers, and on the page itself they read exactly as intended.
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine('title: "' + $Doc.Title + '"')
     [void]$sb.AppendLine('subtitle: "' + $Doc.Subtitle + '"')
     [void]$sb.AppendLine('author:')
-    [void]$sb.AppendLine('  - אופק')
-    [void]$sb.AppendLine('  - רון')
-    [void]$sb.AppendLine('date: "' + (Get-Date -Format "dd/MM/yyyy") + '"')
+    foreach ($author in $authors) {
+        [void]$sb.AppendLine('  - "' + $author + '"')
+    }
+    [void]$sb.AppendLine('  - "' + $course + '"')
+    [void]$sb.AppendLine('  - "' + $supervisor + '"')
+    [void]$sb.AppendLine('date: "' + $submissionDay + '"')
     [void]$sb.AppendLine('lang: he')
     [void]$sb.AppendLine('dir: rtl')
     [void]$sb.AppendLine('toc-title: "תוכן עניינים"')
