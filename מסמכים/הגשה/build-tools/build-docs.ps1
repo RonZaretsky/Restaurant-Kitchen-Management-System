@@ -358,7 +358,7 @@ foreach ($doc in $documents) {
     }
 
     & $pandoc $mergedPath `
-        --from=markdown+raw_attribute `
+        --from=markdown+raw_attribute-smart `
         --to=docx `
         --toc `
         --toc-depth=2 `
