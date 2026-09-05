@@ -47,6 +47,20 @@ node "lib\puppeteer\node\cli.js" install chrome
 | `render-diagrams.ps1` | מרנדר כל `diagrams/*.md` ל-`diagrams/rendered/<שם>.png` |
 | `apply-rtl.py` | מזריק לקובץ ה-DOCX את מאפייני ה-RTL של OOXML |
 | `make-screenshot-placeholders.ps1` | מייצר ממלא מקום לכל צילום מסך שעדיין לא צולם |
+| `extract-comments.py` | מחלץ מעותק מוער את הערות ה-Word ואת הטקסט הצבוע |
+
+## חילוץ הערות מעותק מוער
+
+```powershell
+python "מסמכים\הגשה\build-tools\extract-comments.py" "מסמכים\הגשה\ביקורת\<הקובץ>.docx"
+```
+
+הפלט מונה כל הערה עם מספרה, עם הטקסט שאליו היא מעוגנת ועם הסעיף שבו היא יושבת, ולאחריו
+כל ריצה הנושאת צבע. **המספר הוא המזהה** שבו משתמש `review-register.md`.
+
+הערה: Word משנה את מזהי הסגנונות בשמירה, כך שכותרת שנכתבה על ידי pandoc כ-`Heading2`
+נשמרת כ-`2` בלבד. הסקריפט מזהה את שתי הצורות, ובלעדי זאת כל ההערות היו מדווחות כיושבות
+לפני הכותרת הראשונה.
 
 ## איך משבצים דיאגרמה בתוך פרק
 
