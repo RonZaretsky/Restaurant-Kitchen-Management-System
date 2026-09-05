@@ -198,10 +198,38 @@ function Expand-DiagramMarker {
     return "$imageRef`r`n`r`n$explanation`r`n"
 }
 
+function Remove-ThematicBreaks {
+    <#
+        Drops the horizontal rules a chapter uses to separate its sections.
+
+        They are useful while writing the Markdown and unwanted in the finished
+        document, where a heading already marks every boundary and pandoc draws
+        a rule as a bordered empty paragraph.
+
+        Only a rule sitting on its own after a blank line is removed. A run of
+        dashes directly under a line of text is not a rule at all: Markdown
+        reads it as a setext heading, and dropping it would silently demote
+        that heading to body text.
+    #>
+    param([string]$Text)
+
+    $kept = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($Text -split "\r?\n")) {
+        $isRule = $line -match '^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$'
+        $afterBlank = ($kept.Count -eq 0) -or ($kept[$kept.Count - 1].Trim() -eq "")
+        if ($isRule -and $afterBlank) {
+            continue
+        }
+        [void]$kept.Add($line)
+    }
+    return ($kept -join "`r`n")
+}
+
 function Merge-Chapters {
     <#
         Concatenates a document's chapter files in filename order into one
-        Markdown file, expanding every diagram marker on the way.
+        Markdown file, expanding every diagram marker and dropping every
+        horizontal rule on the way.
     #>
     param([pscustomobject]$Doc, [string]$MergedPath)
 
@@ -240,6 +268,7 @@ function Merge-Chapters {
         # output stream is captured into its return value alongside the count.
         Write-Host ("  + " + $chapter.Name)
         $text = Get-Content -Path $chapter.FullName -Raw -Encoding utf8
+        $text = Remove-ThematicBreaks -Text $text
 
         $text = [regex]::Replace($text, '<!--\s*diagram:\s*([A-Za-z0-9\-_]+)\s*-->', {
             param($m)
