@@ -7,6 +7,9 @@ never flips a table's own column order, so this patches the OOXML directly:
                 right alignment, which every style inherits
   styles.xml    the Source Code style overrides both back to left-to-right, so
                 English identifiers and file paths still read correctly
+  styles.xml    the Verbatim Char style, which an inline code span carries,
+                is forced left-to-right too, so a leading underscore is drawn
+                at the start of an identifier and not at its end
   styles.xml    every heading style gains space above it, so a new sub-section
                 is visibly separated from the paragraph that closed the last one
   document.xml  every table gains <w:bidiVisual/>, which flips its column order
@@ -49,6 +52,18 @@ _HEADING_STYLE = re.compile(
 _SPACING = re.compile(r"<w:spacing\b[^>]*/>")
 _HEADING_SPACING = '<w:spacing w:before="360" w:after="160"/>'
 
+# The character style pandoc gives an inline code span. It carries a font but
+# no direction, so the span inherits the paragraph's. That matters for a
+# leading underscore: U+005F is bidi-neutral, so inside a right-to-left
+# paragraph it resolves to the paragraph's direction and Word draws it at the
+# far end of the identifier. _lock_ingredient then reads as lock_ingredient_.
+_VERBATIM_CHAR = re.compile(
+    r'(<w:style\b[^>]*w:styleId="VerbatimChar"[^>]*>.*?<w:rPr>)(.*?)(</w:rPr>)', re.S
+)
+
+# w:rtl sits after w:sz and w:szCs, and before any of these, per the schema.
+_AFTER_RTL = ("<w:cs", "<w:em", "<w:lang", "<w:eastAsianLayout", "<w:specVanish", "<w:oMath")
+
 _TBL_PR = re.compile(r"<w:tblPr>.*?</w:tblPr>", re.S)
 _TBL_STYLE = re.compile(r"^<w:tblPr>\s*(<w:tblStyle\b[^>]*?/>)?\s*")
 
@@ -74,6 +89,16 @@ _TOC_SDT = re.compile(
     r"<w:sdt>(?:(?!</w:sdt>).)*?Table of Contents(?:(?!</w:sdt>).)*?</w:sdt>", re.S
 )
 _PAGE_BREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+
+# A run carrying the inline-code character style, and the text inside it.
+# Marking the style left-to-right is not enough on its own: a leading
+# underscore is bidi-neutral, and Word resolves it against the surrounding
+# paragraph before the run's own direction applies, so it still lands at the
+# far end of the identifier. A LEFT-TO-RIGHT MARK placed ahead of the text
+# gives that underscore a strong left-to-right neighbour to attach to.
+_VERBATIM_RUN = re.compile(r"<w:r>(?:(?!</w:r>).)*?VerbatimChar(?:(?!</w:r>).)*?</w:r>", re.S)
+_RUN_TEXT = re.compile(r"(<w:t\b[^>]*>)")
+_LRM = chr(0x200E)  # LEFT-TO-RIGHT MARK, by code point so it stays visible here
 
 # A paragraph holding an image, and the paragraph that follows a table.
 _IMAGE_P = re.compile(r"<w:p\b[^>]*>(?:(?!</w:p>).)*?<w:drawing>.*?</w:p>", re.S)
@@ -136,6 +161,23 @@ def patch_styles(xml):
         patched = heading.group(1) + _HEADING_SPACING + body + heading.group(3)
         xml = xml.replace(heading.group(0), patched)
 
+    # An inline code span stays left-to-right for the same reason a code block
+    # does, and additionally so that a leading underscore is drawn where it was
+    # written rather than at the other end of the identifier.
+    verbatim = _VERBATIM_CHAR.search(xml)
+    if verbatim and "<w:rtl " not in verbatim.group(2):
+        body = verbatim.group(2)
+        positions = [body.find(tag) for tag in _AFTER_RTL if tag in body]
+        at = min(positions) if positions else len(body)
+        patched = (
+            verbatim.group(1)
+            + body[:at]
+            + '<w:rtl w:val="0"/>'
+            + body[at:]
+            + verbatim.group(3)
+        )
+        xml = xml.replace(verbatim.group(0), patched)
+
     # Code blocks stay left-to-right: they hold English identifiers and paths.
     code = _SOURCE_CODE.search(xml)
     if code and "<w:bidi " not in code.group(2):
@@ -180,6 +222,16 @@ def patch_document(xml):
     # The title page stands alone, and the first chapter opens a page of its
     # own: a page break on each side of the table of contents gives both.
     xml = _TOC_SDT.sub(lambda m: _PAGE_BREAK + m.group(0) + _PAGE_BREAK, xml, count=1)
+
+    # A left-to-right mark ahead of every inline code span, so a leading
+    # underscore stays at the start of the identifier it belongs to.
+    def mark_verbatim(match):
+        run = match.group(0)
+        if _LRM in run:
+            return run
+        return _RUN_TEXT.sub(lambda tag: tag.group(1) + _LRM, run, count=1)
+
+    xml = _VERBATIM_RUN.sub(mark_verbatim, xml)
 
     xml = _TBL_PR.sub(patch_table_properties, xml)
 
