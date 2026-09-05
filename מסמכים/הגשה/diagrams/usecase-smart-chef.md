@@ -20,7 +20,6 @@ flowchart LR
         UC3 -.->|"&lt;&lt;extend&gt;&gt;"| UC10(["עדכון המתכון שבהצעה"])
         UC5 -.->|"&lt;&lt;include&gt;&gt;"| UC11(["יצירת מנה חדשה"])
         UC5 -.->|"&lt;&lt;include&gt;&gt;"| UC12(["בניית המתכון מהמרכיבים המוצעים"])
-        UC5 -.->|"&lt;&lt;include&gt;&gt;"| UC13(["שמירת קישור למקור ההצעה"])
     end
 
     cook --- UC1

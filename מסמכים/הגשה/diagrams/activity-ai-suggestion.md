@@ -18,6 +18,10 @@ stateDiagram-v2
     state ok <<choice>>
     state decide <<choice>>
 
+    note right of busy : יש כבר בקשה פעילה לאותו טבח?
+    note right of ok : התקבלה תשובה תקינה מהשף החכם?
+    note right of decide : המנהל מאשר את ההצעה?
+
     [*] --> request
     request --> busy
     busy --> failed : בקשה קודמת של אותו טבח עדיין רצה

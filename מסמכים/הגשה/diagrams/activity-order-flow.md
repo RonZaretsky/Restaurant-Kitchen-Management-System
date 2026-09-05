@@ -18,6 +18,9 @@ stateDiagram-v2
     state deduct <<fork>>
     state deducted <<join>>
 
+    note right of more_items : יש עוד פריטים להוסיף?
+    note right of all_ready : כל הפריטים הפעילים מוכנים?
+
     [*] --> free
     free --> empty : המלצר פותח את השולחן
     empty --> waiting : המלצר מוסיף פריט

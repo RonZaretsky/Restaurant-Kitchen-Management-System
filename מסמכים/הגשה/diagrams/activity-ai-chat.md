@@ -21,6 +21,12 @@ stateDiagram-v2
     state kind <<choice>>
     state again <<choice>>
 
+    note right of target : השיחה סביב הצעת מתכון או מנה בתפריט?
+    note right of busy : יש כבר הודעה פעילה באותה שיחה?
+    note right of ok : התקבלה תשובה תקינה מהשף החכם?
+    note right of kind : השיחה היא סביב הצעת מתכון?
+    note right of again : הטבח ממשיך את השיחה?
+
     [*] --> open
     open --> target
     target --> s_sug : הנושא הוא הצעת מתכון
