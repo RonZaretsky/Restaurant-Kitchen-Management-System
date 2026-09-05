@@ -32,7 +32,7 @@ sequenceDiagram
     else עודכן בהצלחה
         OS->>DB: חישוב מחדש של מצב ההזמנה
         OS->>DB: שמירה (Commit)
-        OS->>RT: broadcast("item_status_changed", [מלצר, טבח])
+        OS->>RT: broadcast([מלצר, טבח], "order.item_status_changed", payload)
         RT-->>Waiter: שידור
         Waiter->>Waiter: הצגת ההודעה כטקסט אדום מתחת לפריט
         OS-->>API: 200, הפריט נדחה

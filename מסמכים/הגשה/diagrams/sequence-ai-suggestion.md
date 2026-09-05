@@ -10,9 +10,9 @@ sequenceDiagram
     participant LLM as LLMClient
     participant EXT as ספק ה-AI החיצוני
 
-    Cook->>UI: "בקש הצעה" (כיוון חופשי, תעדוף בזבוז)
+    Cook->>UI: "בקש הצעה" (כיוון חופשי, ודגל תעדוף בזבוז)
     UI->>API: POST /api/smart-chef/suggestions
-    API->>AIS: generate_suggestion(db, actor, payload)
+    API->>AIS: generate_suggestion(db, actor, direction, prioritize_waste)
 
     AIS->>AIS: בדיקה: כבר יש בקשה פתוחה לטבח הזה?
     alt כן, כבר בעבודה
@@ -26,7 +26,8 @@ sequenceDiagram
             AIS-->>API: שגיאה 502
             API-->>UI: הודעת כישלון
         else יש מרכיבים זמינים
-            AIS->>AIS: מיון לפי סיכון בזבוז (אם סומן) ובניית הפנייה
+            AIS->>AIS: מיון לפי סיכון בזבוז, תמיד
+            AIS->>AIS: בניית הפנייה, עם מסגור הבזבוז אם הדגל סומן
             AIS->>LLM: generate_recipe(prompt)
             LLM->>EXT: קריאת API חיצונית
             EXT-->>LLM: תשובה

@@ -1,4 +1,4 @@
-# דיאגרמת רצף: לקיחת פריט להכנה עם ניכוי מלאי אטומי
+# דיאגרמת רצף: לקיחת פריט להכנה עם הפחתת מלאי אטומית
 
 ```mermaid
 sequenceDiagram
@@ -24,7 +24,7 @@ sequenceDiagram
         DB-->>OS: רשימת מרכיבים וכמות לכל אחד
 
         loop לכל מרכיב במתכון
-            OS->>IS: apply_consumption(db, ingredient_id, כמות)
+            OS->>IS: apply_consumption(db, ingredient_id, quantity, actor_id, order_id)
             IS->>DB: נעילת שורת המרכיב (FOR UPDATE)
             IS->>IS: בדיקה: מלאי נוכחי - כמות >= 0?
             alt מלאי לא מספיק
@@ -43,10 +43,10 @@ sequenceDiagram
         else כל המרכיבים נוכו בהצלחה
             OS->>DB: חישוב מחדש של מצב ההזמנה
             OS->>DB: שמירת העסקה כולה (Commit)
-            OS->>RT: broadcast("item_status_changed", [מלצר, טבח])
+            OS->>RT: broadcast([מלצר, טבח], "order.item_status_changed", payload)
             RT-->>UI: שידור לכל המסכים הרשומים
             opt נחצה סף התרעת מלאי באחד המרכיבים
-                OS->>RT: broadcast("alerts_changed", [מחסנאי])
+                OS->>RT: broadcast([מחסנאי], "inventory.alerts_changed", payload)
             end
             OS-->>API: 200, הפריט בהכנה
             API-->>UI: 200

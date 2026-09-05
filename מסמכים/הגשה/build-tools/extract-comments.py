@@ -13,6 +13,11 @@ import sys
 import zipfile
 from xml.etree import ElementTree as ET
 
+# Windows gives a redirected stdout the ANSI codepage, which cannot hold Hebrew.
+# Without this the script runs fine on screen and dies the moment it is piped.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 # Pandoc writes "Heading2"; Word renumbers the ids to a bare "2" when it
@@ -43,11 +48,16 @@ def walk(root):
     Returns:
         A tuple (anchors, headings, coloured), where anchors maps a comment id
         to the text it spans, headings maps a comment id to the heading it
-        appeared under, and coloured is a list of (colour, heading, text).
+        appeared under, and coloured is a list of (colours, heading, marked)
+        holding one entry per paragraph that carries any colour. `marked` is
+        the whole paragraph with the coloured spans wrapped in guillemets, so
+        an edit can be read in the sentence it belongs to rather than as a
+        loose fragment.
     """
     anchors, headings, coloured = {}, {}, []
     open_ids = {}
     para_pieces = []
+    para_segments = []
     para_style = None
     heading = "(לפני הכותרת הראשונה)"
 
@@ -56,20 +66,42 @@ def walk(root):
     run_pieces = []
 
     def flush_run():
-        if run_colour and run_pieces:
-            text = "".join(run_pieces).strip()
-            if text:
-                coloured.append((run_colour, heading, text))
+        text = "".join(run_pieces)
+        if text:
+            para_segments.append((run_colour, text))
+
+    def flush_para():
+        """Emits the paragraph if any run in it carried a colour."""
+        colours = [c for c, _ in para_segments if c]
+        if not colours:
+            return
+        # Adjacent runs split by Word mid-word are merged, so an edit reads as
+        # one span instead of one per run.
+        merged = []
+        for colour, text in para_segments:
+            if merged and bool(merged[-1][0]) == bool(colour):
+                merged[-1][1] += text
+            else:
+                merged.append([colour, text])
+        marked = "".join(
+            ("«%s»" % text) if colour else text for colour, text in merged
+        )
+        names = sorted({COLOUR_NAMES.get(c, c) for c in colours})
+        coloured.append((names, heading, marked.strip()))
 
     for el in root.iter():
         tag = el.tag
 
         if tag == W + "p":
+            flush_run()
+            run_colour, run_pieces = None, []
+            flush_para()
             if para_style and HEADING_STYLE.match(para_style):
                 found = "".join(para_pieces).strip()
                 if found:
                     heading = found
             para_pieces = []
+            para_segments = []
             para_style = None
 
         elif tag == W + "pStyle":
@@ -102,6 +134,7 @@ def walk(root):
                 anchors[cid] = "".join(open_ids.pop(cid)).strip()
 
     flush_run()
+    flush_para()
     return anchors, headings, coloured
 
 
@@ -144,11 +177,10 @@ def main(path):
     print("=" * 70)
     if not coloured:
         print("אין טקסט צבוע בקובץ.")
-    for colour, heading, text in coloured:
-        name = COLOUR_NAMES.get(colour, colour)
+    for names, heading, marked in coloured:
         print()
-        print("[%s] %s" % (name, heading))
-        print("  %s" % text)
+        print("[%s] %s" % (", ".join(names), heading))
+        print("  %s" % marked)
 
 
 if __name__ == "__main__":
