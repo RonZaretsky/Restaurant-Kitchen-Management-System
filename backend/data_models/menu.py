@@ -30,7 +30,7 @@ class Dish(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     price: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
     category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id"), nullable=False)
-    # False, matching AD-8's "starts unavailable until it has a recipe" (AC2): the
+    # False: a Dish starts unavailable until it has a recipe. The
     # service always passes is_available=False explicitly on create anyway, but the
     # column default should not itself claim otherwise for any insert path that
     # bypasses the service.
@@ -39,11 +39,11 @@ class Dish(Base):
     image_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     # Nullable provenance link back to the AIRecipeSuggestion this Dish was confirmed from
-    # (Story 6.2, FR-19). Null for a manually-defined Dish (AC3). Lives here, not on
+    #. Null for a manually-defined Dish. Lives here, not on
     # RecipeIngredient, since there is no single row representing "the recipe" as a whole — a
     # Dish's recipe is its set of RecipeIngredient rows, and one Dish has at most one originating
     # suggestion.
-    # unique=True (code review finding): closes a TOCTOU race where two concurrent Dish
+    # unique=True: closes a TOCTOU race where two concurrent Dish
     # creations citing the same suggestion could both pass the service-level check before either
     # commits, giving one suggestion two confirming Dishes. Postgres permits multiple NULLs
     # under a plain UNIQUE constraint, so ordinary (non-AI-sourced) Dishes are unaffected.
@@ -73,7 +73,7 @@ class CreateDishRequest(BaseModel):
     """Body of an Admin's request to create a Dish.
 
     Never carries is_available: a newly created Dish is unconditionally
-    unavailable until it has a recipe (AC2, AD-8), regardless of anything a
+    unavailable until it has a recipe, regardless of anything a
     caller submits.
     """
 
@@ -82,12 +82,12 @@ class CreateDishRequest(BaseModel):
     # max_digits/decimal_places match the Numeric(8, 2) column exactly. Without
     # them, a value with more digits than the column allows passes validation
     # here and then raises an unhandled asyncpg.NumericValueOutOfRangeError on
-    # commit (a 500), the same class of bug Story 2.1's review caught.
+    # commit (a 500), the same class of bug the Ingredient bounds guard against.
     price: Decimal = Field(gt=0, max_digits=8, decimal_places=2)
     category_id: int = Field(gt=0, le=_INT4_MAX)
     prep_time_minutes: int | None = Field(default=None, ge=0, le=_INT4_MAX)
-    # Optional (Story 6.2, FR-19): set only when this Dish is being confirmed from a Recipe
-    # Suggestion. Every existing call site omits this and is unaffected (AC3).
+    # Optional: set only when this Dish is being confirmed from a Recipe
+    # Suggestion. Every existing call site omits this and is unaffected.
     source_suggestion_id: int | None = Field(default=None, gt=0, le=_INT4_MAX)
 
     _strip_name = field_validator("name")(_strip_and_require_content)

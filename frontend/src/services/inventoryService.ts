@@ -27,7 +27,7 @@ const INGREDIENTS_QUERY_KEY = ["inventory", "ingredients"] as const;
 const ingredientQueryKey = (id: number | null) => ["inventory", "ingredients", id] as const;
 const movementsQueryKey = (id: number | null) => ["inventory", "ingredients", id, "movements"] as const;
 
-// Exported (Story 4.2), mirrors TABLES_QUERY_KEY/DISHES_QUERY_KEY's cross-file-export
+// Exported, mirrors TABLES_QUERY_KEY/DISHES_QUERY_KEY's cross-file-export
 // precedent: both AppShell.tsx's nav badge and AlertsPage.tsx's list independently
 // subscribe to inventory.alerts_changed and need to invalidate this same key.
 export const ALERTS_QUERY_KEY = ["inventory", "alerts"] as const;
@@ -35,9 +35,7 @@ export const ALERTS_QUERY_KEY = ["inventory", "alerts"] as const;
 /**
  * Fetches every Ingredient.
  *
- * Kept to this one hook (plus the create mutation added for Story 2.6): an
- * ingredient-detail/stock-levels UI belongs to Epic 4's Story 4.3, this
- * story only needs the list for a recipe-line Ingredient picker and the
+ * A plain list read, used for the recipe-line Ingredient picker and the
  * Ingredients screen's own list.
  *
  * @returns The TanStack Query result for the full Ingredient list.
@@ -54,7 +52,7 @@ export function useIngredients(): UseQueryResult<Ingredient[], Error> {
 }
 
 /**
- * Fetches every Ingredient currently in shortage (FR-14, Story 4.2).
+ * Fetches every Ingredient currently in shortage.
  *
  * @param enabled - Whether the query should run at all. AppShell.tsx calls this
  *   unconditionally (hooks cannot be called conditionally) but only a
@@ -74,14 +72,14 @@ export function useAlerts(enabled = true): UseQueryResult<Ingredient[], Error> {
 }
 
 /**
- * Creates a new Ingredient (AC4).
+ * Creates a new Ingredient.
  *
- * Invalidates ALERTS_QUERY_KEY too, not just INGREDIENTS_QUERY_KEY (Story 4.3 review): a new
+ * Invalidates ALERTS_QUERY_KEY too, not just INGREDIENTS_QUERY_KEY: a new
  * Ingredient can be created with current_stock already below min_stock_threshold, and nothing
  * else would ever refresh the alerts list for it — record_movement's own crossing-triggered
- * broadcast (Story 4.2) never fires here, since no Stock Movement was involved. Without this,
+ * broadcast never fires here, since no Stock Movement was involved. Without this,
  * a newly-created in-shortage Ingredient would render with no shortage styling/sort-to-top on
- * IngredientsPage.tsx (Story 4.3) until some unrelated event happened to invalidate the cache.
+ * IngredientsPage.tsx until some unrelated event happened to invalidate the cache.
  *
  * @returns The TanStack Query mutation for submitting a new Ingredient.
  */
@@ -102,7 +100,7 @@ export function useCreateIngredient(): UseMutationResult<Ingredient, Error, Crea
 }
 
 /**
- * Deactivates an Ingredient (this batch's #3/#4), blocking new Recipe Ingredient lines and new
+ * Deactivates an Ingredient, blocking new Recipe Ingredient lines and new
  * Stock Movements against it.
  *
  * Invalidates both INGREDIENTS_QUERY_KEY and ALERTS_QUERY_KEY on settle, matching
@@ -127,7 +125,7 @@ export function useDeactivateIngredient(): UseMutationResult<Ingredient, Error, 
 }
 
 /**
- * Reactivates a previously deactivated Ingredient (this batch's #3/#4).
+ * Reactivates a previously deactivated Ingredient.
  *
  * @returns The TanStack Query mutation for reactivating an Ingredient by id.
  */
@@ -145,7 +143,7 @@ export function useReactivateIngredient(): UseMutationResult<Ingredient, Error, 
 }
 
 /**
- * Fetches one Ingredient by id, for the Ingredient detail screen's stat cards (Story 4.1).
+ * Fetches one Ingredient by id, for the Ingredient detail screen's stat cards.
  *
  * @param ingredientId - The id of the Ingredient to fetch, or null while the route
  *   param has not resolved to a usable id yet.
@@ -161,7 +159,7 @@ export function useIngredient(ingredientId: number | null): UseQueryResult<Ingre
 }
 
 /**
- * Fetches every Stock Movement recorded for an Ingredient, newest first (Story 4.1).
+ * Fetches every Stock Movement recorded for an Ingredient, newest first.
  *
  * @param ingredientId - The id of the Ingredient whose history is being read, or null
  *   while the route param has not resolved to a usable id yet.
@@ -177,7 +175,7 @@ export function useStockMovements(ingredientId: number | null): UseQueryResult<S
 }
 
 /**
- * Logs a manual Stock Movement against an Ingredient (AC1/AC2, Story 4.1).
+ * Logs a manual Stock Movement against an Ingredient.
  *
  * Invalidates three keys on settle, not just one: `current_stock` changed, which is cached
  * under the single-ingredient key, the movements-list key, *and* the plain ingredients-list

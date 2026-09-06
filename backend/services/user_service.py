@@ -178,7 +178,7 @@ class UserService:
         """Deactivate an active User, blocking further logins.
 
         Historical records referencing this User are untouched: deactivation
-        only flips is_active, it never deletes or reassigns the row (AC5).
+        only flips is_active, it never deletes or reassigns the row.
 
         Args:
             db: The active database session.
@@ -238,7 +238,7 @@ class UserService:
     ) -> User:
         """Set a new password on an existing User, overwriting the old hash.
 
-        Never reads or requires the account's previous password (AC8). The
+        Never reads or requires the account's previous password. The
         old password stops working immediately since password_hash is
         overwritten, not appended to.
 

@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema.
 
-    Adds OrderItem.price_at_add (AD-7), a copy of Dish.price captured at insert
+    Adds OrderItem.price_at_add, a copy of Dish.price captured at insert
     time so a later price change never retroactively changes an already-open
     Order's total.
 

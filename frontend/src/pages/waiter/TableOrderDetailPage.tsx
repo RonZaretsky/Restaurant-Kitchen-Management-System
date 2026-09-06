@@ -92,8 +92,7 @@ function parseQuantity(raw: string): number | null {
  * Formats a stored price for display.
  *
  * `price_at_add` arrives as a Decimal-as-string, so it is shown as-is rather
- * than parsed through a float that could lose precision. Currency symbol per
- * the Table/Order detail mockup.
+ * than parsed through a float that could lose precision.
  *
  * @param priceAtAdd - The item's stored price, as sent by the API.
  * @returns The price with its currency symbol.
@@ -103,7 +102,7 @@ function formatPrice(priceAtAdd: string): string {
 }
 
 /**
- * Computes the Order total client-side, from the already-fetched item list (Story 5.4, AD-7).
+ * Computes the Order total client-side, from the already-fetched item list.
  *
  * The backend only computes/stores `total_amount` at close time (it is null before then), so the
  * pre-close total shown here is derived the same way the server will eventually compute it: the
@@ -120,17 +119,17 @@ function computeClientSideTotal(items: OrderItem[]): string {
 }
 
 /**
- * The Order total / Mark served / Close bar (Story 5.4), always visible once the Order is
- * loaded, per `EXPERIENCE.md`'s "Order total / Close action" row.
+ * The Order total / Mark served / Close bar, always visible once the Order is
+ * loaded.
  *
  * The displayed total is the server's own stored `total_amount` once the Order is `closed` (the
- * authoritative, immutable value, AC5); before that it is computed client-side from `items`
- * (AD-7). Mark served mirrors the backend's own guard (`ready`, or `pending` with zero
- * non-cancelled items, AC1/AC2) — checked against the already-fetched `items` list directly
+ * authoritative, immutable value); before that it is computed client-side from `items`.
+ * Mark served mirrors the backend's own guard (`ready`, or `pending` with zero
+ * non-cancelled items) — checked against the already-fetched `items` list directly
  * rather than trusting `order.status === "pending"` alone, since the Order and item-list queries
  * can momentarily disagree (independent TanStack Query caches, refreshed by different live
- * events). Close is enabled only once `served` (AC4) and applies immediately with no confirm step
- * (AC6, UX-DR12 contrast — unlike the cancel path above, this is not a data-loss risk).
+ * events). Close is enabled only once `served` and applies immediately with no confirm step
+ * (unlike the cancel path above, this is not a data-loss risk).
  *
  * @param order - The Order this bar describes.
  * @param items - The Order's current item list, used for the pre-close total.
@@ -202,7 +201,7 @@ function OrderTotalBar({ order, items }: { order: Order; items: OrderItem[] }) {
 }
 
 /**
- * One row of the Order Item table, owning its own local edit/confirm state (Story 3.4).
+ * One row of the Order Item table, owning its own local edit/confirm state.
  *
  * Mirrors `TablesSetupPage.tsx`'s `TableListRow`/`UsersPage.tsx`'s `UserListRow` shape: editing or
  * confirming one row must not re-render or reset the whole list, and each row gets its own
@@ -210,9 +209,9 @@ function OrderTotalBar({ order, items }: { order: Order; items: OrderItem[] }) {
  * so editing one item and cancelling another are independent actions, never cross-row disabled or
  * cross-row error bleed the way a single page-level shared mutation would produce.
  *
- * Action visibility follows the ACs exactly: `pending` gets Edit + a plain Cancel (AC1/AC2, no
+ * Action visibility follows the item's status: `pending` gets Edit + a plain Cancel (no
  * confirm needed, nothing was deducted yet); `in_preparation` gets Cancel only, behind an in-row
- * confirm reveal stating the prior stock deduction will not be restored (AC3/AC4/UX-DR12, the
+ * confirm reveal stating the prior stock deduction will not be restored (the
  * `UsersPage.tsx` "Deactivate {name}?" in-row-reveal precedent, not a modal, this codebase has
  * never introduced one); `ready`/`cancelled` get no actions at all.
  *
@@ -406,21 +405,21 @@ function OrderItemRow({
 }
 
 /**
- * The Table/Order detail surface (Story 3.2).
+ * The Table/Order detail surface.
  *
  * Reached by table_id alone (`/waiter/tables/:tableId`), so the first thing this page does is
- * resolve that id to its currently open Order (`useOrderForTable`), a read this story adds since
- * nothing before it could fetch an existing Order. Everything else, the add-dish form and the
+ * resolve that id to its currently open Order (`useOrderForTable`).
+ * Everything else, the add-dish form and the
  * Order Item list, depends on that Order's id.
  *
  * Loading/error state is combined across every query the page depends on, per the "combine every
- * query" rule Story 2.5's review established. One failure is deliberately excluded: a 404 from
+ * query" rule this codebase follows. One failure is deliberately excluded: a 404 from
  * the order lookup is not a transport failure, it means this Table simply has no Order open on it
  * right now, which is a legitimate state reachable by URL and gets its own message rather than a
  * Retry button that could never succeed.
  *
- * Story 3.4 added the Actions column: Edit + Cancel on a pending row, Cancel-behind-a-confirm on
- * an in_preparation row, nothing on ready/cancelled. No Close order bar yet (a later FR-8 story).
+ * The Actions column: Edit + Cancel on a pending row, Cancel-behind-a-confirm on
+ * an in_preparation row, nothing on ready/cancelled.
  *
  * @returns The Table/Order detail page.
  */
@@ -439,10 +438,10 @@ export function TableOrderDetailPage() {
   const itemsQuery = useOrderItems(order?.id);
   const { data: items } = itemsQuery;
 
-  // Story 3.3: Observer/Pub-Sub. This component subscribes to the
+  // Observer/Pub-Sub. This component subscribes to the
   // order.item_added event OrderService publishes without knowing which
   // Waiter's action triggered it, so any Waiter adding an item to any Order
-  // updates this page live if it happens to be this Order (AC2/AC3).
+  // updates this page live if it happens to be this Order.
   // Page-wide subscription, not filtered to this order's id before
   // invalidating: invalidateQueries only refetches queries that actually
   // match the key, so invalidating a key for an order this page is not
@@ -451,15 +450,14 @@ export function TableOrderDetailPage() {
   // would target a key nothing reads, silently missing a live update that
   // arrives in the narrow window before this page's own Order lookup
   // settles.
-  // Story 5.2: order.item_status_changed is a second, distinct event (a Cook's
+  // order.item_status_changed is a second, distinct event (a Cook's
   // pick-up/mark-ready transition, not a new item), subscribed to alongside
   // order.item_added rather than folded into one subscribe() call, since
   // useRealtime()'s subscribe is per-event-name. Both invalidate the same
   // key: this page never inspects the payload directly, only refetches.
-  // Story 5.3: order.status_changed is a third, distinct event (the Order's own derived
-  // status, not an item), invalidating this page's `useOrderForTable` query key instead —
-  // that Order object is what first makes `.status` a real, changing field this story adds,
-  // so it needs the same live-refresh treatment every other query on this page already gets.
+  // order.status_changed is a third, distinct event (the Order's own derived
+  // status, not an item), invalidating this page's `useOrderForTable` query key instead,
+  // so that Order object gets the same live-refresh treatment every other query here does.
   useEffect(() => {
     if (order?.id === undefined) {
       return undefined;

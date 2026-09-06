@@ -120,11 +120,11 @@ class MenuService:
         return result.scalars().all()
 
     async def create_dish(self, db: AsyncSession, actor: User, payload: CreateDishRequest) -> Dish:
-        """Create a new Dish, unconditionally unavailable (AC2, AD-8).
+        """Create a new Dish, unconditionally unavailable.
 
         Optionally confirms this Dish as originating from a Recipe Suggestion
-        (Story 6.2, FR-19) when `payload.source_suggestion_id` is set — this is the
-        *only* code path that can ever set that provenance link (AC2): there is no
+         when `payload.source_suggestion_id` is set — this is the
+        *only* code path that can ever set that provenance link: there is no
         second, separate "confirm" mutation, just this one optional field on the
         same insert every Dish creation already goes through.
 
@@ -165,7 +165,7 @@ class MenuService:
             await db.commit()
         except IntegrityError as exc:
             # The pre-check above loses to a concurrent create_dish citing the same
-            # suggestion_id: uq_dishes_source_suggestion_id (code review finding) is the real
+            # suggestion_id: uq_dishes_source_suggestion_id is the real
             # arbiter, so translate its violation into the same 409 rather than letting it
             # surface as a 500. Logging before rollback, not after: rollback() expires every
             # object bound to this session, actor included, so reading actor.id afterward raises
@@ -189,7 +189,7 @@ class MenuService:
         return dish
 
     async def _validate_source_suggestion(self, db: AsyncSession, actor: User, suggestion_id: int) -> None:
-        """Validate a Recipe Suggestion id supplied on a Dish create (Story 6.2, FR-19).
+        """Validate a Recipe Suggestion id supplied on a Dish create.
 
         Args:
             db: The active database session.
@@ -275,9 +275,8 @@ class MenuService:
         """Edit a Dish's fields and/or availability.
 
         Setting is_available to True is rejected while the Dish has zero
-        Recipe Ingredient lines (AD-8). No Recipe-management story has
-        shipped yet, so this count is always 0 today, every Dish stays
-        unavailable until Story 2.3 lands, that is expected sequencing.
+        Recipe Ingredient lines, so a live menu item can never have an empty
+        recipe for the automatic stock deduction to silently no-op against.
 
         Args:
             db: The active database session.
@@ -348,7 +347,7 @@ class MenuService:
         """List every Recipe Ingredient line for a Dish.
 
         A plain SELECT against current state every call, never cached, so it
-        can never return a stale snapshot (AC3).
+        can never return a stale snapshot.
 
         Args:
             db: The active database session.
@@ -520,8 +519,8 @@ class MenuService:
         """Remove a Recipe Ingredient line from a Dish.
 
         Rejected while it is this Dish's last line and the Dish is currently
-        available (AC2, AD-8 second half): the Admin must mark it unavailable
-        first.
+        available: the Admin must mark it unavailable first, so an available
+        Dish can never be left with an empty recipe.
 
         Args:
             db: The active database session.
@@ -568,7 +567,7 @@ class MenuService:
     async def _lock_dish(self, db: AsyncSession, dish_id: int) -> Dish:
         """Lock a Dish row for the rest of the transaction and return it.
 
-        Both halves of AD-8 read the Dish's availability and then count its
+        Both halves of the non-empty-recipe rule read the Dish's availability and then count its
         Recipe Ingredient lines before deciding. Without a lock those are two
         unsynchronized reads: two admins deleting the last two lines of an
         available Dish both count 2, both pass the guard, and both commit,
@@ -577,7 +576,7 @@ class MenuService:
         pre-change state. Taking the same single row lock on both paths makes
         the second caller wait and re-evaluate against committed state.
         Locking one row by primary key gives every caller the same lock
-        target, so they serialize instead of deadlocking (trap 9, the shape
+        target, so they serialize instead of deadlocking (the shape
         UserService's last-admin guard already uses).
 
         Args:
@@ -602,7 +601,7 @@ class MenuService:
         """Raise UnitMismatchError if a line's unit is not the Ingredient's own unit.
 
         Nothing in this system converts between units, so a line recorded in
-        a different unit than the ingredient is stocked in would make Epic 5's
+        a different unit than the ingredient is stocked in would make the
         automatic deduction subtract the wrong amount with no error anywhere.
 
         Args:
@@ -709,7 +708,7 @@ class MenuService:
     async def _reject_if_recipe_empty(self, db: AsyncSession, dish: Dish, actor: User) -> None:
         """Raise EmptyRecipeError if dish has zero Recipe Ingredient lines.
 
-        Locks the Dish row before counting, so this half of AD-8 serializes
+        Locks the Dish row before counting, so this half of the rule serializes
         against the removal half (see _lock_dish). Without it, marking a Dish
         available and deleting its last line can interleave and both succeed.
 

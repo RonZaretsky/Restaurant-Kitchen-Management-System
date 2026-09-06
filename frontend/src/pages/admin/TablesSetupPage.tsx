@@ -206,11 +206,11 @@ function TableListRow({ table }: { table: RestaurantTable }) {
 }
 
 /**
- * The Tables setup surface (Story 2.4).
+ * The Tables setup surface.
  *
- * An "Add table" form and a dense-row list (UX-DR8) of every Restaurant
- * Table, each row editable only while `available` (AC3/AC4/AC6). No delete
- * action exists anywhere on this page or its children (AC7), Restaurant
+ * An "Add table" form and a dense-row list of every Restaurant
+ * Table, each row editable only while `available`. No delete
+ * action exists anywhere on this page or its children, Restaurant
  * Tables are only ever added and edited.
  *
  * @returns The Tables setup page.

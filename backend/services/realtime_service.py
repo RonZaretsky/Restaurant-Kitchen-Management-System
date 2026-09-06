@@ -10,7 +10,7 @@ class RealtimeService:
     """Emits `{domain}.{event}` push notifications to connected clients, by Role.
 
     A thin wrapper over ConnectionRegistry so api/websocket.py calls into
-    services/ rather than clients/ directly (AD-1). This is also the seam
+    services/ rather than clients/ directly. This is also the seam
     later domain services (order_service, kitchen_service, inventory_service)
     will inject to push their own state changes once they exist.
     """
@@ -57,7 +57,7 @@ class RealtimeService:
 
         Takes a group of Roles rather than one, so an event several Roles
         care about (order.item_status_changed reaches both cooks and waiters)
-        is emitted exactly once by the service that owns the mutation (AC4),
+        is emitted exactly once by the service that owns the mutation,
         instead of once per audience.
 
         Args:

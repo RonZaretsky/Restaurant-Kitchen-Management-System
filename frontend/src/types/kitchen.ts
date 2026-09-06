@@ -1,8 +1,8 @@
 import type { OrderItemStatus } from "./order";
 
 /**
- * Mirrors the JSON shape of backend/data_models/order.py's KitchenItemResponse
- * (Story 5.1). OrderItem's exact field set plus table_id, resolved server-side
+ * Mirrors the JSON shape of backend/data_models/order.py's KitchenItemResponse.
+ * OrderItem's exact field set plus table_id, resolved server-side
  * via a join since OrderItem itself has no table_id, only order_id.
  */
 export interface KitchenItem {

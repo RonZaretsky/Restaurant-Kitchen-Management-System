@@ -77,8 +77,7 @@ export function useDishes(): UseQueryResult<Dish[], Error> {
  * Fetches a single Dish's current Recipe Ingredient lines.
  *
  * Always current, never cached across a mutation (every add/update/remove
- * mutation below invalidates this key), matching AC3's "read back is always
- * live" requirement.
+ * mutation below invalidates this key), so a read back is always live.
  *
  * @param dishId - The Dish whose recipe is being read.
  * @returns The TanStack Query result for that Dish's recipe lines.
@@ -92,7 +91,7 @@ export function useRecipeIngredients(dishId: number): UseQueryResult<RecipeIngre
 }
 
 /**
- * Adds a Recipe Ingredient line to a Dish (AC1).
+ * Adds a Recipe Ingredient line to a Dish.
  *
  * @param dishId - The Dish the line is being added to.
  * @returns The TanStack Query mutation for submitting a new line.
@@ -134,10 +133,10 @@ export function useUpdateRecipeIngredient(
 }
 
 /**
- * Removes a Recipe Ingredient line from a Dish (AC2).
+ * Removes a Recipe Ingredient line from a Dish.
  *
  * Only the recipe list is invalidated. The backend never changes
- * `Dish.is_available` on a removal (AD-8 rejects the removal instead), so
+ * `Dish.is_available` on a removal (it rejects the removal instead), so
  * refetching the Dish list here would be busywork, and its key is a prefix of
  * every open panel's recipe key, so it would refetch those too.
  *
@@ -157,10 +156,10 @@ export function useRemoveRecipeIngredient(dishId: number): UseMutationResult<voi
 }
 
 /**
- * Sets a Dish's availability (AC4's "click to enable" path).
+ * Sets a Dish's availability, the "click to enable" path.
  *
- * Reuses Story 2.2's existing `PATCH /api/menu/dishes/{id}` endpoint, no new
- * backend route for this one. The AD-8 zero-recipe rejection is already
+ * Reuses the existing `PATCH /api/menu/dishes/{id}` endpoint, no new
+ * backend route for this one. The zero-recipe rejection is already
  * enforced server-side; this only gives that rejection a caller.
  *
  * @param dishId - The Dish whose availability is changing.
@@ -182,7 +181,7 @@ export function useUpdateDishAvailability(
 }
 
 /**
- * Creates a new Menu Category (AC2).
+ * Creates a new Menu Category.
  *
  * Appends the created Category to the cached list before invalidating, rather
  * than invalidating alone. Invalidation only *schedules* a refetch, so a caller
@@ -218,7 +217,7 @@ export function useCreateCategory(): UseMutationResult<Category, Error, CreateCa
 }
 
 /**
- * Creates a new Dish, starting unavailable per AD-8 (AC1).
+ * Creates a new Dish, starting unavailable until it has a recipe.
  *
  * @returns The TanStack Query mutation for submitting a new Dish.
  */

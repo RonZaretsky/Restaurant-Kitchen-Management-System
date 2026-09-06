@@ -29,11 +29,11 @@ async def websocket_endpoint(
 ) -> None:
     """The single push channel every authenticated session connects to.
 
-    Scoped to the connecting User's Role (AD-2): registered under user.role,
+    Scoped to the connecting User's Role: registered under user.role,
     so a broadcast can target that Role specifically. Read-only from the
     client's perspective: inbound frames are received only to detect a
-    disconnect, never acted on (AD-2: "Clients never treat the WebSocket as
-    a write channel"), and never decoded, so a binary frame cannot fault the
+    disconnect, never acted on (clients never treat the WebSocket as
+    a write channel), and never decoded, so a binary frame cannot fault the
     handler.
 
     The Origin allow-list is enforced by the verify_ws_origin route

@@ -11,10 +11,9 @@ const LABELS: Record<MovementType, string> = {
 
 // Deliberately none of "success"/"warning"/"error": those three are
 // OrderItemStatusBadge's traffic-light trio (ready/in_preparation/cancelled).
-// A movement type is a category, not an urgency signal (AC3/UX-DR14), so this
+// A movement type is a category, not an urgency signal, so this
 // reuses MUI's three remaining semantic Chip colors plus "default" instead —
-// also keeps this theme-aware in dark mode, unlike the mockup's raw light-mode
-// hex swatches, which this deliberately does not copy verbatim (see Dev Notes).
+// keeping the chip theme-aware in dark mode, which raw hex swatches would not be.
 const COLORS: Record<MovementType, "primary" | "info" | "default" | "secondary"> = {
   purchase: "primary",
   consumption: "info",
@@ -23,7 +22,7 @@ const COLORS: Record<MovementType, "primary" | "info" | "default" | "secondary">
 };
 
 /**
- * The Stock Movement type chip (AC3, UX-DR14): a neutral-palette MUI Chip, deliberately
+ * The Stock Movement type chip: a neutral-palette MUI Chip, deliberately
  * distinct from OrderItemStatusBadge's traffic-light convention, since a movement's type is a
  * category, not an urgency signal.
  *

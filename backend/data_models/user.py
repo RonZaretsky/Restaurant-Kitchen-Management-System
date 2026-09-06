@@ -141,7 +141,7 @@ class UserResponse(BaseModel):
     """Body of any admin endpoint response describing a User.
 
     Never includes password_hash, so a plaintext or hashed password can
-    never leak through a read endpoint (AC2).
+    never leak through a read endpoint.
     """
 
     model_config = {"from_attributes": True}

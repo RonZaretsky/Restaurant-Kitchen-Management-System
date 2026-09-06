@@ -43,7 +43,7 @@ function errorMessage(error: Error): string {
  * the same distinction DishRecipeEditor draws, so a network blip never
  * misrepresents a dish with a real recipe as one that has none. Likewise a
  * failed Ingredient-list fetch is surfaced explicitly rather than silently
- * falling back to raw ids (AC1 requires names, not ids).
+ * falling back to raw ids, since a recipe line must show a name, not an id.
  *
  * @param dish - The Dish this row describes.
  * @param ingredients - Every Ingredient, for resolving a line's display name.
@@ -124,15 +124,15 @@ function DishRow({
 }
 
 /**
- * The Dishes (view-only) surface (Story 2.5).
+ * The Dishes (view-only) surface.
  *
  * Lists every Dish, grouped by Menu Category, with its recipe shown as
- * ingredient names. Strictly read-only (AC2): no create, edit,
+ * ingredient names. Strictly read-only: no create, edit,
  * availability-toggle, or delete control exists anywhere on this page, menu
- * authoring stays Admin-only via Stories 2.2/2.3. Every list here reuses the
+ * authoring stays Admin-only. Every list here reuses the
  * same TanStack Query hooks the Admin screens already use, none of them set
  * a non-zero staleTime, so this page refetches on every mount exactly like
- * they do, satisfying AC4's "never a stale copy".
+ * they do, so a Cook never reads a stale copy.
  *
  * Loading and error state are combined across all three queries (dishes,
  * categories, ingredients), not just the dish list: a categories or

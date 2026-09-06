@@ -95,7 +95,7 @@ class Container(containers.DeclarativeContainer):
         logger=logging,
     )
 
-    # inventory_service must stay below realtime_service, and (since Story 5.2) order_service and
+    # inventory_service must stay below realtime_service, and order_service and
     # kitchen_service must stay below inventory_service: these are plain Python class-body
     # assignments evaluated top to bottom, so injecting a not-yet-defined provider into one
     # declared above it raises NameError at import time. Any future provider that depends on
@@ -106,7 +106,7 @@ class Container(containers.DeclarativeContainer):
         realtime_service=realtime_service,
     )
 
-    # Depends on inventory_service (Story 5.2, pick_up_item's atomic stock deduction), so must be
+    # Depends on inventory_service (pick_up_item's atomic stock deduction), so must be
     # declared below it.
     order_service = providers.Factory(
         OrderService,
@@ -115,7 +115,7 @@ class Container(containers.DeclarativeContainer):
         inventory_service=inventory_service,
     )
 
-    # Depends on inventory_service (this batch: the live max-preparable-quantity read backing the
+    # Depends on inventory_service (the live max-preparable-quantity read backing the
     # Kitchen Display's insufficient-stock warning), so must be declared below it — no
     # realtime_service dependency, it only reads.
     kitchen_service = providers.Factory(
@@ -124,9 +124,9 @@ class Container(containers.DeclarativeContainer):
         inventory_service=inventory_service,
     )
 
-    # Story 6.1: the first external-service client (AD-12). Singleton, not Factory: the
+    # The only external-service client. Singleton, not Factory: the
     # underlying AsyncOpenAI client is safely reusable across requests, no need to reconstruct it
-    # per-injection the way a stateless Factory-built service is. No trap-23 ordering constraint
+    # per-injection the way a stateless Factory-built service is. No declaration-ordering constraint
     # of its own — llm_client depends only on config, not on another provider.
     llm_client = providers.Singleton(
         LLMClient,
@@ -135,14 +135,14 @@ class Container(containers.DeclarativeContainer):
     )
 
     # Singleton, not Factory (a deliberate deviation from every other service in this container):
-    # AD-14's "reject a second concurrent generation for the same Cook" guard lives in an
+    # The "reject a second concurrent generation for the same Cook" guard lives in an
     # in-process set on the AIService instance itself (see its own docstring). A Factory would
     # hand each injected request a fresh, empty set, silently defeating the guard the first time
     # two different requests each got their own instance — the opposite of RealtimeService's own
     # shared-state pattern, where the state lives in a separately-injected Resource
     # (connection_registry) rather than the Factory-built service itself; here, since AIService
     # has no other per-request state to keep separate, making the whole service a Singleton is
-    # the simpler equivalent. Depends on llm_client, so must be declared below it (trap 23).
+    # the simpler equivalent. Depends on llm_client, so must be declared below it.
     ai_service = providers.Singleton(
         AIService,
         logger=logging,

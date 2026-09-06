@@ -33,11 +33,11 @@ const COLORS: Record<OrderItemStatus, "default" | "warning" | "success" | "error
 };
 
 /**
- * The shared Order Item status badge (UX-DR1): an MUI Chip with an icon and a spelled-out label,
- * built once so Story 3.4's edit/cancel UI and Epic 5's Kitchen Display can reuse it rather than
+ * The shared Order Item status badge: an MUI Chip with an icon and a spelled-out label,
+ * built once so the Waiter's edit/cancel UI and the Kitchen Display can reuse it rather than
  * each re-implementing their own status-to-color mapping.
  *
- * Covers all 5 OrderItemStatus members, `cancelled` (AD-11, Story 3.4) and `rejected` (this
+ * Covers all 5 OrderItemStatus members, `cancelled` and `rejected` (this
  * batch) included. Order-level
  * statuses (`served`/`closed`) still do not belong here, they describe a different type
  * (OrderStatus, not OrderItemStatus).

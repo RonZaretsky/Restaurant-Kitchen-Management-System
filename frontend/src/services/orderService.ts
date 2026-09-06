@@ -26,7 +26,7 @@ interface EditOrderItemPayload {
 /**
  * The shared cache key for one Order's item list.
  *
- * Exported (Story 3.3) so TableOrderDetailPage.tsx's live `order.item_added`
+ * Exported so TableOrderDetailPage.tsx's live `order.item_added`
  * subscriber can invalidate the same key this file's own query and mutation
  * already use, rather than reconstructing the array by hand and risking the
  * two drifting apart.
@@ -36,7 +36,7 @@ export function orderItemsQueryKey(orderId: number | undefined) {
 }
 
 /**
- * Opens an available Table into a new Order (AC1).
+ * Opens an available Table into a new Order.
  *
  * Invalidates the shared Table list on settle, not only on success, the same
  * key `tableService.ts`'s `useTables()` reads, matching `useUpdateTable()`'s
@@ -61,7 +61,7 @@ export function useOpenTable(): UseMutationResult<Order, Error, number> {
 /**
  * The shared cache key for one Table's currently open Order.
  *
- * Exported (Story 5.3) so TableOrderDetailPage.tsx's live `order.status_changed` subscriber can
+ * Exported so TableOrderDetailPage.tsx's live `order.status_changed` subscriber can
  * invalidate the same key `useOrderForTable` uses, matching `orderItemsQueryKey`'s established
  * cross-file-export shape rather than reconstructing the array by hand.
  *
@@ -95,7 +95,7 @@ export function useOrderForTable(tableId: number | null): UseQueryResult<Order, 
 }
 
 /**
- * The shared cache key for the bulk open-Orders list (Story 5.3).
+ * The shared cache key for the bulk open-Orders list.
  *
  * Exported so TablesPage.tsx's live `order.status_changed` subscriber can invalidate the same
  * key this hook uses, matching `KITCHEN_ITEMS_QUERY_KEY`'s established exported-cache-key shape.
@@ -103,13 +103,13 @@ export function useOrderForTable(tableId: number | null): UseQueryResult<Order, 
 export const OPEN_ORDERS_QUERY_KEY = ["orders", "open"] as const;
 
 /**
- * Fetches every currently open (non-closed) Order, across every Table (Story 5.3, AC4).
+ * Fetches every currently open (non-closed) Order, across every Table.
  *
  * Backs the Tables grid's need to know, across every occupied Table at once, whether that
  * Table's Order is `ready`, to render the attention-state tile treatment — one bulk query
  * resolved client-side into a table_id -> status lookup, not a per-tile request. `enabled`
  * defaults to true (TablesPage.tsx's own unconditional call site, unchanged); AppShell.tsx
- * (Story 5.4) passes `isWaiter` explicitly, mirroring `useAlerts`'s own Role-gating shape — the
+ * passes `isWaiter` explicitly, mirroring `useAlerts`'s own Role-gating shape — the
  * backing route is Waiter-only, so an ungated call from a non-Waiter role would 403.
  *
  * @param enabled - Whether the query should run at all.
@@ -125,7 +125,7 @@ export function useOpenOrders(enabled = true): UseQueryResult<Order[], Error> {
 }
 
 /**
- * Fetches every Order Item on an Order (AC3).
+ * Fetches every Order Item on an Order.
  *
  * `enabled: orderId !== undefined`: the page cannot know an Order's id until useOrderForTable
  * resolves, this hook is called before that read settles.
@@ -143,7 +143,7 @@ export function useOrderItems(orderId: number | undefined): UseQueryResult<Order
 }
 
 /**
- * Adds a new Order Item to an Order (AC1).
+ * Adds a new Order Item to an Order.
  *
  * `orderId` is optional because this hook is called before `useOrderForTable` resolves, the same
  * reason `useOrderItems` accepts it optionally. The caller only invokes the returned mutation once
@@ -176,7 +176,7 @@ export function useAddOrderItem(
 }
 
 /**
- * Edits a pending Order Item's quantity and/or note (AC1).
+ * Edits a pending Order Item's quantity and/or note.
  *
  * Invalidates on settle, not only on success, matching `useAddOrderItem`'s own reasoning: a 409
  * (the item is no longer pending) means this client's cached row is already stale, and the
@@ -201,7 +201,7 @@ export function useEditOrderItem(
 }
 
 /**
- * Cancels a pending or in_preparation Order Item (AC2/AC3).
+ * Cancels a pending or in_preparation Order Item.
  *
  * Invalidates on settle for the same reason `useEditOrderItem` does.
  *
@@ -226,7 +226,7 @@ interface PickUpOrMarkReadyVariables {
 }
 
 /**
- * Picks up a pending Order Item, triggering atomic stock deduction server-side (Story 5.2, AC1).
+ * Picks up a pending Order Item, triggering atomic stock deduction server-side.
  *
  * Unlike `useEditOrderItem`/`useCancelOrderItem`, this hook is not bound to one fixed `orderId`
  * at call time — its only caller, the Kitchen Display, renders items from many different Orders
@@ -250,7 +250,7 @@ export function usePickUpItem(): UseMutationResult<OrderItem, Error, PickUpOrMar
 }
 
 /**
- * Marks an in_preparation Order Item ready, a pure status change (Story 5.2, AC3).
+ * Marks an in_preparation Order Item ready, a pure status change.
  *
  * Same shape and invalidation reasoning as `usePickUpItem`.
  *
@@ -267,7 +267,7 @@ export function useMarkItemReady(): UseMutationResult<OrderItem, Error, PickUpOr
 }
 
 /**
- * Rejects a pending Order Item the kitchen cannot currently prepare (this batch).
+ * Rejects a pending Order Item the kitchen cannot currently prepare.
  *
  * Same shape and invalidation reasoning as `usePickUpItem`/`useMarkItemReady` — the Waiter's own
  * Table Order Detail page refreshes from the live `order.item_status_changed` push instead, which
@@ -286,7 +286,7 @@ export function useRejectItem(): UseMutationResult<OrderItem, Error, PickUpOrMar
 }
 
 /**
- * Marks a ready (or zero-item) Order served, a pure status change (Story 5.4, AC1, AC2).
+ * Marks a ready (or zero-item) Order served, a pure status change.
  *
  * Invalidates `orderForTableQueryKey(tableId)` on settle — it is the Order object itself that
  * changes here, not its item list, mirroring `useOrderForTable`'s own tableId-keyed cache
@@ -309,7 +309,7 @@ export function useMarkOrderServed(
 }
 
 /**
- * Closes a served Order, computing its total and freeing its Table (Story 5.4, AC3, AC4, AC5).
+ * Closes a served Order, computing its total and freeing its Table.
  *
  * Invalidates only the Table list on settle, deliberately not this Order's own key: a successful
  * close means there is no longer anything open on this Table, and the caller navigates away from

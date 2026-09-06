@@ -22,7 +22,7 @@ const GENERATE_SUGGESTION_TIMEOUT_MS = 50_000;
 const SEND_CHAT_MESSAGE_TIMEOUT_MS = 50_000;
 
 /**
- * The shared cache key for the Recipe Suggestion list (Story 6.1).
+ * The shared cache key for the Recipe Suggestion list.
  *
  * Exported the same way `ALERTS_QUERY_KEY`/`OPEN_ORDERS_QUERY_KEY` already are, so a later
  * live-update subscription (if this domain ever gets one) can invalidate the same key this
@@ -31,7 +31,7 @@ const SEND_CHAT_MESSAGE_TIMEOUT_MS = 50_000;
 export const SUGGESTIONS_QUERY_KEY = ["smart-chef", "suggestions"] as const;
 
 /**
- * Fetches every Recipe Suggestion, newest first (AC6).
+ * Fetches every Recipe Suggestion, newest first.
  *
  * @returns The TanStack Query result for the full suggestion list.
  */
@@ -44,7 +44,7 @@ export function useSuggestions(): UseQueryResult<AIRecipeSuggestion[], Error> {
 }
 
 /**
- * Generates a new Recipe Suggestion from current stock (AC1, AC2).
+ * Generates a new Recipe Suggestion from current stock.
  *
  * Uses `GENERATE_SUGGESTION_TIMEOUT_MS` (50s) rather than `apiRequest`'s 5s default — a real
  * OpenAI call routinely takes several seconds and legitimately up to `LLMClient`'s own
@@ -71,7 +71,7 @@ export function useGenerateSuggestion(): UseMutationResult<AIRecipeSuggestion, E
 }
 
 /**
- * Dismisses a Recipe Suggestion, retaining it for audit (Story 6.2, AC4).
+ * Dismisses a Recipe Suggestion, retaining it for audit.
  *
  * Invalidates the suggestion list on settle, not only on success: a 409 (already dismissed or
  * already confirmed) means the client's view of this suggestion's state is already stale,
@@ -90,7 +90,7 @@ export function useDismissSuggestion(): UseMutationResult<AIRecipeSuggestion, Er
 }
 
 /**
- * The shared cache key for the Chat Session list (Story 6.3).
+ * The shared cache key for the Chat Session list.
  *
  * Exported the same way `SUGGESTIONS_QUERY_KEY` already is, so a later live-update subscription
  * (if this domain ever gets one) can invalidate the same key this file's own hooks use.
@@ -111,7 +111,7 @@ export function chatMessagesQueryKey(sessionId: number) {
 }
 
 /**
- * Fetches every Chat Session, newest first (AC3, AC6).
+ * Fetches every Chat Session, newest first.
  *
  * @returns The TanStack Query result for the full session list.
  */
@@ -124,7 +124,7 @@ export function useChatSessions(): UseQueryResult<AIChatSession[], Error> {
 }
 
 /**
- * Fetches a Chat Session's full message history, oldest first (AC1, AC5).
+ * Fetches a Chat Session's full message history, oldest first.
  *
  * `enabled: sessionId !== null` (the established `number | null` + `enabled` gating shape, see
  * `useOrderForTable`'s precedent) — a page cannot know which session is active until the Cook
@@ -144,7 +144,7 @@ export function useChatMessages(sessionId: number | null): UseQueryResult<AIChat
 }
 
 /**
- * Opens a new Chat Session tied to a Dish or a Recipe Suggestion (AC1).
+ * Opens a new Chat Session tied to a Dish or a Recipe Suggestion.
  *
  * Invalidates the session list on settle, matching every other mutation in this file's
  * "invalidate on settle, not just success" convention.
@@ -166,7 +166,7 @@ export function useCreateChatSession(): UseMutationResult<
 }
 
 /**
- * Sends a message into an existing Chat Session (AC1, AC2, AC4).
+ * Sends a message into an existing Chat Session.
  *
  * Uses `SEND_CHAT_MESSAGE_TIMEOUT_MS` (50s) rather than `apiRequest`'s 5s default, matching
  * `useGenerateSuggestion`'s own reasoning: this call is backed by a real OpenAI request
@@ -174,7 +174,7 @@ export function useCreateChatSession(): UseMutationResult<
  *
  * Invalidates that session's message list on settle: a 409 (a reply is already generating) or a
  * 502 (the call failed) both mean the client's view of "what just happened" may be stale,
- * matching every other mutation in this file. `suggestionId` (optional, this batch's #7) is not
+ * matching every other mutation in this file. `suggestionId` (optional) is not
  * sent to the backend — the request body still carries only `content`, matching the backend's
  * own `CreateChatMessageRequest` shape — it exists purely so `onSettled` can also invalidate
  * `SUGGESTIONS_QUERY_KEY` when this send targets a Suggestion-tied session, since the backend may
