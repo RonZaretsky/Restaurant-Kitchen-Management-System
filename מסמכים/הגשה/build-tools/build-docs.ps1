@@ -112,9 +112,9 @@ $documents = @(
     [pscustomobject]@{
         Key       = "design"
         SourceDir = Join-Path $submissionDir "עיצוב-פתרון"
-        BaseName  = "מסמך-עיצוב-פתרון"
+        BaseName  = "מסמך-עיצוב"
         Title     = "Restaurant Kitchen Management System"
-        Subtitle  = "מסמך עיצוב הפתרון"
+        Subtitle  = "מסמך עיצוב"
     }
 )
 
