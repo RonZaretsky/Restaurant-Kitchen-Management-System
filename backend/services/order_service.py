@@ -437,8 +437,7 @@ class OrderService:
         a re-trigger on an already in_preparation/ready/cancelled item: the precondition
         simply no longer holds, regardless of what the current status actually is. Deduction is
         rejected, whole-item and all-or-nothing, if any Recipe Ingredient line would drive its
-        Ingredient's current_stock negative — see InsufficientStockError below. Unlike a manual
-        movement, which may drive stock negative, this automatic path refuses to. The existing
+        Ingredient's current_stock negative — see InsufficientStockError below. The existing
         low-stock threshold-crossing check still fires on a successful pick-up,
         broadcast only after this transaction's own commit succeeds.
 
