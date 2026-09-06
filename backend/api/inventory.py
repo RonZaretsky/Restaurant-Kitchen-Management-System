@@ -23,19 +23,18 @@ from services.inventory_service import InventoryService
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 
 # The first route to permit more than one Role: a Warehouse Manager or an Admin
-# may create an Ingredient (FR-16). require_role's existing *roles signature
+# may create an Ingredient. require_role's existing *roles signature
 # already supports this without any change to api/dependencies.py.
 InventoryWriteDep = Annotated[
     User, Depends(require_role(UserRole.admin, UserRole.warehouse_manager))
 ]
 
-# Reads permit a third Role writes do not: Story 2.5 (FR-25) added Cook here so
-# a Cook can resolve an Ingredient's name when browsing a Dish's recipe
-# read-only. This is Role-level permission, not per-field: the response still
-# includes current_stock/min_stock_threshold, this project's model has no
-# per-resource or per-field filtering anywhere (project-context.md). Story 4.3
-# (View Ingredient Stock Levels) is what gives a Warehouse Manager a screen
-# built around those fields, on top of this same list endpoint, not what
+# Reads permit a third Role writes do not: a Cook needs this to resolve an
+# Ingredient's name when browsing a Dish's recipe read-only. This is Role-level
+# permission, not per-field: the response still includes current_stock/
+# min_stock_threshold, since this project's model has no per-resource or
+# per-field filtering anywhere. The Warehouse Manager's stock-levels screen is
+# built around those fields on top of this same list endpoint; it is not what
 # first exposes them to a wider audience. InventoryWriteDep stays
 # admin/warehouse_manager only.
 InventoryReadDep = Annotated[
@@ -49,7 +48,8 @@ _ERROR_DESCRIPTIONS = {
 }
 
 # Path ids need the same int4 upper bound their request-body counterparts carry
-# (trap 16), matching api/orders.py's ItemIdPath/api/menu.py's IngredientIdPath shape.
+# so an out-of-range value 422s instead of 500ing, matching api/orders.py's
+# ItemIdPath/api/menu.py's IngredientIdPath shape.
 IngredientIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
 
 _DETAIL_ERROR_DESCRIPTIONS = {
@@ -108,7 +108,7 @@ async def list_alerts(
     db: SessionDep,
     inventory_service: InventoryService = Depends(Provide[Container.inventory_service]),
 ) -> list[Ingredient]:
-    """List every Ingredient currently in shortage (FR-14).
+    """List every Ingredient currently in shortage.
 
     Args:
         actor: The authenticated Warehouse Manager, Admin, or Cook making the request.
@@ -227,7 +227,7 @@ async def record_movement(
     db: SessionDep,
     inventory_service: InventoryService = Depends(Provide[Container.inventory_service]),
 ) -> StockMovement:
-    """Log a manual Stock Movement and update the Ingredient's current stock (AC1/AC2).
+    """Log a manual Stock Movement and update the Ingredient's current stock.
 
     Args:
         ingredient_id: The id of the Ingredient the movement applies to.

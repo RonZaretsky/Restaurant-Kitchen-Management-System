@@ -23,7 +23,7 @@ const UNEXPECTED_ERROR_MESSAGE = "Something went wrong. Try again.";
  * Picks the copy to show under the form for a failed login.
  *
  * A rejected credential always renders the same generic line whichever field
- * was wrong (AC3, FR-1), so the form never reveals whether a username exists.
+ * was wrong, so the form never reveals whether a username exists.
  * Reachability failures carry their own already-user-safe text from
  * httpClient, since "the server is down" is genuinely useful and gives nothing
  * away. Everything else, including a validation 422, collapses to a neutral
@@ -48,7 +48,7 @@ function loginErrorMessage(error: Error): string {
  * The Login screen, built per key-login.html.
  *
  * One form for all four Roles, no role selector. On success, redirects to the
- * signed-in User's Role home surface (AC3). If a User who is already
+ * signed-in User's Role home surface. If a User who is already
  * authenticated visits this page, redirects them away instead of showing the
  * form again.
  *

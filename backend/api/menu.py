@@ -27,28 +27,28 @@ from services.menu_service import MenuService
 
 router = APIRouter(prefix="/api/menu", tags=["menu"])
 
-# Menu authoring is Admin-only (FR-22), unlike Story 2.1's InventoryWriteDep, which
-# permitted two Roles. Do not widen this to warehouse_manager.
+# Menu authoring is Admin-only, unlike InventoryWriteDep, which
+# permits two Roles. Do not widen this to warehouse_manager.
 MenuDep = Annotated[User, Depends(require_role(UserRole.admin))]
 
-# Reads permit Cook too (Story 2.5, FR-25): a Cook can browse the catalog and a
+# Reads permit Cook too: a Cook can browse the catalog and a
 # Dish's recipe read-only, with zero write access to any of it. Kept separate
 # from MenuDep so the three list/read routes below can widen independently of
 # every write route, which all stay Admin-only.
 MenuReadDep = Annotated[User, Depends(require_role(UserRole.admin, UserRole.cook))]
 
-# The Dish list alone also permits a Waiter (Story 3.2, FR-5): a Waiter picks
+# The Dish list alone also permits a Waiter: a Waiter picks
 # from the catalog to add items to an Order, so the Table/Order detail screen
 # cannot render without this read. Deliberately narrower than widening
 # MenuReadDep itself, which would also hand a Waiter every Dish's recipe
-# (list_recipe_ingredients); nothing in FR-5 needs that, and recipes are
-# kitchen-side detail. Same read-dep-split shape TablesReadDep used in Story 3.1.
+# (list_recipe_ingredients); adding items to an Order needs no such thing, and
+# recipes are kitchen-side detail. Same read-dep-split shape TablesReadDep uses.
 DishCatalogReadDep = Annotated[
     User, Depends(require_role(UserRole.admin, UserRole.cook, UserRole.waiter))
 ]
 
 # Path ids need the same int4 upper bound their request-body counterparts carry
-# (trap 16). Without it a larger value reaches db.get and raises an unhandled
+# too. Without it a larger value reaches db.get and raises an unhandled
 # asyncpg.DataError ("value out of int32 range"), a 500 rather than a clean 422.
 DishIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
 IngredientIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
@@ -234,7 +234,7 @@ async def list_recipe_ingredients(
         menu_service: Injected service handling the read.
 
     Returns:
-        Every Recipe Ingredient line for this Dish, always current (AC3).
+        Every Recipe Ingredient line for this Dish, always current.
 
     Raises:
         DishNotFoundError: Propagated from menu_service, handled globally as
@@ -257,7 +257,7 @@ async def add_recipe_ingredient(
     db: SessionDep,
     menu_service: MenuService = Depends(Provide[Container.menu_service]),
 ) -> RecipeIngredient:
-    """Add a Recipe Ingredient line to a Dish (AC1).
+    """Add a Recipe Ingredient line to a Dish.
 
     Args:
         dish_id: The id of the Dish the line is being added to.
@@ -328,7 +328,7 @@ async def remove_recipe_ingredient(
     db: SessionDep,
     menu_service: MenuService = Depends(Provide[Container.menu_service]),
 ) -> None:
-    """Remove a Recipe Ingredient line from a Dish (AC2).
+    """Remove a Recipe Ingredient line from a Dish.
 
     Args:
         dish_id: The id of the Dish the line belongs to.

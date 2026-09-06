@@ -16,7 +16,7 @@ const sharedComponents = {
 
 /**
  * Light theme. MUI defaults everywhere except the accent color, which
- * overrides the `primary` slot per DESIGN.md's Colors/Components section.
+ * overrides the `primary` slot with the app's accent color.
  */
 export const lightTheme: Theme = createTheme({
   palette: {

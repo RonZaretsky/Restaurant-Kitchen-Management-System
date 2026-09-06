@@ -74,7 +74,7 @@ class TableService:
     async def create_table(
         self, db: AsyncSession, actor: User, payload: CreateTableRequest
     ) -> RestaurantTable:
-        """Create a new Restaurant Table, starting available (AC1).
+        """Create a new Restaurant Table, starting available.
 
         Args:
             db: The active database session.
@@ -139,9 +139,9 @@ class TableService:
         The available check and the write happen in one guarded UPDATE
         (WHERE status = 'available'), never a separate read-then-write, so a
         Waiter seating the Table between the Admin loading the form and
-        saving it is rejected rather than silently applied (AC6, AD-6
-        pattern). A zero-rowcount result covers both an edit attempted while
-        already occupied/reserved (AC4) and that race (AC6); the guarded
+        saving it is rejected rather than silently applied. A zero-rowcount
+        result covers both an edit attempted while
+        already occupied/reserved and that race; the guarded
         UPDATE cannot distinguish them, and both use the same detail.
 
         Args:
@@ -170,10 +170,10 @@ class TableService:
             changed_fields["capacity"] = payload.capacity
 
         # An edit submitting the values already stored writes nothing, and the audit
-        # log must not claim a change. It is still an edit attempt, though, so AC4's
-        # rule applies: re-read the row under the same availability filter the
+        # log must not claim a change. It is still an edit attempt, though, so the
+        # same rule applies: re-read the row under the same availability filter the
         # guarded UPDATE would use, and reject if the table is in use. Returning
-        # early without this check reports 200 for an operation AC4 says must be
+        # early without this check reports 200 for an operation that must be
         # rejected.
         if not changed_fields:
             still_available = await db.execute(
@@ -214,8 +214,8 @@ class TableService:
                 .values(**changed_fields)
             )
             if result.rowcount == 0:
-                # Either the table was already occupied/reserved (AC4) or a Waiter
-                # seated it between this request's read and this write (AC6). The
+                # Either the table was already occupied/reserved or a Waiter
+                # seated it between this request's read and this write. The
                 # guarded UPDATE cannot tell those apart, and both use one message.
                 self._logger.warning(
                     "Table update rejected by user_id={}: table_id={} is not available",
@@ -234,7 +234,7 @@ class TableService:
             # object bound to this session, and actor is one of them, so reading
             # actor.id afterward would trigger an implicit lazy-load with no
             # greenlet context to run it in (an unhandled MissingGreenlet,
-            # reproduced while writing this story's own tests).
+            # reproduced by test).
             if "table_number" in changed_fields:
                 self._logger.warning(
                     "Table update rejected by user_id={}: table_id={} table_number={} already exists (lost the race)",

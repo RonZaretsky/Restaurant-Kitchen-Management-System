@@ -31,8 +31,7 @@ export function useTables(): UseQueryResult<Table[], Error> {
   return useQuery({
     queryKey: TABLES_QUERY_KEY,
     queryFn: () => apiRequest<Table[]>("/api/tables"),
-    // Matches authService's deliberate opt-out (and Story 2.3's review lesson,
-    // applied proactively here): the app-level QueryClient sets no retry, so the
+    // Matches authService's deliberate opt-out: the app-level QueryClient sets no retry, so the
     // default of 3 attempts would turn a 401/403 into four requests and a
     // multi-second wait before the error state settles.
     retry: false,
@@ -40,7 +39,7 @@ export function useTables(): UseQueryResult<Table[], Error> {
 }
 
 /**
- * Creates a new Restaurant Table, starting available (AC1).
+ * Creates a new Restaurant Table, starting available.
  *
  * @returns The TanStack Query mutation for submitting a new Table.
  */

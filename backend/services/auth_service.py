@@ -60,8 +60,8 @@ class AuthService:
     def hash_password(password: str) -> str:
         """Hash a plaintext password for storage.
 
-        The single hashing seam for the whole system. Story 1.3 creates and
-        resets passwords through this, so cost and salt settings can never
+        The single hashing seam for the whole system. Account creation and
+        password resets both go through this, so cost and salt settings can never
         diverge between account creation and login.
 
         Args:
@@ -165,7 +165,7 @@ class AuthService:
         """Resolve the authenticated User from a session token.
 
         This is the one shared verification path every protected route
-        reaches through api/dependencies.py, per AD-3. It must never be
+        reaches through api/dependencies.py. It must never be
         reimplemented per-route.
 
         Args:

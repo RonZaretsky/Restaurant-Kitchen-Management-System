@@ -68,11 +68,11 @@ async def login(
 
 @router.post("/logout", status_code=204)
 async def logout(response: Response) -> None:
-    """End the caller's session by clearing the session cookie (FR-26).
+    """End the caller's session by clearing the session cookie.
 
     Always succeeds, regardless of whether the presented cookie (if any) is
     still valid, logout is idempotent by design. v1 has no server-side token
-    revocation store (AD-3), so this clears the client's cookie only; a
+    revocation store, so this clears the client's cookie only; a
     token copied out beforehand stays valid until its natural expiry if
     replayed elsewhere.
 
@@ -100,7 +100,7 @@ async def get_own_profile(user: CurrentUserDep) -> User:
 
     The frontend's only way to learn who is logged in and what Role they
     hold after a page reload, since the session cookie is httpOnly and
-    unreadable by JavaScript (AD-3).
+    unreadable by JavaScript.
 
     Args:
         user: The authenticated User, resolved by the shared CurrentUserDep

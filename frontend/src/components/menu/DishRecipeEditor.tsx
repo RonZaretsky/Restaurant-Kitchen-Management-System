@@ -164,7 +164,7 @@ function RecipeLineRow({
  * useRecipeIngredients data the table below already renders, no second
  * fetch and no locally-tracked flag. Adding a dish's first line invalidates
  * that query, the list refetches, the derived boolean flips, and the toggle
- * re-enables with no page reload (AC4).
+ * re-enables with no page reload.
  *
  * A failed recipe fetch is never rendered as "this dish has no recipe": an
  * errored query and a genuinely empty one are distinguished, because the

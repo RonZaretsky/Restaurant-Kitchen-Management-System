@@ -36,17 +36,17 @@ function errorMessage(error: Error): string {
 }
 
 /**
- * The Kitchen Display surface (Story 5.1, replacing Epic 1's placeholder).
+ * The Kitchen Display surface.
  *
  * Read-only: one card per Table, grouping that Table's active (non-cancelled) Order Items, each
- * row showing its dish name, quantity, note, and OrderItemStatusBadge (UX-DR1). No pick-up/
- * mark-ready controls anywhere — those are Story 5.2. Dark-theme initialization (UX-DR7) and the
- * "Reconnecting..." banner (UX-DR16) are both already handled globally
- * (ThemeModeProvider/ReconnectingBanner, Stories 1.4/1.5) and need no page-level code here.
+ * row showing its dish name, quantity, note, and OrderItemStatusBadge. No pick-up/
+ * mark-ready controls in this read-only view. Dark-theme initialization and the
+ * "Reconnecting..." banner are both already handled globally
+ * (ThemeModeProvider/ReconnectingBanner) and need no page-level code here.
  *
- * Subscribes to the live `order.item_added` push (Story 3.3's event, widened in this story to
- * also reach Cook connections) and invalidates KITCHEN_ITEMS_QUERY_KEY, TABLES_QUERY_KEY, and
- * DISHES_QUERY_KEY on receipt (review finding, Story 5.1): the new item's table_id/dish_id could
+ * Subscribes to the live `order.item_added` push (the same event the Waiter screen uses,
+ * widened to also reach Cook connections) and invalidates KITCHEN_ITEMS_QUERY_KEY,
+ * TABLES_QUERY_KEY, and DISHES_QUERY_KEY on receipt: the new item's table_id/dish_id could
  * reference a Table or Dish created after this page's own tables/dishes queries last resolved,
  * and this page never otherwise refetches those two long-lived queries on its own (no window-
  * focus refetch is guaranteed on a screen meant to stay foregrounded for a whole shift). Harmless
@@ -58,15 +58,15 @@ function errorMessage(error: Error): string {
  * dishes) — the established "a page driven by more than one independent query must combine
  * loading/error across all of them" rule, applied here for the first time across three queries.
  *
- * Story 5.2 adds the pick-up/mark-ready action buttons this story's own Scope note explicitly
- * deferred: each `pending` row gets a "Pick up" button, each `in_preparation` row gets a "Mark
- * ready" button (UX-DR19, a single large click target), and `ready` rows get none. Subscribes to
+ * The pick-up/mark-ready action buttons: each `pending` row gets a "Pick up" button, each
+ * `in_preparation` row gets a "Mark ready" button (a single large click target), and `ready`
+ * rows get none. Subscribes to
  * the new `order.item_status_changed` push and invalidates KITCHEN_ITEMS_QUERY_KEY on receipt,
  * alongside the existing `order.item_added` subscription. A failed pick-up/mark-ready call shows
- * an inline error under that row (UX-DR17), not a toast — this codebase has no toast/snackbar
- * system anywhere else, so this story does not introduce one either.
+ * an inline error under that row, not a toast — this codebase has no toast/snackbar
+ * system anywhere else, and this page does not introduce one either.
  *
- * This batch adds live insufficient-stock awareness: a `pending` row whose
+ * Live insufficient-stock awareness: a `pending` row whose
  * `max_preparable_quantity` (server-computed off current stock on every fetch) falls below its
  * own `quantity` swaps "Pick up" for "Reject" instead, with an inline warning stating how much
  * actually can be prepared — no extra client-side computation, just reading a field the server
@@ -104,7 +104,7 @@ export function KitchenDisplayPage() {
   const rejectMutation = useRejectItem();
   const [actionErrors, setActionErrors] = useState<Record<number, string>>({});
   // Tracked as an explicit Set rather than derived from pickUpMutation.variables/markReadyMutation.variables
-  // (review finding, Story 5.2): a single shared mutation's .variables only ever reflects the most
+  // a single shared mutation's .variables only ever reflects the most
   // recent call, so two rapid clicks on different rows before React re-renders could leave an
   // earlier row's button incorrectly re-enabled while its request is still in flight. Adding to
   // the Set synchronously before mutate() and removing it in onSettled closes that window.
@@ -129,7 +129,7 @@ export function KitchenDisplayPage() {
     });
     const unsubscribeItemStatusChanged = subscribe("order.item_status_changed", (payload) => {
       void queryClient.invalidateQueries({ queryKey: KITCHEN_ITEMS_QUERY_KEY });
-      // Clears a stale inline error for this item (review finding, Story 5.2): a prior
+      // Clears a stale inline error for this item: a prior
       // pick-up/mark-ready call from this or another session may have failed and left an error
       // showing under this row, but a live status-change event proves the item has since moved
       // on correctly, so that error no longer describes the row's current state.

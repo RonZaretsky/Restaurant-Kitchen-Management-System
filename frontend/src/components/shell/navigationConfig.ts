@@ -2,9 +2,6 @@ import type { UserRole } from "../../types/user";
 
 /**
  * Each Role's home surface, the route login (and the root path) lands on.
- *
- * Sourced from the mockups' own address bars, not invented, see the story's
- * Dev Notes route table.
  */
 export const ROLE_HOME_PATH: Record<UserRole, string> = {
   admin: "/admin/menu",
@@ -20,20 +17,17 @@ export const ROLE_HOME_PATH: Record<UserRole, string> = {
  * guard's role-scoped redirect read from: a Role may visit its own URL prefix
  * plus anything listed here, and nothing else (see canRoleVisit).
  *
- * A Role's nav lists only surfaces that Role is authorized for, which is
- * Story 1.4 AC2's intent (a Waiter must never see Admin tools) and is how that
- * AC is now worded in epics.md. Admin's Ingredients entry is the first entry
- * that crosses a URL prefix: `POST /api/inventory/ingredients` permits `admin`
- * and `warehouse_manager` alike (`InventoryWriteDep`, Story 2.1), and Story
- * 2.6's AC4 states the creation flow is reachable by "a Warehouse Manager or
- * Admin". Without this entry the backend's grant would be unreachable from the
- * UI for one of the two Roles it names. AC2's wording was amended in the same
- * story rather than left contradicting the code (Story 2.6 review).
+ * A Role's nav lists only surfaces that Role is authorized for, so a Waiter
+ * never sees Admin tools. Admin's Ingredients entry is the one entry that
+ * crosses a URL prefix: `POST /api/inventory/ingredients` permits `admin`
+ * and `warehouse_manager` alike (`InventoryWriteDep`), so without this entry
+ * the backend's grant would be unreachable from the UI for one of the two
+ * Roles it names.
  *
- * `includeSubroutes` (this batch's #2) is an opt-in flag, unset (no behavior change) on every
- * entry except Admin's Ingredients one: FR-16 gives Admin the same ingredient-management rights
- * as Warehouse Manager, including the Ingredient detail page
- * (`/warehouse/ingredients/:ingredientId`, Story 4.1's surface), which the nav clause's exact-
+ * `includeSubroutes` is an opt-in flag, unset (no behavior change) on every
+ * entry except Admin's Ingredients one: an Admin has the same ingredient-management rights
+ * as a Warehouse Manager, including the Ingredient detail page
+ * (`/warehouse/ingredients/:ingredientId`), which the nav clause's exact-
  * match rule otherwise withholds. Scoped to this one entry rather than loosening the nav clause
  * globally, so no other Role's existing exact-match grant silently widens.
  */
@@ -84,7 +78,7 @@ const ROLE_PATH_PREFIX: Record<UserRole, string> = {
  *     "/administration" should such a route ever exist.
  *   - The nav clause is an *exact* match by default, so an entry grants exactly the one
  *     surface it names and never its subtree — unless that entry opts in via
- *     `includeSubroutes` (this batch's #2), which extends its grant to its own subtree only
+ *     `includeSubroutes`, which extends its grant to its own subtree only
  *     (segment-aware, same shape as the prefix clause), still never any other entry's.
  *
  * Still a navigation affordance, not a security boundary. The backend's

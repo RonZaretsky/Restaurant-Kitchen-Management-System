@@ -123,8 +123,8 @@ function UserListRow({ user, currentUserId }: UserListRowProps) {
       : undefined;
 
   // Deliberately NOT gated on "has anything changed". Diffing the draft against
-  // the cached row is forbidden (project-context: "Never diff a form against
-  // cached data to decide what to send"): if another Admin has already changed
+  // the cached row is forbidden — never diff a form against cached data to
+  // decide what to send: if another Admin has already changed
   // this value, the cache is stale, and typing the value you actually want
   // produces either a disabled Save or a payload that reverts their change.
   const canSave = isNameValid && !updateMutation.isPending;
@@ -378,13 +378,13 @@ function UserListRow({ user, currentUserId }: UserListRowProps) {
 }
 
 /**
- * The Users setup surface (Story 1.6).
+ * The Users setup surface.
  *
- * A "+ New user" form and a dense-row list (UX-DR8) of every User account,
+ * A "+ New user" form and a dense-row list of every User account,
  * each row supporting inline edit, deactivate (behind an in-row confirm),
  * reactivate, and password reset. The signed-in Admin's own row shows
- * "This is you" in place of Deactivate (AC6), so self-deactivation is never
- * reachable from this screen. The last-active-Admin lockout (AD-15) is
+ * "This is you" in place of Deactivate, so self-deactivation is never
+ * reachable from this screen. The last-active-Admin lockout is
  * enforced server-side; this page only surfaces its 409 inline.
  *
  * @returns The Users page.
