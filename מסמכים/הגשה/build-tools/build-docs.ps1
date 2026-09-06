@@ -122,6 +122,19 @@ if ($Document -ne "all") {
     $documents = $documents | Where-Object { $_.Key -eq $Document }
 }
 
+# Ron edited the analysis document directly in Word from 5/9/2026 onward, so the
+# markdown under אפיון-וניתוח/ is behind and rebuilding from it silently produces
+# an out-of-date document under the exact name the real one carries. The build is
+# left working (the sources are still the record of how that document was made),
+# but it says so loudly, because the failure mode is submitting the wrong file.
+if ($documents.Key -contains "analysis") {
+    Write-Host ""
+    Write-Host "  אזהרה: מסמך האפיון נבנה מקבצי Markdown שאינם מעודכנים." -ForegroundColor Yellow
+    Write-Host "  הגרסה הקובעת היא output\OutputFromRon\מסמך-אפיון-וניתוח ערוך.pdf" -ForegroundColor Yellow
+    Write-Host "  אין להגיש את הקובץ שייווצר כאן. ראו ביקורת/הערות-למסמך-האפיון-של-רון.md" -ForegroundColor Yellow
+    Write-Host ""
+}
+
 # ---------------------------------------------------------------------------
 # Step 1: diagrams
 # ---------------------------------------------------------------------------
