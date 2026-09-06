@@ -410,6 +410,18 @@ class InventoryService:
         """
         ingredient = await self._lock_ingredient(db, ingredient_id)
 
+        # A deactivated Ingredient is treated as zero available stock, not skipped: a Recipe
+        # line on it can never be fulfilled regardless of current_stock, so this raises the same
+        # InsufficientStockError a real shortage would (matches max_preparable_quantities below,
+        # which also floors a deactivated line's contribution to 0).
+        if not ingredient.is_active:
+            self._logger.warning(
+                "Consumption rejected for order_id={}: ingredient_id={} is deactivated",
+                order_id,
+                ingredient_id,
+            )
+            raise InsufficientStockError()
+
         was_low = ingredient.current_stock < ingredient.min_stock_threshold
 
         # Checked before any mutation on this Ingredient (no partial effect for this one line);
@@ -473,7 +485,9 @@ class InventoryService:
         `floor(Ingredient.current_stock / RecipeIngredient.quantity)` — the single scarcest
         ingredient line caps how many whole portions are possible, the same reasoning
         `InventoryService.apply_consumption` applies per-line but this method applies across a
-        whole recipe at once.
+        whole recipe at once. A line on a deactivated Ingredient contributes 0 regardless of its
+        current_stock, matching `apply_consumption`'s own guard: a deactivated Ingredient is
+        treated as out of stock, not as unlimited or as absent from the recipe.
 
         Args:
             db: The active database session.
@@ -489,13 +503,21 @@ class InventoryService:
         if not dish_ids:
             return {}
         result = await db.execute(
-            select(RecipeIngredient.dish_id, RecipeIngredient.quantity, Ingredient.current_stock)
+            select(
+                RecipeIngredient.dish_id,
+                RecipeIngredient.quantity,
+                Ingredient.current_stock,
+                Ingredient.is_active,
+            )
             .join(Ingredient, RecipeIngredient.ingredient_id == Ingredient.id)
             .where(RecipeIngredient.dish_id.in_(dish_ids))
         )
         max_by_dish: dict[int, int] = {}
-        for dish_id, recipe_quantity, current_stock in result.all():
-            preparable = int(current_stock // recipe_quantity)
+        for dish_id, recipe_quantity, current_stock, is_active in result.all():
+            # A deactivated line caps its Dish at 0, same as apply_consumption's own guard above:
+            # it isn't excluded from the min() (that would let the Dish's other, active lines
+            # decide availability instead), it forces it.
+            preparable = int(current_stock // recipe_quantity) if is_active else 0
             if dish_id not in max_by_dish or preparable < max_by_dish[dish_id]:
                 max_by_dish[dish_id] = preparable
         return max_by_dish
