@@ -79,7 +79,7 @@ classDiagram
         rejected
     }
 
-    OrderService ..> InventoryService : מפחית מלאי דרכו
+    OrderService ..> InventoryService : מנכה מלאי דרכו
     OrderService ..> RealtimeService : משדר דרכו
     OrderService ..> Order : קורא ומעדכן
     OrderService ..> OrderItem : קורא ומעדכן

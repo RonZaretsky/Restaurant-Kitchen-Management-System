@@ -1,4 +1,4 @@
-# דיאגרמת רצף: לקיחת פריט להכנה עם הפחתת מלאי אטומית
+# דיאגרמת רצף: לקיחת פריט להכנה עם ניכוי מלאי אטומי
 
 ```mermaid
 sequenceDiagram
@@ -30,7 +30,7 @@ sequenceDiagram
             alt מלאי לא מספיק
                 IS-->>OS: שגיאת מלאי לא מספיק
             else מלאי מספיק
-                IS->>DB: הפחתת current_stock, כתיבת StockMovement
+                IS->>DB: ניכוי current_stock, כתיבת StockMovement
                 IS-->>OS: הצליח, וסימון אם נחצה סף התרעה
             end
         end
