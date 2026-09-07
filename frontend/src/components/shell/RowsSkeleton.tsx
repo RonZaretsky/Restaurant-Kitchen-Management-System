@@ -7,10 +7,8 @@ import { DENSE_ROW_HEIGHT } from "../../config/theme";
  * A reusable cold-load placeholder: a stack of dense-row-height Skeleton
  * bars.
  *
- * The shared pattern every later story reuses for its own cold-load state.
- * This story uses it for the one real loading state it has,
- * `useCurrentUser` resolving on first app load; later stories reuse it for
- * their own data fetches.
+ * The shared cold-load pattern across the app: `useCurrentUser` resolving on
+ * first app load, and the data fetches behind each page's own table.
  *
  * @param count - How many skeleton rows to render.
  * @returns A stack of Skeleton rows.

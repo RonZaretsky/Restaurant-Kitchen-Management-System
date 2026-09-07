@@ -211,9 +211,9 @@ describe("IngredientsPage", () => {
     expect(flourCell).not.toHaveStyle({ color: "rgb(211, 47, 47)" });
   });
 
-  // --- This batch's #6: sortable table -------------------------------------------------------
+  // --- Sortable table -------------------------------------------------------------------------
 
-  // --- This batch's #3/#4: soft-deactivate ----------------------------------------------------
+  // --- Soft-deactivate ------------------------------------------------------------------------
 
   it("shows an Active badge and Deactivate action for an active ingredient, and can deactivate it", async () => {
     // Arrange

@@ -70,7 +70,7 @@ class FakeLLMClient:
         self.calls: list[str] = []
         # Set the instant a call actually starts, i.e. after AIService's own
         # `_in_flight.add(actor.id)` has already run — awaited by the concurrency test instead of
-        # a fixed sleep, so it never races the guard it's testing (review finding).
+        # a fixed sleep, so it never races the guard it's testing.
         self.started = asyncio.Event()
         # Chat-message configurable behavior, mirroring generate_recipe's own shape
         # exactly rather than building a second fake.
@@ -78,7 +78,7 @@ class FakeLLMClient:
         self.chat_error: Exception | None = None
         self.chat_calls: list[list[dict[str, str]]] = []
         self.chat_started = asyncio.Event()
-        # This batch's #7 (Suggestion-tied chat mutates the recipe): send_chat_message_with_
+        # Suggestion-tied chat mutates the recipe: send_chat_message_with_
         # recipe_update reuses chat_calls/chat_started/block_event/chat_error, the same shape
         # send_chat_message already uses, rather than a second set of fields — only the returned
         # envelope shape differs (adds updated_recipe alongside reply).
@@ -90,7 +90,7 @@ class FakeLLMClient:
         # Signals a test waiting to know the call has genuinely started (and, since this method
         # only runs once `_in_flight` already holds the caller's id, that the guard's own state
         # is already set) before it fires a second, concurrent request — replaces a fixed
-        # `asyncio.sleep` with a deterministic wait (review finding).
+        # `asyncio.sleep` with a deterministic wait.
         if is_first_call:
             self.started.set()
         # Only the first call ever blocks on block_event — a second, concurrent call (e.g. from a
@@ -254,8 +254,8 @@ async def _create_suggestion(db_session: AsyncSession, requested_by: int, dismis
 async def test_list_suggestions_reports_the_real_dish_id_once_confirmed(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    # Arrange: code review finding - only the null cases were previously covered, leaving the
-    # headline "confirmed_dish_id reflects a real Dish" behavior unverified.
+    # Arrange: the null cases are covered elsewhere; this one covers the headline behavior,
+    # confirmed_dish_id reflecting a real Dish.
     admin = await _login_as(client, db_session, UserRole.admin, "david")
     suggestion = await _create_suggestion(db_session, requested_by=admin.id)
     category_response = await client.post("/api/menu/categories", json={"name": "Pizza"})

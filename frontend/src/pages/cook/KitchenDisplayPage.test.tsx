@@ -61,8 +61,8 @@ function jsonResponse(status: number, body: unknown): Response {
 
 /**
  * A minimal stand-in for the browser's WebSocket, copied from
- * TableOrderDetailPage.test.tsx (continuing the existing per-test-file-copy
- * precedent, see deferred-work.md's note on that call).
+ * TableOrderDetailPage.test.tsx. Kept as a per-file copy rather than extracted
+ * into a shared module, matching the precedent in the other test files.
  */
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];

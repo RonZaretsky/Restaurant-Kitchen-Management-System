@@ -28,10 +28,8 @@ ENV/
 # which variables to set.
 !.env.example
 
-# Secrets / private material (API keys, restricted course/client material, etc.)
-# Never push this directory — see secrets/README.md, which is the one file kept tracked.
-/secrets/*
-!/secrets/README.md
+# Local-only material that must never be committed (API keys, private notes).
+/secrets/
 
 # IDEs
 .idea/
@@ -56,9 +54,5 @@ yarn-error.log*
 
 # Logs
 *.log
-
-# Claude
-.claude/
-CLAUDE.md
 
 *.pdf

@@ -350,8 +350,8 @@ class AIService:
         No waste-priority steering in the prompt by default (per manual-test feedback: it made the
         model anchor on the same few overstocked ingredients across separate suggestions instead
         of proposing something different each time) — `direction`, when given, is otherwise the
-        only steering signal. `prioritize_waste` opts back into that framing per request (this
-        batch's own checkbox); `snapshot`'s surplus-relative-to-threshold ordering is retained on
+        only steering signal. `prioritize_waste` opts back into that framing per request;
+        `snapshot`'s surplus-relative-to-threshold ordering is retained on
         the persisted row regardless, for audit purposes, but only shapes the prompt when the flag
         is set.
 

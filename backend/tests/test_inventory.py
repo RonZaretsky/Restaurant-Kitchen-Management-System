@@ -281,7 +281,7 @@ async def test_a_purchase_that_brings_stock_back_above_threshold_clears_the_aler
     assert len(alerts) == 0
 
 
-# --- This batch's #3/#4: soft-deactivate Ingredients ------------------------------------------
+# --- Soft-deactivate Ingredients --------------------------------------------------------------
 
 
 @pytest.mark.asyncio

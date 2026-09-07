@@ -72,8 +72,8 @@ function ChatMessageBubble({ message }: { message: AIChatMessage }) {
  * session's own history.
  *
  * @param sessionId - The Chat Session this panel renders and sends into.
- * @param suggestionId - The Recipe Suggestion this session is tied to, when applicable (this
- *   batch's #7). Passed through to `useSendChatMessage` so a send that updates the Suggestion's
+ * @param suggestionId - The Recipe Suggestion this session is tied to, when applicable.
+ *   Passed through to `useSendChatMessage` so a send that updates the Suggestion's
  *   recipe also invalidates the Suggestions list; omitted (or undefined) for a Dish-tied session,
  *   which never mutates a Suggestion.
  * @returns The chat panel.

@@ -44,7 +44,7 @@ async def test_migrations_match_the_models(db_session: AsyncSession) -> None:
 
     # Assert
     # Empty means no drift between the migrated schema and the ORM metadata. This is
-    # the check that keeps every later story honest: adding a column to a model
+    # the check that keeps future schema changes honest: adding a column to a model
     # without shipping a revision makes this fail.
     assert differences == []
 

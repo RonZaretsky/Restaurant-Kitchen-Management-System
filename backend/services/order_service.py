@@ -843,8 +843,8 @@ class OrderService:
         prior status to check, only a value to overwrite with whatever the aggregate says right
         now, converging to the same correct answer however many times it runs *sequentially*.
         `closed` is set explicitly and is never overwritten here — a closed Order is
-        genuinely terminal, its bill already settled and its Table already freed. `served` (this
-        batch's own fix) is NOT excluded the same way: `add_item` has no guard against adding a
+        genuinely terminal, its bill already settled and its Table already freed. `served` is NOT
+        excluded the same way: `add_item` has no guard against adding a
         new, pending Order Item to an already-served Order (a legitimate "one more thing" request
         after the rest of the table was served), and that new item must both make the Order
         recompute back to `in_preparation`/`pending` (so `close_order`'s own guard correctly waits

@@ -37,8 +37,7 @@ const COLORS: Record<OrderItemStatus, "default" | "warning" | "success" | "error
  * built once so the Waiter's edit/cancel UI and the Kitchen Display can reuse it rather than
  * each re-implementing their own status-to-color mapping.
  *
- * Covers all 5 OrderItemStatus members, `cancelled` and `rejected` (this
- * batch) included. Order-level
+ * Covers all 5 OrderItemStatus members, `cancelled` and `rejected` included. Order-level
  * statuses (`served`/`closed`) still do not belong here, they describe a different type
  * (OrderStatus, not OrderItemStatus).
  *

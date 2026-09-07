@@ -5,8 +5,8 @@ from openai import AsyncOpenAI
 
 # Bounds how long a single generation can occupy AIService's in-process "in flight" slot for a
 # Cook — without this, a hung or very slow OpenAI call would lock that Cook out of ever
-# generating again until the process restarts, since nothing else clears the slot (review
-# finding). 45s comfortably covers a normal completion while still failing well inside any
+# generating again until the process restarts, since nothing else clears the slot. 45s
+# comfortably covers a normal completion while still failing well inside any
 # reasonable request timeout on the caller's side.
 _REQUEST_TIMEOUT_SECONDS = 45.0
 
