@@ -44,7 +44,7 @@
 
 ```powershell
 git checkout review-base-ofek-1
-powershell -File "מסמכים\הגשה\build-tools\build-docs.ps1"
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1"
 ```
 
 התג של כל מעבר רשום בכותרת של `../review-register.md`.

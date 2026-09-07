@@ -12,11 +12,11 @@
     Requirements: pandoc, mermaid-cli (mmdc), python, and Microsoft Word.
 
     Usage:
-        pwsh -File מסמכים/הגשה/build-tools/build-docs.ps1              # both documents
-        pwsh -File .../build-docs.ps1 -Document analysis         # part A only
-        pwsh -File .../build-docs.ps1 -Document design           # part B only
-        pwsh -File .../build-docs.ps1 -SkipDiagrams              # reuse existing PNGs
-        pwsh -File .../build-docs.ps1 -SkipPdf                   # DOCX only, no Word
+        pwsh -File מסמכים/הגשה/build-tools/build-docs-windows.ps1              # both documents
+        pwsh -File .../build-docs-windows.ps1 -Document analysis         # part A only
+        pwsh -File .../build-docs-windows.ps1 -Document design           # part B only
+        pwsh -File .../build-docs-windows.ps1 -SkipDiagrams              # reuse existing PNGs
+        pwsh -File .../build-docs-windows.ps1 -SkipPdf                   # DOCX only, no Word
 #>
 
 [CmdletBinding()]

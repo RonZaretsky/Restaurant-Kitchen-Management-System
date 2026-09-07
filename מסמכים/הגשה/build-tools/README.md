@@ -7,17 +7,17 @@ RTL תקין.
 
 ```powershell
 # שני המסמכים, כולל רינדור מחדש של כל הדיאגרמות
-powershell -File "מסמכים\הגשה\build\build-docs.ps1"
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1"
 
 # מסמך אחד בלבד
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -Document analysis
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -Document design
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -Document analysis
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -Document design
 
 # בלי לרנדר דיאגרמות מחדש (מהיר, כשרק הטקסט השתנה)
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -SkipDiagrams
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -SkipDiagrams
 
 # DOCX בלבד, בלי לפתוח את Word
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -SkipPdf
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -SkipPdf
 ```
 
 הפלט נכתב ל-`מסמכים/הגשה/output/`.
@@ -48,7 +48,7 @@ node "lib\puppeteer\node\cli.js" install chrome
 
 | קובץ | תפקיד |
 |---|---|
-| `build-docs.ps1` | הפייפליין המלא: איחוד פרקים <- pandoc <- RTL <- Word |
+| `build-docs-windows.ps1` | הפייפליין המלא: איחוד פרקים <- pandoc <- RTL <- Word |
 | `render-diagrams.ps1` | מרנדר כל `diagrams/*.md` ל-`diagrams/rendered/<שם>.png` |
 | `apply-rtl.py` | מזריק לקובץ ה-DOCX את מאפייני ה-RTL של OOXML |
 | `make-screenshot-placeholders.ps1` | מייצר ממלא מקום לכל צילום מסך שעדיין לא צולם |
@@ -114,7 +114,7 @@ python "מסמכים\הגשהuild-tools\check-diagram-signatures.py"
 שיצלם. **אין רשימת צילומים נפרדת**, הסקריפט סורק את הפרקים עצמם, ולכן אין שתי רשימות
 שיכולות להתפצל.
 
-הרוחב **לא** נכתב בפרק. `build-docs.ps1` מוסיף `{ width=14cm }` לכל תמונת `screenshots/`
+הרוחב **לא** נכתב בפרק. `build-docs-windows.ps1` מוסיף `{ width=14cm }` לכל תמונת `screenshots/`
 בזמן האיחוד, כך שכל הצילומים יוצאים באותו רוחב בלי לחזור על עצמנו 33 פעם.
 
 `make-screenshot-placeholders.ps1` **לעולם אינו דורס קובץ קיים**. החלפת ממלא מקום בצילום
