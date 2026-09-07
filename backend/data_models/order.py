@@ -10,13 +10,13 @@ from .base import Base
 
 # Reused from menu.py rather than redefined: table_number and capacity are plain
 # Integer columns needing the same int4 upper bound as menu.py's category_id
-# (trap 16). recipe.py imports it the same way.
+# so an out-of-range value 422s instead of 500ing. recipe.py imports it the same way.
 from .menu import _INT4_MAX
 
 
 # The most portions of one Dish a single Order Item may carry. Keeps
 # price_at_add * quantity inside Order.total_amount's Numeric(10, 2) range
-# (FR-8/AD-7); see CreateOrderItemRequest. Mirrored by the frontend's own
+#; see CreateOrderItemRequest. Mirrored by the frontend's own
 # quantity parser so the two agree on what is submittable.
 MAX_ORDER_ITEM_QUANTITY = 99
 
@@ -142,7 +142,7 @@ class OrderItem(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     cook_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     price_at_add: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False)
-    # Set only by reject_item (this batch): the message the Waiter sees, stating how much of this
+    # Set only by reject_item: the message the Waiter sees, stating how much of this
     # item's quantity the kitchen could actually have prepared. Null for every other status.
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -165,7 +165,7 @@ class CreateOrderItemRequest(BaseModel):
     """Body of a Waiter's request to add an Order Item to an open Order.
 
     quantity is capped well below the int4 bound the other id fields use. The
-    Order total (FR-8) is the sum of price_at_add * quantity over these rows,
+    Order total is the sum of price_at_add * quantity over these rows,
     and Order.total_amount is Numeric(10, 2), so an int4-sized quantity would
     overflow that column and raise an unhandled error on an Order nobody could
     then close. 99 is a realistic per-line maximum; a larger order takes a
@@ -209,16 +209,16 @@ class OrderItemResponse(BaseModel):
 
 
 class KitchenItemResponse(BaseModel):
-    """Body of GET /api/kitchen/items, describing one active Order Item plus its Table (Story 5.1).
+    """Body of GET /api/kitchen/items, describing one active Order Item plus its Table.
 
     OrderItemResponse's exact field set plus table_id and max_preparable_quantity. table_id is not
     a column on OrderItem itself (only order_id is), so this is not from_attributes-constructible
     off a bare OrderItem the way OrderItemResponse is; KitchenService builds instances explicitly
-    from a (OrderItem, table_id) row pair, the one join in this codebase's services/ layer this
-    story explicitly justifies (see the story's Scope note) — the Kitchen Display groups by Table,
-    and no existing endpoint maps an arbitrary order_id to its table_id for a Cook session.
+    from a (OrderItem, table_id) row pair — the one join in this codebase's services/ layer,
+    justified because the Kitchen Display groups by Table and no existing endpoint maps an
+    arbitrary order_id to its table_id for a Cook session.
 
-    `max_preparable_quantity` (this batch): how many portions of this item's Dish current stock
+    `max_preparable_quantity`: how many portions of this item's Dish current stock
     can actually support right now, live off `Ingredient.current_stock` — not stored on OrderItem,
     computed fresh on every list call, the same "advisory read, not a stored fact" shape
     `Dish.is_available`'s own recipe-emptiness check already uses elsewhere. Only meaningful while

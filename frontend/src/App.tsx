@@ -10,8 +10,8 @@ const queryClient = new QueryClient();
  * The app's provider composition root.
  *
  * QueryClientProvider wraps everything else, ThemeModeProvider reads the
- * current User through the query cache to pick its role-based default
- * (AC4), so it must sit inside QueryClientProvider.
+ * current User through the query cache to pick its role-based default,
+ * so it must sit inside QueryClientProvider.
  *
  * No ConnectionStatusProvider here: RealtimeProvider (mounted inside
  * RequireAuth, once a User is known) renders it internally with the real

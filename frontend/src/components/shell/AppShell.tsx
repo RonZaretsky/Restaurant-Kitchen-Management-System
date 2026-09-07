@@ -21,11 +21,11 @@ import { ReconnectingBanner } from "./ReconnectingBanner";
 import { ThemeToggle } from "./ThemeToggle";
 import { ROLE_NAV_ITEMS } from "./navigationConfig";
 
-// The Warehouse Manager's live count badge (Story 4.2, red, an unresolved problem).
+// The Warehouse Manager's live count badge (red, an unresolved problem).
 const ALERTS_NAV_PATH = "/warehouse/alerts";
 
-// The Waiter's "tables need attention" live count badge (Story 5.4, green, a positive/actionable
-// state per DESIGN.md's nav-badge-attention token — deliberately not the Alerts badge's red).
+// The Waiter's "tables need attention" live count badge (green, a positive/actionable
+// state — deliberately not the Alerts badge's red).
 const TABLES_NAV_PATH = "/waiter/tables";
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -46,7 +46,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
  * The active background is a darkened wash, not a lightened one. Over the
  * light theme's `#0B6E8F` app bar, lightening drops white label text to about
  * 4.03:1 and fails WCAG 2.2 AA, while darkening lifts it to roughly 7.9:1 and
- * passes in both themes (AC8). The focus ring uses `currentColor` because the
+ * passes in both themes. The focus ring uses `currentColor` because the
  * app bar's text is light in both themes while its background is not.
  */
 const NavItem = styled(NavLink)(({ theme }) => ({
@@ -70,9 +70,9 @@ const NavItem = styled(NavLink)(({ theme }) => ({
  *
  * Only ever rendered once the current User is known, RequireAuth is the caller
  * that guarantees this. Nav links come only from ROLE_NAV_ITEMS[user.role],
- * which is the literal mechanism behind AC2's "only surfaces that Role is
- * authorized for." Note that an entry may cross a URL prefix when the backend
- * authorizes that Role for it (Admin's Ingredients entry, Story 2.6); the
+ * which is the literal mechanism behind showing only surfaces that Role is
+ * authorized for. Note that an entry may cross a URL prefix when the backend
+ * authorizes that Role for it (Admin's Ingredients entry); the
  * invariant is authorization, not the prefix.
  *
  * @param user - The authenticated User whose Role drives the nav.
@@ -84,7 +84,7 @@ export function AppShell({ user }: { user: CurrentUser }) {
   const queryClient = useQueryClient();
   const { subscribe } = useRealtime();
 
-  // Story 4.2: only a warehouse_manager has an Alerts nav item at all
+  // Only a warehouse_manager has an Alerts nav item at all
   // (navigationConfig.ts), so the query/subscription are scoped the same way
   // rather than firing for every Role.
   const isWarehouseManager = user.role === "warehouse_manager";
@@ -100,10 +100,10 @@ export function AppShell({ user }: { user: CurrentUser }) {
     });
   }, [isWarehouseManager, subscribe, queryClient]);
 
-  // Story 5.4: only a waiter has a Tables nav item, same scoping shape as the Alerts badge
-  // above. useOpenOrders() (Story 5.3) is shared via TanStack Query's own cache with
+  // Only a waiter has a Tables nav item, same scoping shape as the Alerts badge
+  // above. useOpenOrders() is shared via TanStack Query's own cache with
   // TablesPage.tsx's own call to the same hook, so this is not a duplicate network request.
-  // "Clears automatically" (FR-11) falls out for free: once mark-served's order.status_changed
+  // "Clears automatically" falls out for free: once mark-served's order.status_changed
   // broadcast lands, this query refetches and the now-served Order simply drops out of the
   // ready count, no explicit "clear" logic needed.
   const isWaiter = user.role === "waiter";

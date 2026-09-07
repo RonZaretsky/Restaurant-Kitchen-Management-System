@@ -26,7 +26,7 @@ container = Container()
 container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 
 # Every later story that adds @inject to a new module appends its name here,
-# never replaces the list (AD-1).
+# never replaces the list.
 container.wire(
     modules=[
         "api.auth",
@@ -73,7 +73,7 @@ def _warn_if_default_secret_key() -> None:
 
 
 def _warn_if_no_openai_key() -> None:
-    """Log a warning if OPENAI_API_KEY is unset (Story 6.1).
+    """Log a warning if OPENAI_API_KEY is unset.
 
     Unlike JWT_SECRET_KEY there is no functional fallback to warn about
     silently accepting: a missing key just means every Smart Chef call fails
@@ -94,7 +94,7 @@ def _warn_if_no_openai_key() -> None:
 async def _bootstrap_first_admin(app: FastAPI) -> None:
     """Create a default Admin account if the `users` table is empty.
 
-    Every route requires an authenticated Admin (Story 1.6+), and there is no other way to
+    Every user-management route requires an authenticated Admin, and there is no other way to
     reach a fresh clone: `docker compose up` alone would otherwise leave no way to log in.
     Checked on every startup, not just the first: idempotent via the row count, so it never
     creates a second account once any User exists (including one added by hand or since

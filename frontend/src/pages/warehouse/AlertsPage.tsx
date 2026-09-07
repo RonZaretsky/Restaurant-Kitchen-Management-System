@@ -33,11 +33,11 @@ function errorMessage(error: Error): string {
 }
 
 /**
- * The Alerts surface (Story 4.2, replacing Story 4.1's placeholder).
+ * The Alerts surface.
  *
- * One row per Ingredient currently in shortage (FR-14), reading exactly
- * `"Stock low: {name} ({current stock}{unit} left)"` (UX-DR10). Styled per
- * DESIGN.md's `alert-row` token: the same red as a cancelled OrderItem/
+ * One row per Ingredient currently in shortage, reading exactly
+ * `"Stock low: {name} ({current stock}{unit} left)"`. Styled per
+ * the alert-row treatment: the same red as a cancelled OrderItem/
  * in-shortage Ingredient row, plus a WarningAmberIcon — previously missing
  * here (rows rendered as plain unstyled text), fixed after manual testing
  * found the row's clickability had no visible affordance at all. A
@@ -49,7 +49,7 @@ function errorMessage(error: Error): string {
  * a manual action here. Clicking a row opens that Ingredient's detail page
  * to log the resolving movement. Subscribes to the live
  * `inventory.alerts_changed` push
- * (Story 4.2, Observer/Pub-Sub) so a shortage appearing or clearing updates
+ * (Observer/Pub-Sub) so a shortage appearing or clearing updates
  * this screen without a manual refresh, independently of the same-named
  * subscription AppShell.tsx owns for the nav badge.
  *

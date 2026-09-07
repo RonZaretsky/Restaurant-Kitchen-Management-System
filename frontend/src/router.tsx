@@ -19,9 +19,7 @@ import { IngredientsPage } from "./pages/warehouse/IngredientsPage";
  * The app's route tree. Declarative mode (createBrowserRouter/RouterProvider),
  * not framework mode, this project has no @react-router/dev Vite plugin.
  *
- * One route per IA surface (AC1), sourced from the mockups' own address
- * bars (see the story's Dev Notes route table), all but Login gated behind
- * RequireAuth. The catch-all sends any other authenticated URL back through
+ * One route per surface, all but Login gated behind RequireAuth. The catch-all sends any other authenticated URL back through
  * RequireAuth's own root-path redirect rather than rendering a blank page.
  *
  * Exported separately from the router instance itself, so tests can build

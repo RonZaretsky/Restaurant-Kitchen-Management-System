@@ -30,22 +30,23 @@ class StockMovement(Base):
 
 
 class CreateStockMovementRequest(BaseModel):
-    """Body of a Warehouse Manager's or Admin's request to log a Stock Movement (FR-15).
+    """Body of a Warehouse Manager's or Admin's request to log a Stock Movement.
 
     movement_type accepts the full MovementType enum at the field level (no Literal-based
     subset type exists anywhere in this codebase to follow as precedent), but the validator
-    below rejects `consumption`: it is Epic 5's automatic path only, never a manually
+    below rejects `consumption`: it belongs to the automatic pick-up path only, never a manually
     submitted value here, mirroring `UpdateRecipeIngredientRequest.at_least_one_field`'s
     validator-rejects-the-disallowed-case shape.
 
-    Sign convention (AD-16, FR-15): quantity is a plain positive magnitude for purchase/waste
+    Sign convention: quantity is a plain positive magnitude for purchase/waste
     (the direction is implied by movement_type); for adjustment it is the already-signed
     delta the caller wants applied (positive or negative, never zero).
     """
 
     movement_type: MovementType
     # max_digits/decimal_places match StockMovement.quantity_change's Numeric(10, 3) column
-    # exactly (trap 16). No ge/gt bound at the field level: validity depends on
+    # exactly, so an out-of-range value 422s instead of 500ing. No ge/gt bound
+    # at the field level: validity depends on
     # movement_type, enforced below.
     quantity: Decimal = Field(max_digits=10, decimal_places=3)
     notes: str | None = None
@@ -75,9 +76,9 @@ class StockMovementResponse(BaseModel):
 
     Maps 1:1 to StockMovement's own columns (no joined/enriched data), matching
     OrderItemResponse's precedent of returning raw ids (`performed_by`, like `cook_id`)
-    rather than a resolved display name — see Dev Notes for why the frontend renders
-    `performed_by` as a plain id rather than a name, and why that's a known,
-    deliberate gap in this story rather than an oversight.
+    rather than a resolved display name: no endpoint resolves a user id to a name for
+    this audience, so the frontend renders `performed_by` as a plain id. A known,
+    deliberate gap rather than an oversight.
     """
 
     model_config = {"from_attributes": True}

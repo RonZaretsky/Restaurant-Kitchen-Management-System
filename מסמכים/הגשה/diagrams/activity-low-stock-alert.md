@@ -16,6 +16,10 @@ stateDiagram-v2
     state crossed <<choice>>
     state already <<choice>>
 
+    note right of source : מה גרם לשינוי בכמות?
+    note right of crossed : נחצה סף ההתרעה, ובאיזה כיוון?
+    note right of already : כבר קיימת התרעה למרכיב הזה?
+
     [*] --> source
     source --> change : הטבח לקח פריט להכנה
     source --> change : המחסנאי רשם קנייה, פחת או התאמה

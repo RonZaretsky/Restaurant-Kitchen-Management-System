@@ -19,7 +19,7 @@ async def get_current_user(
 ) -> User:
     """Resolve the authenticated User for the current request.
 
-    The single shared authorization seam required by AD-3. Protected routes
+    The single shared authorization seam for the whole app. Protected routes
     depend on CurrentUserDep below and never re-derive a user from the
     cookie themselves.
 
@@ -112,8 +112,8 @@ async def verify_ws_origin(
     """Reject a WebSocket handshake whose Origin is not the allowed one.
 
     CORSMiddleware only inspects the http ASGI scope, so it never sees a
-    WebSocket handshake at all. This is the stand-in for AD-3's "explicit
-    allow-list, never wildcard" on that one transport.
+    WebSocket handshake at all. This is the stand-in for the "explicit
+    allow-list, never wildcard" CORS rule on that one transport.
 
     Declared as a route-level dependency so it runs before the session
     cookie is verified, which means a cross-origin handshake is refused
@@ -139,8 +139,8 @@ def require_role(*roles: UserRole) -> Callable[[User], Awaitable[User]]:
 
     Layers on top of CurrentUserDep rather than re-deriving the user, so
     every route that depends on it is authenticated first (by
-    get_current_user) and only then role-checked here, per AD-3's "one
-    shared dependency, never re-derived per route" and AD-9's role-level-only
+    get_current_user) and only then role-checked here: one shared
+    dependency, never re-derived per route, over a role-level-only
     permission model.
 
     Call it, do not pass it. The correct usage is

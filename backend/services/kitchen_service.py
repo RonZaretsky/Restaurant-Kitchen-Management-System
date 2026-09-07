@@ -9,15 +9,15 @@ from services.inventory_service import InventoryService
 
 
 class KitchenService:
-    """Reads the Kitchen Display's live board (Story 5.1).
+    """Reads the Kitchen Display's live board.
 
     Config-free aside from the inventory_service collaborator, so it is registered as a
     container-level Factory with the logger and inventory_service injected. Read-only itself: this
     service never writes, and holds no realtime_service collaborator, since it never broadcasts
     anything itself — the one event the Kitchen Display listens for (order.item_added) is
-    OrderService's own broadcast, just widened to include Cook (Story 5.1's Scope note).
-    inventory_service is used to compute each pending item's live max_preparable_quantity (this
-    batch), reusing InventoryService.max_preparable_quantities rather than duplicating its
+    OrderService's own broadcast, just widened to include Cook.
+    inventory_service is used to compute each pending item's live max_preparable_quantity,
+    reusing InventoryService.max_preparable_quantities rather than duplicating its
     recipe/stock join here.
     """
 
@@ -27,7 +27,7 @@ class KitchenService:
         Args:
             logger: The loguru logger injected from the container.
             inventory_service: Injected service used to compute each pending item's live
-                max-preparable-quantity (this batch's insufficient-stock warning).
+                max-preparable-quantity, backing the insufficient-stock warning.
         """
         self._logger = logger
         self._inventory_service = inventory_service
@@ -38,14 +38,14 @@ class KitchenService:
 
         No actor argument: a plain unfiltered read has nothing to reject and nothing worth
         auditing, permissions are Role-level only (matches list_ingredients/list_items). The one
-        join in this codebase's services/ layer this story explicitly justifies: OrderItem has no
+        join in this codebase's services/ layer, justified because OrderItem has no
         table_id of its own, only order_id, and the Kitchen Display's whole point is grouping by
         Table, so Order.table_id is joined in rather than resolved via a second per-item request.
 
-        Filter scope: OrderItem.status not in (cancelled, rejected), plus (Story 5.4) Order.status
+        Filter scope: OrderItem.status not in (cancelled, rejected), plus Order.status
         not in (served, closed) — a served/closed Order's items keep their own ready status and
-        would otherwise leak onto this board forever, now that Story 5.4 makes served/closed
-        Orders reachable for the first time. rejected (this batch) is excluded the same way
+        would otherwise leak onto this board forever once an Order is served or closed.
+        rejected is excluded the same way
         cancelled always has been: a rejected item is done as far as the kitchen board is
         concerned, its message lives on the Waiter's own order view instead.
 

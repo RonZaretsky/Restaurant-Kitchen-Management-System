@@ -7,7 +7,7 @@ from fastapi import WebSocket
 
 from data_models import UserRole
 
-# One slow client must not eat the whole NFR-1 delivery budget for everyone
+# One slow client must not eat the whole real-time delivery budget for everyone
 # else, so a send that has not completed in this long is abandoned and that
 # connection is dropped.
 SEND_TIMEOUT_SECONDS = 1.0
@@ -35,7 +35,7 @@ class ConnectionRegistry:
     """Tracks open WebSocket connections by the User holding them.
 
     Keyed by user id rather than by Role alone so that a broadcast can be
-    Role-scoped (AD-2) while the registry still enforces AC1's one
+    Role-scoped while the registry still enforces one
     connection per authenticated session: registering a second socket for a
     User closes that User's previous one.
     """
@@ -52,7 +52,7 @@ class ConnectionRegistry:
     async def register(self, user_id: int, role: UserRole, websocket: WebSocket) -> None:
         """Record a newly accepted connection, replacing any the User already held.
 
-        Closing the previous socket is what makes AC1's "one connection per
+        Closing the previous socket is what makes "one connection per
         authenticated session" literally true, and it bounds memory against a
         client that opens sockets in a loop. The trade-off is deliberate: a
         second tab takes the connection over from the first.
@@ -108,8 +108,8 @@ class ConnectionRegistry:
         transport failure and silently unsubscribing healthy clients.
 
         Sends run concurrently with a per-send timeout, so one client with a
-        full send buffer cannot delay delivery to everyone else past NFR-1's
-        budget. A send that fails or times out unregisters just that
+        full send buffer cannot delay delivery to everyone else past the
+        real-time budget. A send that fails or times out unregisters just that
         connection.
 
         Args:

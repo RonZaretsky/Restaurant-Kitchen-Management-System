@@ -6,8 +6,8 @@ import { useConnectionStatus } from "./ConnectionStatusContext";
  * The one app-wide connection-status banner.
  *
  * Renders nothing while connected. Mounted once in AppShell, above the
- * routed page content, so it is genuinely a single app-wide instance
- * (AC7), not one per page.
+ * routed page content, so it is genuinely a single app-wide instance,
+ * not one per page.
  *
  * @returns The banner while reconnecting or replaced by another tab, otherwise null.
  */

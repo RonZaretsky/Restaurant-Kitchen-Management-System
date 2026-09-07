@@ -28,8 +28,8 @@ const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
 /** Shown when the quantity field holds something invalid for the selected movement type. */
 const INVALID_AMOUNT_MESSAGE = "Enter a valid, non-zero amount";
 
-/** Movement types a Warehouse Manager or Admin may log manually. Consumption is Epic 5's
- * automatic-deduction path only, never a manual input (see Task 1's server-side rejection). */
+/** Movement types a Warehouse Manager or Admin may log manually. Consumption belongs to the
+ * automatic pick-up deduction path only, never a manual input (the backend rejects it too). */
 type LoggableMovementType = Exclude<MovementType, "consumption">;
 
 const MOVEMENT_TYPE_OPTIONS: LoggableMovementType[] = ["purchase", "waste", "adjustment"];
@@ -83,13 +83,13 @@ function parseAdjustmentAmount(raw: string): string | null {
 }
 
 /**
- * The Ingredient detail surface (Story 4.1, replacing Story 1.4's one-line placeholder).
+ * The Ingredient detail surface.
  *
  * Reached by ingredient id alone (`/warehouse/ingredients/:ingredientId`). Shows the
  * Ingredient's stat cards (current stock, minimum threshold), a log-movement form
- * (Purchase/Waste/Adjustment only, AC1/AC2), and the movement history table with the
- * neutral-palette type chip (AC3). Deliberately excludes the shortage banner and
- * danger-styled stat cards, both Story 4.2/4.3's job.
+ * (Purchase/Waste/Adjustment only), and the movement history table with the
+ * neutral-palette type chip. Deliberately excludes the shortage banner and
+ * danger-styled stat cards, which belong to the Alerts and stock-levels surfaces.
  *
  * @returns The Ingredient detail page.
  */

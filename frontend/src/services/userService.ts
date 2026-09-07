@@ -57,7 +57,7 @@ export function useUsers(): UseQueryResult<CurrentUser[], Error> {
 }
 
 /**
- * Creates a new User account (AC1).
+ * Creates a new User account.
  *
  * @returns The TanStack Query mutation for submitting a new User.
  */
@@ -75,7 +75,7 @@ export function useCreateUser(): UseMutationResult<CurrentUser, Error, CreateUse
 }
 
 /**
- * Edits a User's full name and/or Role (AC3).
+ * Edits a User's full name and/or Role.
  *
  * Invalidates on settle rather than only on success, same reasoning as
  * useUpdateTable: a 409 last-Admin-lockout rejection means this client's
@@ -102,8 +102,8 @@ export function useUpdateUser(): UseMutationResult<
 }
 
 /**
- * Deactivates a User (AC4), rejected with a 409 if they are the last active
- * Admin (AC5).
+ * Deactivates a User, rejected with a 409 if they are the last active
+ * Admin.
  *
  * @returns The TanStack Query mutation for deactivating a User by id.
  */
@@ -118,7 +118,7 @@ export function useDeactivateUser(): UseMutationResult<CurrentUser, Error, numbe
 }
 
 /**
- * Reactivates a previously deactivated User (AC7).
+ * Reactivates a previously deactivated User.
  *
  * @returns The TanStack Query mutation for reactivating a User by id.
  */
@@ -133,7 +133,7 @@ export function useReactivateUser(): UseMutationResult<CurrentUser, Error, numbe
 }
 
 /**
- * Sets a new password for a User (AC8).
+ * Sets a new password for a User.
  *
  * @returns The TanStack Query mutation for resetting a User's password.
  */

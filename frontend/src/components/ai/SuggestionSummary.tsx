@@ -8,7 +8,7 @@ import type { AIRecipeSuggestion } from "../../types/ai";
  * The read-only content shared by every Recipe Suggestion card: name, who
  * requested it and when, the ingredients it drew on, and its suggested
  * plating. Extracted from `SmartChefPage.tsx`'s original `SuggestionCard` so
- * `RecipeSuggestionsPage.tsx` (Story 6.2) can wrap the same content with its
+ * `RecipeSuggestionsPage.tsx` can wrap the same content with its
  * own Confirm/Dismiss actions instead of duplicating this markup.
  *
  * `requested_by` is shown as a raw `User #{id}`, not a resolved name: no

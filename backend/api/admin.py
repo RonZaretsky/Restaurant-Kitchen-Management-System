@@ -229,7 +229,7 @@ async def reset_password(
 ) -> User:
     """Set a new password on an existing User.
 
-    Never requires or reveals the account's previous password (AC8).
+    Never requires or reveals the account's previous password.
 
     Args:
         user_id: The id of the User whose password is being reset.

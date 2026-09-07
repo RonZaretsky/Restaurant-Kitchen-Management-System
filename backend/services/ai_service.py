@@ -33,14 +33,14 @@ from exceptions import (
 )
 
 # A sentinel used to rank a zero-min_stock_threshold Ingredient as maximally "at risk of waste"
-# (Scope note's heuristic) rather than falling back to its raw current_stock, which would mix an
-# incomparable scale (a dimensionless ratio vs. a raw quantity) into the same sort (review
-# finding). Any zero-threshold Ingredient with stock > 0 sorts ahead of every ratio-based one.
+# rather than falling back to its raw current_stock, which would mix an incomparable scale
+# (a dimensionless ratio vs. a raw quantity) into the same sort. Any zero-threshold
+# Ingredient with stock > 0 sorts ahead of every ratio-based one.
 _ZERO_THRESHOLD_RANK = Decimal("Infinity")
 
 
 class AIService:
-    """Generates AI Recipe Suggestions from current stock (Story 6.1, FR-18).
+    """Generates AI Recipe Suggestions from current stock.
 
     Config-free aside from its `llm_client`/`logger` collaborators, so it is registered as a
     container-level Factory, matching every other service's shape. `inventory_service` is
@@ -54,23 +54,23 @@ class AIService:
 
         Args:
             logger: The loguru logger injected from the container.
-            llm_client: Injected client used to call OpenAI (AD-12) — this service never imports
+            llm_client: Injected client used to call OpenAI — this service never imports
                 `openai` itself.
         """
         self._logger = logger
         self._llm_client = llm_client
-        # In-process only (Story 6.1's AD-14 guard): the set of Cook user ids currently generating
+        # In-process only: the set of Cook user ids currently generating
         # a suggestion. Not persisted, not shared across processes — sufficient for this
         # single-process app, and simpler than a DB column or a distributed lock for a rule that
         # only needs to reject a second concurrent request, never queue or recover it.
         self._in_flight: set[int] = set()
-        # A second, independent in-process guard (Story 6.3, AD-14), keyed by Chat Session id
+        # A second, independent in-process guard, keyed by Chat Session id
         # rather than Cook user id: a Cook may legitimately have two different sessions open in
         # two tabs, but two concurrent sends into the *same* session would race the
-        # message-ordering guarantee AC2 relies on. Lives on this same Singleton, not a
+        # message-ordering guarantee the chat relies on. Lives on this same Singleton, not a
         # container.py change — see this class's own Singleton reasoning above.
         self._chat_in_flight: set[int] = set()
-        # A third in-process guard (this batch's #7, AD-14), keyed by Recipe Suggestion id rather
+        # A third in-process guard, keyed by Recipe Suggestion id rather
         # than session id: today's _chat_in_flight alone does not stop two *different* Chat
         # Sessions both tied to the *same* Suggestion from racing to overwrite its
         # generated_recipe (e.g. two Cooks each opening their own "Discuss via chat" thread on
@@ -81,20 +81,20 @@ class AIService:
     async def generate_suggestion(
         self, db: AsyncSession, actor: User, direction: str | None, prioritize_waste: bool = False
     ) -> AIRecipeSuggestionResponse:
-        """Generate and persist a Recipe Suggestion from a snapshot of current stock (AC1, AC2).
+        """Generate and persist a Recipe Suggestion from a snapshot of current stock.
 
         Rejects a second concurrent request from the same Cook immediately, before any DB read or
-        OpenAI call (AC3, AD-14). No Recipe Suggestion row is ever created unless the OpenAI call
-        actually succeeds *and* returns the expected shape (AC4, FR-21) — a failure or a
+        OpenAI call. No Recipe Suggestion row is ever created unless the OpenAI call
+        actually succeeds *and* returns the expected shape — a failure or a
         malformed response leaves no orphaned or partial row.
 
         Only Ingredients with `current_stock > 0` are snapshotted ("currently-available" stock,
-        AC1) — an out-of-stock Ingredient contributes nothing to reduce waste. If none remain
+        only) — an out-of-stock Ingredient contributes nothing to reduce waste. If none remain
         (nothing in stock at all), the request is rejected rather than prompting the model with an
-        empty ingredient list, which risks a hallucinated, unusable suggestion (review finding).
+        empty ingredient list, which risks a hallucinated, unusable suggestion.
 
         The stock snapshot is sorted by `_waste_risk_rank` descending: the most defensible
-        available proxy for "at risk of waste" (FR-18), since nothing in this schema tracks
+        available proxy for "at risk of waste", since nothing in this schema tracks
         expiry dates or usage rates. An Ingredient sitting at many times its own minimum
         threshold is the one most plausibly overstocked, not necessarily the one with the largest
         raw quantity.
@@ -102,13 +102,13 @@ class AIService:
         The parsed response's shape is validated before persisting (`name`/`ingredients`/
         `plating` present with the expected types) — a syntactically valid JSON object missing
         these would otherwise be persisted as a "successful" suggestion and only fail later at
-        render time (review finding).
+        render time.
 
         Args:
             db: The active database session.
             actor: The Cook requesting the suggestion.
             direction: Optional free-text steering hint, folded into the prompt but never
-                overriding the stock-availability constraint (AC2).
+                overriding the stock-availability constraint.
             prioritize_waste: Opt-in (default off, manual-test feedback): when True, folds the
                 waste-reduction framing back into the prompt (steer toward the most-overstocked
                 ingredients, listed first in `snapshot`) — off by default because that framing
@@ -119,9 +119,9 @@ class AIService:
 
         Raises:
             SuggestionGenerationInProgressError: If a generation is already in flight for this
-                Cook (AC3).
+                Cook.
             AIGenerationFailedError: If there is nothing currently in stock, the OpenAI call
-                fails or times out, or the response is missing the expected shape (AC4).
+                fails or times out, or the response is missing the expected shape.
         """
         if actor.id in self._in_flight:
             self._logger.warning(
@@ -136,8 +136,7 @@ class AIService:
             ingredients = result.scalars().all()
             if not ingredients:
                 # Nothing to build a recipe from — reject cleanly rather than sending the model
-                # an empty ingredient list and risking a hallucinated, unusable suggestion
-                # (review finding).
+                # an empty ingredient list and risking a hallucinated, unusable suggestion.
                 self._logger.warning(
                     "Recipe suggestion generation rejected for user_id={}: no ingredients in stock",
                     actor.id,
@@ -182,7 +181,7 @@ class AIService:
                 suggestion.id,
             )
             # A freshly generated suggestion can never already be confirmed — Dish creation
-            # (Story 6.2) always happens in a later, separate request.
+            # always happens in a later, separate request.
             return AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=None)
         finally:
             self._in_flight.discard(actor.id)
@@ -191,8 +190,8 @@ class AIService:
     def _is_recipe_shape_valid(recipe: object) -> bool:
         """Validate a parsed recipe's shape (name/ingredients/plating present with the expected
         types), shared by every write path that can persist a `generated_recipe` value —
-        `generate_suggestion`'s own OpenAI response (Story 6.1) and `send_message`'s
-        chat-driven `updated_recipe` (Story 6.3) — so the two can never drift into different
+        `generate_suggestion`'s own OpenAI response and `send_message`'s
+        chat-driven `updated_recipe` — so the two can never drift into different
         validation rules.
 
         Args:
@@ -215,7 +214,7 @@ class AIService:
         """Rank an Ingredient by surplus relative to its own minimum threshold, descending.
 
         `current_stock / min_stock_threshold` for the normal case. A zero threshold cannot be
-        divided by, but is not simply "current_stock" either (review finding) — mixing a
+        divided by, but is not simply "current_stock" either — mixing a
         dimensionless ratio and a raw quantity in the same sort produces a meaningless order once
         both kinds of Ingredient are present. A zero-threshold Ingredient with any stock at all is
         instead ranked as maximally at-risk (there is no meaningful "normal" level for it to be
@@ -235,15 +234,15 @@ class AIService:
     async def list_suggestions(self, db: AsyncSession, actor: User) -> Sequence[AIRecipeSuggestionResponse]:
         """List every Recipe Suggestion, newest first, each carrying its derived confirmed state.
 
-        No actor-based filtering (AD-9) — every Cook and Admin sees every suggestion; a
-        "current Cook's own items first" sort, if ever added, belongs client-side (AD-10),
-        matching this exact domain's own FR-20 precedent for Chat Sessions. `actor` is accepted
+        No actor-based filtering — every Cook and Admin sees every suggestion; a
+        "current Cook's own items first" sort, if ever added, belongs client-side,
+        matching this domain's own precedent for Chat Sessions. `actor` is accepted
         only for signature symmetry with every other method in this service, unused otherwise,
         matching `OrderService.list_open_orders`'s own documented shape.
 
-        No `dismissed` filter here (Story 6.2) — same as before, this method returns every
+        No `dismissed` filter here — same as before, this method returns every
         suggestion regardless of dismissed/confirmed state; "awaiting review" filtering is a
-        client-side concern (`RecipeSuggestionsPage.tsx`), matching AD-9's established
+        client-side concern (`RecipeSuggestionsPage.tsx`), matching this codebase's established
         client-side-filter convention.
 
         A left join against `Dish.source_suggestion_id` resolves each row's `confirmed_dish_id`
@@ -268,7 +267,7 @@ class AIService:
         ]
 
     async def dismiss_suggestion(self, db: AsyncSession, actor: User, suggestion_id: int) -> AIRecipeSuggestionResponse:
-        """Dismiss a Recipe Suggestion, retaining it for audit (AC4).
+        """Dismiss a Recipe Suggestion, retaining it for audit.
 
         Rejects a suggestion that is already dismissed or already confirmed (has a Dish citing it
         as its source) — dismissing and confirming are mutually exclusive terminal states, plain
@@ -324,7 +323,7 @@ class AIService:
             actor.id,
             suggestion_id,
         )
-        # Reuses the same lookup rather than hardcoding None (code review finding): the guard
+        # Reuses the same lookup rather than hardcoding None: the guard
         # above already rejects the confirmed case, but computing it here instead of assuming it
         # removes a fragile coupling to that guard never being reordered or relaxed later.
         return AIRecipeSuggestionResponse.from_row(suggestion, confirmed_dish_id=confirmed_dish_id)
@@ -346,7 +345,7 @@ class AIService:
     def _build_prompt(
         self, snapshot: list[dict[str, str]], direction: str | None, prioritize_waste: bool = False
     ) -> str:
-        """Build the generation prompt from a stock snapshot and an optional direction (AC1, AC2).
+        """Build the generation prompt from a stock snapshot and an optional direction.
 
         No waste-priority steering in the prompt by default (per manual-test feedback: it made the
         model anchor on the same few overstocked ingredients across separate suggestions instead
@@ -397,14 +396,14 @@ class AIService:
     async def create_chat_session(
         self, db: AsyncSession, actor: User, dish_id: int | None, suggestion_id: int | None
     ) -> AIChatSessionResponse:
-        """Open a new Chat Session tied to a Dish or a Recipe Suggestion (Story 6.3, AC1).
+        """Open a new Chat Session tied to a Dish or a Recipe Suggestion.
 
         Exactly one of `dish_id`/`suggestion_id` is guaranteed non-None by
         `CreateChatSessionRequest`'s own model_validator — this method still only receives
         whichever the caller resolved, no re-validation of the XOR here (that is the schema's
         job, not the service's).
 
-        `title` is server-computed at creation, not Cook-supplied (Scope note): a snapshot of the
+        `title` is server-computed at creation, not Cook-supplied: a snapshot of the
         target's name at this instant, matching `OrderItem.price_at_add`/
         `AIRecipeSuggestion.prompt_used`'s own "captured at creation time" precedent, so it stays
         stable even if the underlying Dish is later renamed.
@@ -458,10 +457,10 @@ class AIService:
         return AIChatSessionResponse.model_validate(session)
 
     async def list_chat_sessions(self, db: AsyncSession, actor: User) -> Sequence[AIChatSessionResponse]:
-        """List every Chat Session, newest first (Story 6.3, AC3, AC6).
+        """List every Chat Session, newest first.
 
-        No actor-based filtering (AD-9) — every Cook and Admin sees every session; "current
-        Cook's own items first" is a client-side sort (AD-10), matching `list_suggestions`'s own
+        No actor-based filtering — every Cook and Admin sees every session; "current
+        Cook's own items first" is a client-side sort, matching `list_suggestions`'s own
         precedent exactly. `actor` is accepted only for signature symmetry.
 
         Args:
@@ -477,10 +476,10 @@ class AIService:
     async def list_chat_messages(
         self, db: AsyncSession, actor: User, session_id: int
     ) -> Sequence[AIChatMessageResponse]:
-        """List every Message in a Chat Session, in chronological order (Story 6.3, AC1, AC5).
+        """List every Message in a Chat Session, in chronological order.
 
         Ascending, unlike `list_suggestions`'/`list_chat_sessions`'s own newest-first descending
-        order — AC5's "scroll back through history" reads as a conversation, oldest first.
+        order — scrolling back through history reads as a conversation, oldest first.
 
         Args:
             db: The active database session.
@@ -502,9 +501,9 @@ class AIService:
     async def send_message(
         self, db: AsyncSession, actor: User, session_id: int, content: str
     ) -> Sequence[AIChatMessageResponse]:
-        """Send a Cook's message into a Chat Session and persist the assistant's reply (Story 6.3).
+        """Send a Cook's message into a Chat Session and persist the assistant's reply.
 
-        Message-pair atomicity (AD-14, this story's own application of it): neither the user's
+        Message-pair atomicity: neither the user's
         own Message row nor the assistant's reply is inserted until the OpenAI call succeeds —
         both are inserted together, in one transaction, only on success. A looser reading would
         persist the user's message immediately and only skip the assistant reply on failure, but
@@ -512,11 +511,11 @@ class AIService:
         `generate_suggestion`'s own insert-only-after-success shape exactly, rather than inventing
         a second failure semantics for this domain.
 
-        Rejects a second concurrent send into the *same* session immediately (AC3's "prior
-        messages as conversational context" would otherwise race), before any OpenAI call
+        Rejects a second concurrent send into the *same* session immediately (the prior
+        messages sent as conversational context would otherwise race), before any OpenAI call
         (`_chat_in_flight`, keyed by session id, independent of `_in_flight`'s per-Cook guard).
         A Suggestion-tied session additionally checks `_suggestion_chat_in_flight` (keyed by
-        Suggestion id, this batch's #7): two *different* sessions tied to the *same* Suggestion
+        Suggestion id): two *different* sessions tied to the *same* Suggestion
         must not both be allowed to race an update to its `generated_recipe`, which
         `_chat_in_flight` alone (keyed by session id) does not prevent.
 
@@ -548,9 +547,9 @@ class AIService:
         Raises:
             ChatSessionNotFoundError: If no Chat Session matches session_id.
             ChatMessageInProgressError: If a reply is already generating for this session, or (for
-                a Suggestion-tied session) for another session tied to the same Suggestion (AC3).
+                a Suggestion-tied session) for another session tied to the same Suggestion.
             AIChatReplyFailedError: If the OpenAI call fails, times out, errors, or (for a
-                Suggestion-tied session) returns a malformed envelope or updated_recipe (AC4).
+                Suggestion-tied session) returns a malformed envelope or updated_recipe.
         """
         session = await db.get(AIChatSession, session_id)
         if session is None:
@@ -596,7 +595,7 @@ class AIService:
             else:
                 suggestion = await db.get(AIRecipeSuggestion, session.suggestion_id)
                 # A live read (not the suggestion's own `ingredients_snapshot`, which is frozen at
-                # generation time, AC2) — a chat can happen long after generation, and stock may
+                # generation time) — a chat can happen long after generation, and stock may
                 # have moved since. Constrains `updated_recipe` to what is actually available right
                 # now, the same rule `generate_suggestion`'s own prompt already enforces.
                 stock_result = await db.execute(select(Ingredient).where(Ingredient.current_stock > 0))
@@ -666,7 +665,7 @@ class AIService:
         """Load every Message for a Chat Session, oldest first.
 
         A shared private seam so `list_chat_messages` and `send_message` (building the prior
-        conversational context, AC2) never duplicate this query's shape.
+        conversational context) never duplicate this query's shape.
 
         Args:
             db: The active database session.
@@ -687,7 +686,7 @@ class AIService:
         recipe_lines: Sequence[tuple[str, Decimal, Unit]] | None,
         available_ingredients: Sequence[Ingredient] | None = None,
     ) -> dict[str, str]:
-        """Build the system message describing the chat's target recipe (Story 6.3).
+        """Build the system message describing the chat's target recipe.
 
         Instructs the model it is a chef assistant discussing a specific recipe (naming it) and
         states the recipe's current ingredients/plating so it can reason about it. The Dish
@@ -697,7 +696,7 @@ class AIService:
         envelope (mirroring `_build_prompt`'s own "Respond with only a JSON object" wording),
         since `send_message` calls `LLMClient.send_chat_message_with_recipe_update` (JSON mode)
         only for a Suggestion-tied session, letting the Cook ask for a recipe change and have it
-        applied in the same turn (this batch's #7).
+        applied in the same turn.
 
         Args:
             dish: The Dish this session targets, or None if it targets a Suggestion instead.
@@ -707,7 +706,7 @@ class AIService:
                 quantity, unit) tuples, or None when the target is a Suggestion.
             available_ingredients: The live, currently-in-stock Ingredients, used only in the
                 Suggestion branch to constrain `updated_recipe` to what is actually available and
-                to state each one's real unit (AC2's "never include an ingredient that is not
+                to state each one's real unit (the "never include an ingredient that is not
                 listed" rule, mirrored from `_build_prompt`) — None in the Dish branch, which
                 never produces an `updated_recipe`.
 

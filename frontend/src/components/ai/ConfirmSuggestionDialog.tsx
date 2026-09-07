@@ -98,8 +98,8 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Confirms a Recipe Suggestion directly into a live Dish, in one dialog (Story 6.2, revised per
- * manual-test feedback: the original design handed off to the Menu Management create form via
+ * Confirms a Recipe Suggestion directly into a live Dish, in one dialog (revised after
+ * manual testing: the original design handed off to the Menu Management create form via
  * navigation state, requiring the Admin to separately re-add every Recipe Ingredient line by
  * hand afterward; this dialog creates the Dish AND its Recipe Ingredient lines in the same flow).
  *
@@ -111,7 +111,7 @@ function errorMessage(error: unknown): string {
  *
  * Composes the two existing endpoints (`POST /api/menu/dishes`, then
  * `POST /api/menu/dishes/{id}/recipe-ingredients` per row) rather than adding a new backend
- * action — `MenuService.create_dish` remains the only Dish-creation path (AC2), and
+ * action — `MenuService.create_dish` remains the only Dish-creation path, and
  * `add_recipe_ingredient` remains the only way a Recipe Ingredient line is ever added.
  *
  * @param suggestion - The Recipe Suggestion being confirmed.
@@ -226,7 +226,7 @@ export function ConfirmSuggestionDialog({
       }
 
       // Marks the Dish available once it has at least one Recipe Ingredient line, matching
-      // AD-8's own rule (a Dish stays unavailable with zero lines) — unlike an ordinary new Dish,
+      // the rule that a Dish stays unavailable with zero lines — unlike an ordinary new Dish,
       // this one is being created with its recipe already attached in the same flow, so there is
       // no separate "come back later and flip availability" step for the Admin to remember.
       let availabilityError: string | null = null;

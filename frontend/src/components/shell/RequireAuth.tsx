@@ -15,14 +15,14 @@ import { RealtimeProvider } from "./RealtimeProvider";
  *
  * Reads useCurrentUser() directly rather than duplicating it into a separate
  * Context, that would be exactly the "server data duplicated into ad-hoc
- * local/global state" AD-13 prohibits.
+ * local/global state" this codebase prohibits.
  *
  * Four states: while the current-user query is loading, render the shell's
- * cold-load skeleton (AC6); if it failed for any reason other than a rejected
+ * cold-load skeleton; if it failed for any reason other than a rejected
  * session, offer a retry rather than signing the User out; if the session
- * itself is invalid, redirect to Login (AC1); otherwise redirect "/" and any
+ * itself is invalid, redirect to Login; otherwise redirect "/" and any
  * URL the Role cannot visit to that Role's home surface, and render the app
- * shell for everything else (AC2). What a Role can visit is canRoleVisit's
+ * shell for everything else. What a Role can visit is canRoleVisit's
  * call, derived from navigationConfig so a nav entry and its reachability
  * cannot drift apart.
  *

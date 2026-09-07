@@ -76,14 +76,14 @@ function parseNonNegativeInteger(raw: string): number | null {
 }
 
 /**
- * The Menu Management surface (Stories 2.3 and 2.6).
+ * The Menu Management surface.
  *
  * Lists every Dish; each row expands into its own recipe editor
  * (DishRecipeEditor), where an Admin adds/edits/removes Recipe Ingredient
  * lines and toggles availability. An always-visible "+ New dish" form above
- * the list creates Dishes (AC1), with an inline "+ New category" reveal on
- * the Category picker for creating a Menu Category without leaving the flow
- * (AC2). No dialog anywhere, matching this codebase's established inline-form
+ * the list creates Dishes, with an inline "+ New category" reveal on
+ * the Category picker for creating a Menu Category without leaving the flow.
+ * No dialog anywhere, matching this codebase's established inline-form
  * convention (`TablesSetupPage`).
  *
  * Loading/error state is combined across both queries (dishes, categories):

@@ -25,7 +25,7 @@ class AIRecipeSuggestion(Base):
     generated_recipe: Mapped[dict] = mapped_column(JSON, nullable=False)
     ingredients_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    # Story 6.2, AC4: whether an Admin has dismissed this suggestion. "Confirmed" is deliberately
+    # Whether an Admin has dismissed this suggestion. "Confirmed" is deliberately
     # NOT a column here — it is derived from whether any Dish references this suggestion's id
     # (Dish.source_suggestion_id), the same "derived, not stored" pattern Order.status/Low-Stock
     # Alerts already established elsewhere in this codebase.
@@ -39,10 +39,10 @@ class AIChatSession(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    # Story 6.3: exactly one of these two is set per session, enforced by
+    # Exactly one of these two is set per session, enforced by
     # CreateChatSessionRequest's model_validator (application-level, not a DB CHECK constraint,
     # matching this codebase's established pattern for a business-rule invariant). Both nullable,
-    # no default and no backfill concern — a session created before this story never existed.
+    # no default and no backfill concern — no session predates these two columns.
     dish_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("dishes.id"), nullable=True)
     suggestion_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("ai_recipe_suggestions.id"), nullable=True
@@ -60,12 +60,12 @@ class AIChatMessage(Base):
 
 
 class CreateRecipeSuggestionRequest(BaseModel):
-    """Body of a Cook's request to generate a Recipe Suggestion (Story 6.1, FR-18).
+    """Body of a Cook's request to generate a Recipe Suggestion.
 
     `direction` steers the suggestion but never overrides the stock-availability constraint, and
-    is folded into the persisted `prompt_used` rather than stored as its own field (AC2).
+    is folded into the persisted `prompt_used` rather than stored as its own field.
 
-    `prioritize_waste` is opt-in (manual-test feedback, this batch): defaulting it off keeps the
+    `prioritize_waste` is opt-in (found in manual testing): defaulting it off keeps the
     plain "any available ingredient" prompt as the normal path, since always steering toward the
     most-overstocked items made repeated suggestions converge on the same few ingredients. A Cook
     can still opt back into that waste-reduction framing per request via the UI's checkbox.
@@ -120,8 +120,7 @@ class AIRecipeSuggestionResponse(BaseModel):
 
 
 class CreateChatSessionRequest(BaseModel):
-    """Body of a Cook's request to open a Chat Session tied to a Dish or a Recipe Suggestion
-    (Story 6.3, FR-20).
+    """Body of a Cook's request to open a Chat Session tied to a Dish or a Recipe Suggestion.
 
     Exactly one of `dish_id`/`suggestion_id` must be set — a session with no target or two
     targets is meaningless, rejected here with a 422 rather than reaching the service at all
@@ -164,11 +163,10 @@ class AIChatSessionResponse(BaseModel):
 
 
 class CreateChatMessageRequest(BaseModel):
-    """Body of a Cook's request to send a message into an existing Chat Session (Story 6.3, AC1).
+    """Body of a Cook's request to send a message into an existing Chat Session.
 
     No `max_length` bound — matches `CreateOrderItemRequest.notes`'s already-accepted
-    unbounded-free-text precedent (deferred-work.md, Story 3.2 entry), a conscious match, not
-    an oversight.
+    unbounded-free-text precedent, a conscious match, not an oversight.
     """
 
     content: str = Field(min_length=1)

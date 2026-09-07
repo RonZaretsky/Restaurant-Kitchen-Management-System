@@ -23,14 +23,14 @@ from services.ai_service import AIService
 
 router = APIRouter(prefix="/api/smart-chef", tags=["smart-chef"])
 
-# Generating a suggestion is Cook-only (FR-18's own "As a Cook"), no Admin fallback.
+# Generating a suggestion is Cook-only, no Admin fallback.
 SmartChefWriteDep = Annotated[User, Depends(require_role(UserRole.cook))]
 
-# Listing is shared with Story 6.2's Admin review page (same underlying data, Role-level
-# permissions per AD-9 — see AIService.list_suggestions's own docstring).
+# Listing is shared with the Admin review page (same underlying data, Role-level
+# permissions — see AIService.list_suggestions's own docstring).
 SmartChefReadDep = Annotated[User, Depends(require_role(UserRole.cook, UserRole.admin))]
 
-# Dismissing is Admin-only (Story 6.2, UX-DR20) — narrower than SmartChefReadDep, no Cook access.
+# Dismissing is Admin-only — narrower than SmartChefReadDep, no Cook access.
 SmartChefAdminDep = Annotated[User, Depends(require_role(UserRole.admin))]
 
 SuggestionIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
@@ -102,7 +102,7 @@ async def generate_suggestion(
     db: SessionDep,
     ai_service: AIService = Depends(Provide[Container.ai_service]),
 ) -> AIRecipeSuggestionResponse:
-    """Generate and persist a Recipe Suggestion from current stock (AC1, AC2).
+    """Generate and persist a Recipe Suggestion from current stock.
 
     Args:
         payload: The optional free-text direction and the opt-in waste-prioritization flag.
@@ -115,9 +115,9 @@ async def generate_suggestion(
 
     Raises:
         SuggestionGenerationInProgressError: Propagated from ai_service, handled globally as a
-            409, if a generation is already in flight for this Cook (AC3).
+            409, if a generation is already in flight for this Cook.
         AIGenerationFailedError: Propagated from ai_service, handled globally as a 502, if the
-            OpenAI call fails, times out, or returns unparseable content (AC4).
+            OpenAI call fails, times out, or returns unparseable content.
     """
     return await ai_service.generate_suggestion(db, actor, payload.direction, payload.prioritize_waste)
 
@@ -133,7 +133,7 @@ async def list_suggestions(
     db: SessionDep,
     ai_service: AIService = Depends(Provide[Container.ai_service]),
 ) -> Sequence[AIRecipeSuggestionResponse]:
-    """List every Recipe Suggestion, newest first (AC6).
+    """List every Recipe Suggestion, newest first.
 
     Args:
         actor: The authenticated Cook or Admin making the request.
@@ -158,7 +158,7 @@ async def dismiss_suggestion(
     db: SessionDep,
     ai_service: AIService = Depends(Provide[Container.ai_service]),
 ) -> AIRecipeSuggestionResponse:
-    """Dismiss a Recipe Suggestion, retaining it for audit (AC4).
+    """Dismiss a Recipe Suggestion, retaining it for audit.
 
     Args:
         suggestion_id: The id of the Recipe Suggestion to dismiss.
@@ -193,7 +193,7 @@ async def create_chat_session(
     db: SessionDep,
     ai_service: AIService = Depends(Provide[Container.ai_service]),
 ) -> AIChatSessionResponse:
-    """Open a new Chat Session tied to a Dish or a Recipe Suggestion (Story 6.3, AC1).
+    """Open a new Chat Session tied to a Dish or a Recipe Suggestion.
 
     Args:
         payload: The Dish or Recipe Suggestion this session targets (exactly one, enforced by
@@ -225,7 +225,7 @@ async def list_chat_sessions(
     db: SessionDep,
     ai_service: AIService = Depends(Provide[Container.ai_service]),
 ) -> Sequence[AIChatSessionResponse]:
-    """List every Chat Session, newest first (AC3, AC6).
+    """List every Chat Session, newest first.
 
     Args:
         actor: The authenticated Cook or Admin making the request.
@@ -250,7 +250,7 @@ async def list_chat_messages(
     db: SessionDep,
     ai_service: AIService = Depends(Provide[Container.ai_service]),
 ) -> Sequence[AIChatMessageResponse]:
-    """List every Message in a Chat Session, oldest first (AC1, AC5).
+    """List every Message in a Chat Session, oldest first.
 
     Args:
         session_id: The Chat Session whose messages are being listed.
@@ -282,7 +282,7 @@ async def send_chat_message(
     db: SessionDep,
     ai_service: AIService = Depends(Provide[Container.ai_service]),
 ) -> Sequence[AIChatMessageResponse]:
-    """Send a message into a Chat Session and persist the assistant's reply (AC1, AC2, AC4, AC5).
+    """Send a message into a Chat Session and persist the assistant's reply.
 
     Args:
         session_id: The Chat Session to send into.
@@ -298,8 +298,8 @@ async def send_chat_message(
         ChatSessionNotFoundError: Propagated from ai_service, handled globally as a 404, if no
             Chat Session matches session_id.
         ChatMessageInProgressError: Propagated from ai_service, handled globally as a 409, if a
-            reply is already generating for this session (AC3).
+            reply is already generating for this session.
         AIChatReplyFailedError: Propagated from ai_service, handled globally as a 502, if the
-            OpenAI call fails, times out, or errors (AC4).
+            OpenAI call fails, times out, or errors.
     """
     return await ai_service.send_message(db, actor, session_id, payload.content)

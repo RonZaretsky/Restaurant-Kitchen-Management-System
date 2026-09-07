@@ -16,6 +16,10 @@ stateDiagram-v2
     state try_pick <<choice>>
     state decide <<choice>>
 
+    note right of enough : המלאי מספיק לכמות שהוזמנה?
+    note right of try_pick : הטבח מנסה לקחת להכנה בכל זאת?
+    note right of decide : הסועד בוחר מנה חלופית?
+
     [*] --> waiting
     waiting --> show
     show --> enough
