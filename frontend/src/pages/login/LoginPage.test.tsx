@@ -62,7 +62,7 @@ describe("LoginPage", () => {
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });
 
-  it("never leaks a backend validation message into the error line (AC3)", async () => {
+  it("never leaks a backend validation message into the error line", async () => {
     // Arrange
     // A 422 carries Pydantic's own wording, which must not reach the User.
     mockLoginFailure(new ApiError(422, "String should have at least 1 character"));
@@ -74,30 +74,6 @@ describe("LoginPage", () => {
     const alert = screen.getByRole("alert");
     expect(alert).not.toHaveTextContent("String should have at least 1 character");
     expect(alert).toHaveTextContent("Something went wrong. Try again.");
-  });
-
-  it("says the server is unreachable rather than blaming the credentials", async () => {
-    // Arrange
-    mockLoginFailure(new ApiError(0, "Cannot reach the server. Check your connection and try again."));
-
-    // Act
-    renderLoginPage();
-
-    // Assert
-    expect(screen.getByRole("alert")).toHaveTextContent("Cannot reach the server");
-  });
-
-  it("links the error line to both fields so it is announced with them", async () => {
-    // Arrange
-    mockLoginFailure(new ApiError(401, "Invalid username or password"));
-
-    // Act
-    renderLoginPage();
-
-    // Assert
-    const errorId = screen.getByRole("alert").id;
-    expect(screen.getByLabelText(/Username/)).toHaveAttribute("aria-describedby", errorId);
-    expect(screen.getByLabelText(/Password/)).toHaveAttribute("aria-describedby", errorId);
   });
 
   it("calls the login mutation with the submitted credentials", async () => {

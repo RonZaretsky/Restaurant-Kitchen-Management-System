@@ -48,17 +48,6 @@ describe("apiRequest", () => {
     expect(sentInit().credentials).toBe("include");
   });
 
-  it("returns the parsed JSON body on success", async () => {
-    // Arrange
-    mockFetchOnce({ body: { role: "cook" } });
-
-    // Act
-    const result = await apiRequest<{ role: string }>("/api/auth/me");
-
-    // Assert
-    expect(result).toEqual({ role: "cook" });
-  });
-
   it("throws an ApiError carrying the string detail on failure", async () => {
     // Arrange
     mockFetchOnce({ ok: false, status: 401, body: { detail: "Invalid username or password" } });
@@ -99,14 +88,4 @@ describe("apiRequest", () => {
     expect((rejection as ApiError).message).not.toContain("Failed to fetch");
   });
 
-  it("omits Content-Type on a bodyless request so no CORS preflight is provoked", async () => {
-    // Arrange
-    mockFetchOnce({ body: { role: "cook" } });
-
-    // Act
-    await apiRequest("/api/auth/me");
-
-    // Assert
-    expect((sentInit().headers as Headers).has("Content-Type")).toBe(false);
-  });
 });

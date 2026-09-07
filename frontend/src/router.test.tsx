@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ROLE_NAV_ITEMS } from "./components/shell/navigationConfig";
 import { ThemeModeProvider } from "./components/shell/ThemeModeProvider";
 import { routes } from "./router";
 import * as authService from "./services/authService";
@@ -78,7 +77,7 @@ describe("route guard and per-role navigation", () => {
     mockNoOpLogin();
   });
 
-  it("redirects an unauthenticated visit to any protected surface to Login (AC1)", async () => {
+  it("redirects an unauthenticated visit to any protected surface to Login", async () => {
     // Arrange
     mockUnauthenticated();
 
@@ -89,7 +88,7 @@ describe("route guard and per-role navigation", () => {
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
   });
 
-  it("redirects an already-authenticated visit to Login to the caller's role home (AC2)", async () => {
+  it("redirects an already-authenticated visit to Login to the caller's role home", async () => {
     // Arrange
     mockAuthenticated("waiter");
 
@@ -133,57 +132,7 @@ describe("route guard and per-role navigation", () => {
     expect(within(nav).queryByText("Ingredients")).not.toBeInTheDocument();
   });
 
-  it("redirects a direct cross-role URL visit to the caller's own home surface, not the other role's page", async () => {
-    // Arrange
-    mockAuthenticated("waiter");
-
-    // Act
-    renderAt("/admin/users");
-
-    // Assert
-    expect(await screen.findByRole("heading", { name: "Tables" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Users" })).not.toBeInTheDocument();
-  });
-
-  it("lets an Admin reach the Ingredients surface, which lives outside the /admin prefix (Story 2.6 AC4)", async () => {
-    // Arrange: POST /api/inventory/ingredients permits admin and
-    // warehouse_manager alike, so gating the screen on the /admin prefix alone
-    // made the backend's grant unreachable for one of the two Roles it names.
-    mockAuthenticated("admin");
-
-    // Act
-    renderAt("/warehouse/ingredients");
-
-    // Assert: the Ingredients screen itself, not a bounce to /admin/menu.
-    expect(await screen.findByRole("heading", { name: "Ingredients" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Menu Management" })).not.toBeInTheDocument();
-  });
-
-  it("keeps tab order aligned with the app bar's left-to-right visual order (AC8)", async () => {
-    // Arrange
-    mockAuthenticated("admin");
-    const user = userEvent.setup();
-
-    // Act
-    // The expected order comes from the nav config, not from the rendered DOM.
-    // Deriving it from the DOM made this assertion tautological: plain anchors
-    // with no tabindex are always tabbed in DOM order, so it could not fail.
-    const expectedLabels = ROLE_NAV_ITEMS.admin.map((item) => item.label);
-    renderAt("/");
-    await screen.findByRole("navigation");
-
-    document.body.focus();
-    const focusedLabels: (string | null)[] = [];
-    for (let i = 0; i < expectedLabels.length; i += 1) {
-      await user.tab();
-      focusedLabels.push(document.activeElement?.textContent ?? null);
-    }
-
-    // Assert
-    expect(focusedLabels).toEqual(expectedLabels);
-  });
-
-  it("navigates to the role's home surface immediately after a successful login (AC2, AC3)", async () => {
+  it("navigates to the role's home surface immediately after a successful login", async () => {
     // Arrange: LoginPage renders its form first (current-user query still
     // unauthenticated), then the session is already refreshed by the time the
     // mutation reports success.

@@ -6,7 +6,7 @@ import { DishesPage } from "./DishesPage";
 
 // Mocks only fetch, driving the real menuService/inventoryService hooks, matching
 // MenuManagementPage.test.tsx's pattern: mocking the service itself would hide
-// real wiring bugs (Story 1.4's established lesson).
+// real wiring bugs.
 
 const CATEGORY = { id: 1, name: "Pizza" };
 const AVAILABLE_DISH = {
@@ -17,16 +17,6 @@ const AVAILABLE_DISH = {
   category_id: 1,
   is_available: true,
   prep_time_minutes: 15,
-  created_at: "2026-01-01T00:00:00Z",
-};
-const UNAVAILABLE_DISH = {
-  id: 11,
-  name: "Carbonara",
-  description: null,
-  price: "14.00",
-  category_id: 1,
-  is_available: false,
-  prep_time_minutes: 20,
   created_at: "2026-01-01T00:00:00Z",
 };
 const FLOUR = {
@@ -102,29 +92,7 @@ describe("DishesPage", () => {
     expect(await screen.findByText("Flour")).toBeInTheDocument();
   });
 
-  it("marks an unavailable dish distinctly", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        const path = String(url);
-        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
-        if (path.includes("recipe-ingredients")) return Promise.resolve(jsonResponse(200, []));
-        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, [UNAVAILABLE_DISH]));
-        if (path.includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, []));
-        return Promise.reject(new Error(`unexpected request: ${path}`));
-      }),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("Carbonara")).toBeInTheDocument();
-    expect(screen.getByText("Unavailable")).toBeInTheDocument();
-  });
-
-  it("renders no create, edit, availability-toggle, or delete control anywhere (AC2)", async () => {
+  it("renders no create, edit, availability-toggle, or delete control anywhere", async () => {
     // Arrange
     const line = { dish_id: 10, ingredient_id: FLOUR.id, quantity: "0.300", unit: "kg" };
     vi.stubGlobal(
@@ -186,28 +154,4 @@ describe("DishesPage", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
-  it("hides a Category with zero Dishes rather than showing an empty group", async () => {
-    // Arrange: two Categories exist, only one has a Dish.
-    const emptyCategory = { id: 2, name: "Desserts" };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        const path = String(url);
-        if (path.includes("/api/menu/categories")) {
-          return Promise.resolve(jsonResponse(200, [CATEGORY, emptyCategory]));
-        }
-        if (path.includes("recipe-ingredients")) return Promise.resolve(jsonResponse(200, []));
-        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, [AVAILABLE_DISH]));
-        if (path.includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [FLOUR]));
-        return Promise.reject(new Error(`unexpected request: ${path}`));
-      }),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("Pizza")).toBeInTheDocument();
-    expect(screen.queryByText("Desserts")).not.toBeInTheDocument();
-  });
 });

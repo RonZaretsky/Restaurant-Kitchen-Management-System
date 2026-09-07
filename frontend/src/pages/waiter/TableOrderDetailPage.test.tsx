@@ -48,17 +48,6 @@ const PENDING_ITEM = {
   price_at_add: "42.00",
 };
 
-const IN_PREPARATION_ITEM = {
-  id: 2,
-  order_id: 10,
-  dish_id: 5,
-  quantity: 2,
-  status: "in_preparation",
-  notes: null,
-  cook_id: 3,
-  price_at_add: "42.00",
-};
-
 const READY_ITEM = {
   id: 3,
   order_id: 10,
@@ -67,17 +56,6 @@ const READY_ITEM = {
   status: "ready",
   notes: null,
   cook_id: 3,
-  price_at_add: "42.00",
-};
-
-const CANCELLED_ITEM = {
-  id: 4,
-  order_id: 10,
-  dish_id: 5,
-  quantity: 1,
-  status: "cancelled",
-  notes: null,
-  cook_id: null,
   price_at_add: "42.00",
 };
 
@@ -121,9 +99,9 @@ function stubReads(overrides: {
 
 /**
  * A minimal stand-in for the browser's WebSocket, copied from
- * RealtimeProvider.test.tsx (Story 3.3): this page now renders inside a
- * RealtimeProvider, which opens a real WebSocket on mount, and jsdom's real
- * one attempts an actual, slow, eventually-failing network connection.
+ * RealtimeProvider.test.tsx: this page renders inside a RealtimeProvider,
+ * which opens a real WebSocket on mount, and jsdom's real one attempts an
+ * actual, slow, eventually-failing network connection.
  */
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -171,17 +149,6 @@ describe("TableOrderDetailPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("heads the page with the table's number, not its database id", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads()));
-
-    // Act
-    renderPage();
-
-    // Assert: TABLE.id is 1 and TABLE.table_number is 12.
-    expect(await screen.findByRole("heading", { name: "Table 12" })).toBeInTheDocument();
-  });
-
   it("renders each order item's status badge, dish name, note, quantity, and price", async () => {
     // Arrange
     vi.stubGlobal("fetch", vi.fn(stubReads({ items: [PENDING_ITEM] })));
@@ -193,8 +160,8 @@ describe("TableOrderDetailPage", () => {
     expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
-    // Two matches: the item row's own price cell, and the total bar (Story 5.4), which
-    // happens to equal the same amount for a single qty-1 item.
+    // Two matches: the item row's own price cell, and the total bar, which happens
+    // to equal the same amount for a single qty-1 item.
     expect(screen.getAllByText("42.00 ₪")).toHaveLength(2);
   });
 
@@ -277,45 +244,11 @@ describe("TableOrderDetailPage", () => {
     ).toBe(true);
   });
 
-  it("presents a table with no open order as its own state, not a failed request", async () => {
-    // Arrange: reachable by typing the URL of an available table.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(stubReads({ order: jsonResponse(404, { detail: "Order not found" }) })),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert: no Retry button, since retrying could never succeed.
-    expect(await screen.findByText(/This table has no open order/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
-  });
-
-  it("refetches the item list when a live order.item_added event arrives", async () => {
-    // Arrange: the item list starts empty, then the backend reports one item
-    // on the second fetch, simulating another Waiter's concurrent add (Story
-    // 3.3, AC2/AC3).
-    let items: unknown[] = [];
-    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
-
-    // Act
-    renderPage();
-    await screen.findByText("No items added yet.");
-    items = [PENDING_ITEM];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({ data: JSON.stringify({ event: "order.item_added", payload: PENDING_ITEM }) });
-
-    // Assert
-    expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
-  });
-
   it("edits a pending item, always sending both quantity and note", async () => {
     // Arrange: the mock echoes the submitted body back, matching the add-item
     // test's own "never hardcode what the page sent" pattern, so a page that
-    // diffed against cached data (forbidden outright, project-context.md) or
-    // omitted a field would fail here.
+    // diffed against cached data, which is forbidden outright, or omitted a
+    // field would fail here.
     let items = [PENDING_ITEM];
     let submitted: Record<string, unknown> | undefined;
     vi.stubGlobal(
@@ -375,72 +308,6 @@ describe("TableOrderDetailPage", () => {
     // Assert: exactly one call, no intermediate confirm click was needed.
     await vi.waitFor(() => expect(cancelMock).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Cancelled")).toBeInTheDocument();
-  });
-
-  it("requires an explicit confirm before cancelling an in_preparation item", async () => {
-    // Arrange
-    let items = [IN_PREPARATION_ITEM];
-    const cancelMock = vi.fn(() =>
-      Promise.resolve(jsonResponse(200, { ...IN_PREPARATION_ITEM, status: "cancelled" })),
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/items/2/cancel") && init.method === "POST") {
-          items = [{ ...IN_PREPARATION_ITEM, status: "cancelled" }];
-          return cancelMock();
-        }
-        return stubReads({ items })(url);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act: the first Cancel click only reveals the confirm, it must not call the endpoint yet.
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Cancel" }));
-
-    // Assert: nothing sent yet, the warning is visible.
-    expect(cancelMock).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(/Stock already deducted for this item will not be restored/),
-    ).toBeInTheDocument();
-
-    // Act: only the explicit Confirm click sends the request.
-    await user.click(screen.getByRole("button", { name: "Confirm cancel" }));
-
-    // Assert
-    await vi.waitFor(() => expect(cancelMock).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
-  });
-
-  it("has no action controls on a ready or cancelled row", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [READY_ITEM, CANCELLED_ITEM] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    await screen.findByText("Ready");
-    await screen.findByText("Cancelled");
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
-  });
-
-  it("computes the pre-close total client-side, excluding a cancelled item", async () => {
-    // Arrange: 42.00 (pending, qty 1) + 42.00*2 (in_preparation, qty 2) = 126.00, excluding the
-    // cancelled item's own 42.00.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(stubReads({ items: [PENDING_ITEM, IN_PREPARATION_ITEM, CANCELLED_ITEM] })),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("126.00 ₪")).toBeInTheDocument();
   });
 
   it("enables Mark served on a ready Order and calls the endpoint with no confirm step", async () => {

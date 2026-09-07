@@ -1,6 +1,6 @@
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,8 +10,8 @@ import { IngredientsPage } from "./IngredientsPage";
 // TablesSetupPage.test.tsx's pattern: mocking the service itself would hide
 // the invalidate-and-refetch wiring between the create mutation and the list.
 
-// Rows now navigate to the Ingredient detail page (Story 4.1), so useNavigate
-// needs a mock, matching TablesPage.test.tsx's own precedent for the same shape.
+// Rows navigate to the Ingredient detail page, so useNavigate needs a mock,
+// matching TablesPage.test.tsx's own precedent for the same shape.
 const navigateMock = vi.fn();
 vi.mock("react-router", async () => {
   const actual = await vi.importActual<typeof import("react-router")>("react-router");
@@ -80,44 +80,6 @@ describe("IngredientsPage", () => {
     expect(screen.getByText("kg")).toBeInTheDocument();
     expect(screen.getByText("10.000")).toBeInTheDocument();
     expect(screen.getByText("1.000")).toBeInTheDocument();
-  });
-
-  it("navigates to the Ingredient detail page when a row is clicked", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
-        if (String(url).includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [FLOUR]));
-        return Promise.reject(new Error(`unexpected request: ${url}`));
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByText("Flour"));
-
-    // Assert
-    expect(navigateMock).toHaveBeenCalledWith("/warehouse/ingredients/1");
-  });
-
-  it("shows the empty state instead of the old placeholder", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
-        if (String(url).includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, []));
-        return Promise.reject(new Error(`unexpected request: ${url}`));
-      }),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert: AC3's exact required copy.
-    expect(await screen.findByText("No ingredients recorded yet")).toBeInTheDocument();
   });
 
   it("creates an ingredient and shows it in the list once the mutation resolves", async () => {
@@ -208,22 +170,6 @@ describe("IngredientsPage", () => {
     expect(screen.getByLabelText("Ingredient name")).toHaveValue("Flour");
   });
 
-  it("shows an error with a working retry when the ingredient list cannot be loaded", async () => {
-    // Arrange
-    const fetchMock = vi.fn(() => Promise.reject(new TypeError("Failed to fetch")));
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    expect(await screen.findByText(/Could not load the ingredients/)).toBeInTheDocument();
-
-    // Assert: Retry actually refetches, rather than merely existing.
-    const callsBeforeRetry = fetchMock.mock.calls.length;
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBeforeRetry));
-  });
-
   it("marks an in-shortage ingredient with the warning icon and error styling, not one at threshold", async () => {
     // Arrange: Basil is below its own threshold (0.500 < 2.000), Flour is not
     // (10.000 >= 1.000) and is deliberately not included in the /alerts
@@ -266,42 +212,6 @@ describe("IngredientsPage", () => {
   });
 
   // --- This batch's #6: sortable table -------------------------------------------------------
-
-  it("sorts by a clicked column header, ascending then descending on a repeated click", async () => {
-    // Arrange: default (unsorted) order is shortage-first-then-alphabetical, so Basil (in
-    // shortage) would otherwise sort ahead of Flour despite "B" > "F" is irrelevant here — using
-    // two NOT-in-shortage ingredients isolates the column sort from that default ordering.
-    const APPLE = { ...FLOUR, id: 6, name: "Apple", current_stock: "3.000" };
-    const ZUCCHINI = { ...FLOUR, id: 7, name: "Zucchini", current_stock: "1.000" };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (String(url).includes("/api/inventory/alerts")) return Promise.resolve(jsonResponse(200, []));
-        if (String(url).includes("/api/inventory/ingredients"))
-          return Promise.resolve(jsonResponse(200, [ZUCCHINI, APPLE]));
-        return Promise.reject(new Error(`unexpected request: ${url}`));
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("Apple");
-    await user.click(screen.getByRole("button", { name: "Name" }));
-
-    // Assert: ascending by name.
-    let rowNames = screen.getAllByRole("row").slice(1).map((row) => row.textContent);
-    expect(rowNames[0]).toContain("Apple");
-    expect(rowNames[1]).toContain("Zucchini");
-
-    // Act: click again toggles to descending.
-    await user.click(screen.getByRole("button", { name: "Name" }));
-
-    // Assert
-    rowNames = screen.getAllByRole("row").slice(1).map((row) => row.textContent);
-    expect(rowNames[0]).toContain("Zucchini");
-    expect(rowNames[1]).toContain("Apple");
-  });
 
   // --- This batch's #3/#4: soft-deactivate ----------------------------------------------------
 

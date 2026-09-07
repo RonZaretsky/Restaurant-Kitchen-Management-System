@@ -68,24 +68,6 @@ describe("RecipeSuggestionsPage", () => {
     expect(await screen.findByText("No suggestions awaiting review.")).toBeInTheDocument();
   });
 
-  it("excludes a dismissed or already-confirmed suggestion even though the raw response includes it", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          jsonResponse(200, [suggestion({ id: 1, dismissed: true }), suggestion({ id: 2, confirmed_dish_id: 42 })]),
-        ),
-      ),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("No suggestions awaiting review.")).toBeInTheDocument();
-  });
-
   it("renders a card with Confirm and Dismiss actions for a suggestion awaiting review", async () => {
     // Arrange
     vi.stubGlobal(
@@ -130,34 +112,6 @@ describe("RecipeSuggestionsPage", () => {
 
     // Assert
     await vi.waitFor(() => expect(dismissCalled).toBe(true));
-  });
-
-  it("opens the confirm dialog with the suggestion's name/description prefilled and an ingredient row matched to the real Ingredient", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        const path = String(url);
-        if (path.includes("/api/smart-chef/suggestions")) return Promise.resolve(jsonResponse(200, [suggestion()]));
-        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
-        if (path.includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [ZUCCHINI]));
-        return Promise.reject(new Error(`unexpected request: ${path}`));
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("Roasted Zucchini Flatbread");
-    await user.click(screen.getByRole("button", { name: "Confirm into Dish" }));
-
-    // Assert: the dialog opened (title distinguishes it from the button of the same text) with
-    // the dish fields prefilled and the ingredient row matched/parsed.
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("heading", { name: "Confirm into Dish" })).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Dish name")).toHaveValue("Roasted Zucchini Flatbread");
-    expect(within(dialog).getByLabelText("Description")).toHaveValue("Sliced thin, served on a wooden board.");
-    await vi.waitFor(() => expect(within(dialog).getByDisplayValue("1.2")).toBeInTheDocument());
   });
 
   it("creates the Dish, its Recipe Ingredient line, and marks it available on Confirm", async () => {

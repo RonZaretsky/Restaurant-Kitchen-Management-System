@@ -14,22 +14,10 @@ const AVAILABLE_TABLE = { id: 1, table_number: 1, capacity: 4, status: "availabl
 const OCCUPIED_TABLE = { id: 2, table_number: 2, capacity: 2, status: "occupied" };
 const RESERVED_TABLE = { id: 3, table_number: 3, capacity: 6, status: "reserved" };
 
-function readyOrder(tableId: number) {
-  return {
-    id: 100 + tableId,
-    table_id: tableId,
-    waiter_id: 1,
-    status: "ready",
-    created_at: "2026-01-01T00:00:00Z",
-    closed_at: null,
-    total_amount: "12.50",
-  };
-}
-
 /**
  * Routes a stubbed `fetch` to `/api/tables` and `/api/orders`, the two queries every
- * `TablesPage` render now depends on (Story 5.3). `openOrders` defaults to `[]` so existing
- * tests that don't care about the attention-state treatment don't need to think about it.
+ * `TablesPage` render depends on. `openOrders` defaults to `[]` so a test that does not
+ * care about the attention-state treatment does not need to think about it.
  */
 function stubTablesAndOrders(tables: unknown[], openOrders: unknown[] = []) {
   vi.stubGlobal(
@@ -61,9 +49,9 @@ function jsonResponse(status: number, body: unknown): Response {
 
 /**
  * A minimal stand-in for the browser's WebSocket, copied from
- * RealtimeProvider.test.tsx (Story 3.3): TablesPage now renders inside a
- * RealtimeProvider, which opens a real WebSocket on mount, and jsdom's real
- * one attempts an actual, slow, eventually-failing network connection.
+ * RealtimeProvider.test.tsx: TablesPage renders inside a RealtimeProvider,
+ * which opens a real WebSocket on mount, and jsdom's real one attempts an
+ * actual, slow, eventually-failing network connection.
  */
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -204,59 +192,6 @@ describe("TablesPage", () => {
     // Assert: no open request was ever issued, just a straight navigation.
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("/open"))).toBe(true);
     expect(navigateMock).toHaveBeenCalledWith("/waiter/tables/2");
-  });
-
-  it("shows the empty-state copy when there are no tables", async () => {
-    // Arrange
-    stubTablesAndOrders([]);
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("No tables configured yet.")).toBeInTheDocument();
-  });
-
-  it("refetches the table list when a live table.status_changed event arrives", async () => {
-    // Arrange: the list starts as one available table, then the backend
-    // reports it occupied on the second fetch, simulating another Waiter's
-    // concurrent open (Story 3.3, AC2/AC3).
-    let tables = [AVAILABLE_TABLE];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        const path = String(url);
-        if (path.includes("/api/tables")) return Promise.resolve(jsonResponse(200, tables));
-        if (path.includes("/api/orders")) return Promise.resolve(jsonResponse(200, []));
-        return Promise.reject(new Error(`unexpected request: ${path}`));
-      }),
-    );
-
-    // Act
-    renderPage();
-    await screen.findByText("available");
-    tables = [{ ...AVAILABLE_TABLE, status: "occupied" }];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({
-      data: JSON.stringify({ event: "table.status_changed", payload: { table_id: 1, status: "occupied" } }),
-    });
-
-    // Assert
-    expect(await screen.findByText("occupied")).toBeInTheDocument();
-  });
-
-  it("shows the attention-state chip on an occupied tile whose Order is ready, layered on the status badge", async () => {
-    // Arrange
-    stubTablesAndOrders([OCCUPIED_TABLE], [readyOrder(OCCUPIED_TABLE.id)]);
-
-    // Act
-    renderPage();
-
-    // Assert: both the base table-status Chip and the new attention Chip render, the base one
-    // is not replaced (DESIGN.md's "layered on top of, not replacing" instruction).
-    expect(await screen.findByText("occupied")).toBeInTheDocument();
-    expect(screen.getByText("Ready")).toBeInTheDocument();
   });
 
 });

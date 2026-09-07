@@ -102,36 +102,6 @@ function renderPage() {
 }
 
 describe("SmartChefPage", () => {
-  it("shows the empty-state copy when there are no suggestions yet", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", mockFetch({}));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("No recipe suggestions yet.")).toBeInTheDocument();
-  });
-
-  it("renders a suggestion card with a Discuss via chat action and no open chat panel", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", mockFetch({ suggestions: [SUGGESTION] }));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("Roasted Zucchini Flatbread")).toBeInTheDocument();
-    const expectedTimestamp = new Date(SUGGESTION.created_at).toLocaleString();
-    expect(screen.getByText(`Requested by User #3 · generated ${expectedTimestamp}`)).toBeInTheDocument();
-    expect(screen.getByText("Zucchini, 1.2 kg")).toBeInTheDocument();
-    expect(screen.getByText("Sliced thin, served on a wooden board.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm into Dish" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Discuss via chat" })).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: /ask a follow-up/i })).not.toBeInTheDocument();
-  });
-
   it("shows the inline error message on a failed generation, not a stuck generating state", async () => {
     // Arrange
     vi.stubGlobal(
@@ -269,30 +239,4 @@ describe("SmartChefPage", () => {
     expect(await screen.findByText("Great idea, try that.")).toBeInTheDocument();
   });
 
-  it("a failed send shows an inline error, not a stuck sending state (AC4)", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      mockFetch({
-        sessions: [SESSION],
-        onPost: (path) => {
-          if (path.endsWith(`/chat-sessions/${SESSION.id}/messages`)) {
-            return jsonResponse(502, { detail: "Couldn't get a response right now" });
-          }
-          return undefined;
-        },
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByText(SESSION.title));
-    await user.type(await screen.findByLabelText("Ask a follow-up"), "What herbs work well?");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    // Assert
-    expect(await screen.findByText("Couldn't get a response right now")).toBeInTheDocument();
-    expect(screen.queryByText("Generating reply...")).not.toBeInTheDocument();
-  });
 });

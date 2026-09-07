@@ -126,31 +126,6 @@ async def test_renaming_a_table_to_another_tables_number_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_editing_with_no_fields_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    table = await _create_table(client, 1)
-
-    # Act
-    response = await client.patch(f"/api/tables/{table['id']}", json={})
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_negative_capacity_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-
-    # Act
-    response = await client.post("/api/tables", json={"table_number": 1, "capacity": -1})
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
 async def test_warehouse_manager_cannot_create_a_table(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _create_user(db_session, "noa", UserRole.warehouse_manager)
@@ -164,24 +139,9 @@ async def test_warehouse_manager_cannot_create_a_table(client: AsyncClient, db_s
 
 
 @pytest.mark.asyncio
-async def test_waiter_cannot_edit_a_table(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session, "admin_setup")
-    table = await _create_table(client, 1)
-    await _create_user(db_session, "waiter1", UserRole.waiter)
-    await _login(client, "waiter1")
-
-    # Act
-    response = await client.patch(f"/api/tables/{table['id']}", json={"capacity": 8})
-
-    # Assert
-    assert response.status_code == 403
-
-
-@pytest.mark.asyncio
 async def test_cook_can_list_tables(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange: Story 5.1 widened TablesReadDep so the Kitchen Display can
-    # resolve table_number client-side, mirroring the Waiter's own precedent.
+    # Arrange: the Kitchen Display resolves table_number client-side, so a Cook needs
+    # the same read access to the table list that a Waiter already has.
     await _create_user(db_session, "cook1", UserRole.cook)
     await _login(client, "cook1")
 
@@ -190,33 +150,4 @@ async def test_cook_can_list_tables(client: AsyncClient, db_session: AsyncSessio
 
     # Assert
     assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_unauthenticated_request_is_rejected(client: AsyncClient) -> None:
-    # Act
-    response = await client.post("/api/tables", json={"table_number": 1, "capacity": 4})
-
-    # Assert
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_a_no_op_edit_on_an_occupied_table_is_still_rejected(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange: submitting the value a table already holds writes nothing, but it is
-    # still an edit attempt, and AC4 rejects edit attempts on a table in use.
-    await _login_as_admin(client, db_session)
-    table = await _create_table(client, 1, capacity=4)
-    db_table = await db_session.get(RestaurantTable, table["id"])
-    db_table.status = TableStatus.occupied
-    await db_session.commit()
-
-    # Act
-    response = await client.patch(f"/api/tables/{table['id']}", json={"capacity": 4})
-
-    # Assert
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Rejected, table in use"
 

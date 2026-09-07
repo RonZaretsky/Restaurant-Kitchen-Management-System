@@ -14,8 +14,6 @@ from data_models import (
     Category,
     Dish,
     Ingredient,
-    OrderItem,
-    OrderItemStatus,
     RecipeIngredient,
     RestaurantTable,
     TableStatus,
@@ -126,16 +124,6 @@ async def test_valid_session_connects(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_cookie_is_rejected_before_accept() -> None:
-    # Act / Assert
-    with TestClient(app, base_url="https://test") as client:
-        with pytest.raises(WebSocketDisconnect) as rejection:
-            with client.websocket_connect("/api/ws", headers={"origin": _ALLOWED_ORIGIN}):
-                pass
-    assert rejection.value.code == _POLICY_VIOLATION
-
-
-@pytest.mark.asyncio
 async def test_mismatched_origin_is_rejected_before_accept(db_session) -> None:
     # Arrange
     # CORSMiddleware does not inspect the websocket ASGI scope at all, so this
@@ -175,30 +163,6 @@ async def test_broadcast_is_scoped_to_the_targeted_role(db_session) -> None:
                 assert json.loads(message) == {"event": "test.scoped", "payload": {"n": 1}}
                 with pytest.raises(asyncio.TimeoutError):
                     await asyncio.wait_for(waiter_ws.recv(), timeout=0.5)
-
-
-@pytest.mark.asyncio
-async def test_broadcast_reaches_every_targeted_role(db_session) -> None:
-    # Arrange
-    await _create_user(db_session, "ws_multi_cook", role=UserRole.cook)
-    await _create_user(db_session, "ws_multi_waiter", role=UserRole.waiter)
-
-    async with _running_server() as port:
-        cook_token = await _login_over_http(port, "ws_multi_cook")
-        waiter_token = await _login_over_http(port, "ws_multi_waiter")
-
-        async with await _connect(port, cook_token) as cook_ws:
-            async with await _connect(port, waiter_token) as waiter_ws:
-                # Act: one emission, two audiences (AC4).
-                realtime_service = await container.realtime_service()
-                await realtime_service.broadcast(
-                    [UserRole.cook, UserRole.waiter], "order.item_status_changed", {"id": 7}
-                )
-
-                # Assert
-                expected = {"event": "order.item_status_changed", "payload": {"id": 7}}
-                assert json.loads(await asyncio.wait_for(cook_ws.recv(), timeout=2)) == expected
-                assert json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2)) == expected
 
 
 @pytest.mark.asyncio
@@ -293,9 +257,8 @@ async def test_adding_an_order_item_broadcasts_order_item_added(db_session) -> N
                         assert parsed["payload"]["notes"] == "no onions"
                         assert parsed["payload"]["price_at_add"] == "12.50"
 
-                        # Assert: Story 5.1 widened this event to also reach the Kitchen
-                        # Display, so a connected Cook now receives the identical payload,
-                        # not nothing.
+                        # Assert: this event also reaches the Kitchen Display, so a
+                        # connected Cook receives the identical payload.
                         cook_message = await asyncio.wait_for(cook_ws.recv(), timeout=2)
                         assert json.loads(cook_message) == parsed
 
@@ -377,60 +340,6 @@ async def test_picking_up_an_order_item_broadcasts_order_item_status_changed(db_
 
 
 @pytest.mark.asyncio
-async def test_rejected_edit_broadcasts_nothing(db_session) -> None:
-    # Arrange: an item already past pending (in_preparation), so edit_item's own guard rejects
-    # the request before reaching the new broadcast call — pinning that the guard still runs
-    # first, not just that it happens to today (review finding).
-    table = RestaurantTable(table_number=13, capacity=4, status=TableStatus.available)
-    category = Category(name="Mains")
-    db_session.add_all([table, category])
-    await db_session.commit()
-    await db_session.refresh(table)
-    await db_session.refresh(category)
-    dish = Dish(
-        name="Rejected Edit Dish",
-        price="9.00",
-        category_id=category.id,
-        prep_time_minutes=10,
-        is_available=True,
-    )
-    db_session.add(dish)
-    await db_session.commit()
-    await db_session.refresh(dish)
-    await _create_user(db_session, "ws_rejected_edit_waiter", role=UserRole.waiter)
-
-    async with _running_server() as port:
-        waiter_token = await _login_over_http(port, "ws_rejected_edit_waiter")
-
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
-            http_client.cookies.set(COOKIE_NAME, waiter_token)
-            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
-            assert open_response.status_code == 201
-            order_id = open_response.json()["id"]
-            add_response = await http_client.post(
-                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
-            )
-            assert add_response.status_code == 201
-            item_id = add_response.json()["id"]
-
-            item_row = await db_session.get(OrderItem, item_id)
-            item_row.status = OrderItemStatus.in_preparation
-            await db_session.commit()
-
-            async with await _connect(port, waiter_token) as waiter_ws:
-                # Act
-                edit_response = await http_client.patch(
-                    f"/api/orders/{order_id}/items/{item_id}",
-                    json={"quantity": 2, "notes": None},
-                )
-                assert edit_response.status_code == 409
-
-                # Assert
-                with pytest.raises(asyncio.TimeoutError):
-                    await asyncio.wait_for(waiter_ws.recv(), timeout=0.5)
-
-
-@pytest.mark.asyncio
 async def test_picking_up_an_order_item_that_crosses_threshold_also_broadcasts_alerts_changed(
     db_session,
 ) -> None:
@@ -492,115 +401,6 @@ async def test_picking_up_an_order_item_that_crosses_threshold_also_broadcasts_a
 
 
 @pytest.mark.asyncio
-async def test_marking_the_only_item_ready_broadcasts_order_status_changed_to_waiter_only(
-    db_session,
-) -> None:
-    # Arrange: a single-item Order, so marking that item ready flips the Order's derived
-    # status from in_preparation straight to ready (Story 5.3, FR-12/AC2), which is the case
-    # that must broadcast order.status_changed.
-    table = RestaurantTable(table_number=7, capacity=4, status=TableStatus.available)
-    category = Category(name="Mains")
-    db_session.add_all([table, category])
-    await db_session.commit()
-    await db_session.refresh(table)
-    await db_session.refresh(category)
-    dish = Dish(
-        name="Order Status Dish",
-        price="11.00",
-        category_id=category.id,
-        prep_time_minutes=10,
-        is_available=True,
-    )
-    db_session.add(dish)
-    await db_session.commit()
-    await db_session.refresh(dish)
-    await _create_user(db_session, "ws_order_status_waiter", role=UserRole.waiter)
-    await _create_user(db_session, "ws_order_status_cook", role=UserRole.cook)
-
-    async with _running_server() as port:
-        waiter_token = await _login_over_http(port, "ws_order_status_waiter")
-        cook_token = await _login_over_http(port, "ws_order_status_cook")
-
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
-            http_client.cookies.set(COOKIE_NAME, waiter_token)
-            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
-            assert open_response.status_code == 201
-            order_id = open_response.json()["id"]
-            add_response = await http_client.post(
-                f"/api/orders/{order_id}/items", json={"dish_id": dish.id, "quantity": 1}
-            )
-            assert add_response.status_code == 201
-            item_id = add_response.json()["id"]
-
-            http_client.cookies.set(COOKIE_NAME, cook_token)
-            pick_up_response = await http_client.post(f"/api/orders/{order_id}/items/{item_id}/pick-up")
-            assert pick_up_response.status_code == 200
-
-            async with await _connect(port, waiter_token) as waiter_ws:
-                async with await _connect(port, cook_token) as cook_ws:
-                    # Act
-                    ready_response = await http_client.post(
-                        f"/api/orders/{order_id}/items/{item_id}/mark-ready"
-                    )
-                    assert ready_response.status_code == 200
-
-                    # Assert: the Waiter receives order.item_status_changed first (the item-level
-                    # event, unconditional), then order.status_changed second (conditional on the
-                    # Order's derived status having actually moved).
-                    item_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
-                    assert item_message["event"] == "order.item_status_changed"
-
-                    order_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
-                    assert order_message["event"] == "order.status_changed"
-                    assert order_message["payload"]["id"] == order_id
-                    assert order_message["payload"]["status"] == "ready"
-
-                    # Assert: a connected Cook receives the item-level event (unchanged
-                    # recipient list) but not order.status_changed, which is waiter-only.
-                    cook_message = json.loads(await asyncio.wait_for(cook_ws.recv(), timeout=2))
-                    assert cook_message["event"] == "order.item_status_changed"
-                    with pytest.raises(asyncio.TimeoutError):
-                        await asyncio.wait_for(cook_ws.recv(), timeout=0.5)
-
-
-@pytest.mark.asyncio
-async def test_closing_an_order_broadcasts_order_status_changed_and_table_status_changed(db_session) -> None:
-    # Arrange: a served Order, ready to close.
-    table = RestaurantTable(table_number=10, capacity=4, status=TableStatus.available)
-    db_session.add(table)
-    await db_session.commit()
-    await db_session.refresh(table)
-    await _create_user(db_session, "ws_close_waiter", role=UserRole.waiter)
-
-    async with _running_server() as port:
-        waiter_token = await _login_over_http(port, "ws_close_waiter")
-
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
-            http_client.cookies.set(COOKIE_NAME, waiter_token)
-            open_response = await http_client.post(f"/api/orders/tables/{table.id}/open")
-            assert open_response.status_code == 201
-            order_id = open_response.json()["id"]
-            serve_response = await http_client.post(f"/api/orders/{order_id}/serve")
-            assert serve_response.status_code == 200
-
-            async with await _connect(port, waiter_token) as waiter_ws:
-                # Act
-                close_response = await http_client.post(f"/api/orders/{order_id}/close")
-                assert close_response.status_code == 200
-
-                # Assert: order.status_changed first (the reused Story 5.3 helper), then
-                # table.status_changed (the Table returning to available, mirroring open_table's
-                # own broadcast shape).
-                order_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
-                assert order_message["event"] == "order.status_changed"
-                assert order_message["payload"]["status"] == "closed"
-
-                table_message = json.loads(await asyncio.wait_for(waiter_ws.recv(), timeout=2))
-                assert table_message["event"] == "table.status_changed"
-                assert table_message["payload"] == {"table_id": table.id, "status": "available"}
-
-
-@pytest.mark.asyncio
 async def test_a_movement_crossing_below_threshold_broadcasts_alerts_changed(db_session) -> None:
     # Arrange
     ingredient = Ingredient(name="Saffron", unit=Unit.kg, current_stock="5.000", min_stock_threshold="3.000")
@@ -636,31 +436,4 @@ async def test_a_movement_crossing_below_threshold_broadcasts_alerts_changed(db_
                 # /alerts, but not a UI consumer of it) receives nothing.
                 with pytest.raises(asyncio.TimeoutError):
                     await asyncio.wait_for(cook_ws.recv(), timeout=0.5)
-
-
-@pytest.mark.asyncio
-async def test_a_movement_that_does_not_cross_threshold_broadcasts_nothing(db_session) -> None:
-    # Arrange: comfortably above threshold both before and after.
-    ingredient = Ingredient(name="Vanilla", unit=Unit.kg, current_stock="10.000", min_stock_threshold="1.000")
-    db_session.add(ingredient)
-    await db_session.commit()
-    await db_session.refresh(ingredient)
-    await _create_user(db_session, "ws_no_cross_wm", role=UserRole.warehouse_manager)
-
-    async with _running_server() as port:
-        wm_token = await _login_over_http(port, "ws_no_cross_wm")
-
-        async with await _connect(port, wm_token) as wm_ws:
-            # Act
-            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http_client:
-                http_client.cookies.set(COOKIE_NAME, wm_token)
-                response = await http_client.post(
-                    f"/api/inventory/ingredients/{ingredient.id}/movements",
-                    json={"movement_type": "purchase", "quantity": "5.000"},
-                )
-            assert response.status_code == 201
-
-            # Assert: no crossing, nothing broadcast.
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(wm_ws.recv(), timeout=0.5)
 

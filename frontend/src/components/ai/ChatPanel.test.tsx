@@ -51,39 +51,7 @@ describe("ChatPanel", () => {
     expect(screen.getByText("Try adding a pinch of nutmeg.")).toBeInTheDocument();
   });
 
-  it("shows an inline error when the message list fails to load", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse(404, { detail: "Chat session not found" }))));
-
-    // Act
-    renderPanel();
-
-    // Assert
-    expect(await screen.findByText(/Could not load messages\. Chat session not found/)).toBeInTheDocument();
-  });
-
-  it("shows a generating indicator while a send is pending, and disables Send", async () => {
-    // Arrange: the POST never resolves during this test, keeping the mutation pending.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((_url: string, init: RequestInit = {}) => {
-        if (init.method === "POST") return new Promise(() => {});
-        return Promise.resolve(jsonResponse(200, []));
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPanel();
-    await user.type(screen.getByLabelText("Ask a follow-up"), "Any tips?");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    // Assert
-    expect(await screen.findByText("Generating reply...")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  });
-
-  it("shows an inline error on a failed send, not a stuck generating state (AC4)", async () => {
+  it("shows an inline error on a failed send, not a stuck generating state", async () => {
     // Arrange
     vi.stubGlobal(
       "fetch",

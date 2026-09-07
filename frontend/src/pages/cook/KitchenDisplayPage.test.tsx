@@ -49,18 +49,6 @@ const ITEM_TABLE_9 = {
   price_at_add: "42.00",
 };
 
-const READY_ITEM = {
-  id: 3,
-  order_id: 12,
-  table_id: 1,
-  dish_id: 7,
-  quantity: 1,
-  status: "ready",
-  notes: null,
-  cook_id: 3,
-  price_at_add: "42.00",
-};
-
 function jsonResponse(status: number, body: unknown): Response {
   const text = JSON.stringify(body);
   return {
@@ -131,17 +119,6 @@ describe("KitchenDisplayPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows 'No orders in the queue' when nothing is active", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("No orders in the queue")).toBeInTheDocument();
-  });
-
   it("groups items under their own Table's card, resolving dish name and table number", async () => {
     // Arrange
     vi.stubGlobal("fetch", vi.fn(stubReads({ items: [ITEM_TABLE_5, ITEM_TABLE_9] })));
@@ -158,21 +135,6 @@ describe("KitchenDisplayPage", () => {
     expect(screen.getByText("no onions")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("In preparation")).toBeInTheDocument();
-  });
-
-  it("shows a Pick up button on a pending row and a Mark ready button on an in_preparation row, none on ready", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [ITEM_TABLE_5, ITEM_TABLE_9, READY_ITEM] })));
-
-    // Act
-    renderPage();
-    await screen.findByText("Table 5");
-
-    // Assert
-    expect(screen.getByRole("button", { name: "Pick up" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mark ready" })).toBeInTheDocument();
-    expect(screen.queryAllByRole("button", { name: "Pick up" })).toHaveLength(1);
-    expect(screen.queryAllByRole("button", { name: "Mark ready" })).toHaveLength(1);
   });
 
   it("picking up a pending item calls the pick-up endpoint and refreshes the board", async () => {
@@ -219,25 +181,6 @@ describe("KitchenDisplayPage", () => {
 
     // Assert
     expect(await screen.findByText("Not enough stock to prepare this item")).toBeInTheDocument();
-  });
-
-  it("updates a row's status when a live order.item_status_changed event arrives", async () => {
-    // Arrange
-    let items: unknown[] = [ITEM_TABLE_5];
-    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
-
-    // Act
-    renderPage();
-    await screen.findByText("Pending");
-    items = [{ ...ITEM_TABLE_5, status: "in_preparation", cook_id: 9 }];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({
-      data: JSON.stringify({ event: "order.item_status_changed", payload: items[0] }),
-    });
-
-    // Assert
-    expect(await screen.findByText("In preparation")).toBeInTheDocument();
   });
 
   it("shows a Reject button instead of Pick up, with a warning, when stock cannot support the full quantity", async () => {

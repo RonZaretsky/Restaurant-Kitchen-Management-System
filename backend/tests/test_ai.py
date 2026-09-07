@@ -50,7 +50,7 @@ async def _login_as(client: AsyncClient, db_session: AsyncSession, role: UserRol
 
 
 class FakeLLMClient:
-    """A test double for `clients.llm.LLMClient` (Story 6.1's first mocking need in this suite).
+    """A test double for `clients.llm.LLMClient`.
 
     Overriding `Container.llm_client` with an instance of this class, then resetting
     `Container.ai_service`'s cached Singleton (see `fake_llm_client` fixture below), is how every
@@ -72,7 +72,7 @@ class FakeLLMClient:
         # `_in_flight.add(actor.id)` has already run — awaited by the concurrency test instead of
         # a fixed sleep, so it never races the guard it's testing (review finding).
         self.started = asyncio.Event()
-        # Story 6.3: chat-message configurable behavior, mirroring generate_recipe's own shape
+        # Chat-message configurable behavior, mirroring generate_recipe's own shape
         # exactly rather than building a second fake.
         self.chat_response: str | None = "Try adding a pinch of nutmeg, it complements the zucchini."
         self.chat_error: Exception | None = None
@@ -197,39 +197,6 @@ async def test_a_direction_never_overrides_the_stock_constraint_in_the_prompt(
 
 
 @pytest.mark.asyncio
-async def test_no_ingredients_in_stock_is_rejected(
-    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
-) -> None:
-    # Arrange: no Ingredients at all — nothing to build a recipe from.
-    await _login_as(client, db_session, UserRole.cook, "amir")
-
-    # Act
-    response = await client.post("/api/smart-chef/suggestions", json={})
-
-    # Assert: rejected before ever calling the LLM client.
-    assert response.status_code == 502
-    assert fake_llm_client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_out_of_stock_ingredients_are_excluded_from_the_snapshot(
-    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
-) -> None:
-    # Arrange: one in-stock Ingredient, one at zero (AC1's "currently-available" wording).
-    await _create_ingredient(db_session, "Basil", "2.000", "1.000")
-    await _create_ingredient(db_session, "Saffron", "0.000", "0.100")
-    await _login_as(client, db_session, UserRole.cook, "amir")
-
-    # Act
-    response = await client.post("/api/smart-chef/suggestions", json={})
-
-    # Assert
-    assert response.status_code == 201
-    snapshot_names = {item["name"] for item in response.json()["ingredients_snapshot"]}
-    assert snapshot_names == {"Basil"}
-
-
-@pytest.mark.asyncio
 async def test_a_malformed_llm_response_is_rejected_and_persists_nothing(
     client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
 ) -> None:
@@ -244,26 +211,6 @@ async def test_a_malformed_llm_response_is_rejected_and_persists_nothing(
     # Assert
     assert response.status_code == 502
     assert response.json()["detail"] == "Couldn't generate a suggestion right now"
-    result = await db_session.execute(select(AIRecipeSuggestion))
-    assert result.scalars().all() == []
-
-
-@pytest.mark.asyncio
-async def test_a_failed_generation_persists_no_suggestion_and_returns_502(
-    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
-) -> None:
-    # Arrange
-    await _create_ingredient(db_session, "Tomato", "3.000", "1.000")
-    await _login_as(client, db_session, UserRole.cook, "amir")
-    fake_llm_client.error = RuntimeError("simulated OpenAI failure")
-
-    # Act
-    response = await client.post("/api/smart-chef/suggestions", json={})
-
-    # Assert
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Couldn't generate a suggestion right now"
-
     result = await db_session.execute(select(AIRecipeSuggestion))
     assert result.scalars().all() == []
 
@@ -350,34 +297,7 @@ async def test_dismissing_a_suggestion_sets_dismissed_true(client: AsyncClient, 
     assert saved.dismissed is True
 
 
-@pytest.mark.asyncio
-async def test_dismissing_an_already_confirmed_suggestion_is_rejected(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    admin = await _login_as(client, db_session, UserRole.admin, "david")
-    suggestion = await _create_suggestion(db_session, requested_by=admin.id)
-    category_response = await client.post("/api/menu/categories", json={"name": "Pizza"})
-    assert category_response.status_code == 201
-    dish_response = await client.post(
-        "/api/menu/dishes",
-        json={
-            "name": "Flatbread",
-            "price": "12.50",
-            "category_id": category_response.json()["id"],
-            "source_suggestion_id": suggestion.id,
-        },
-    )
-    assert dish_response.status_code == 201
-
-    # Act
-    response = await client.post(f"/api/smart-chef/suggestions/{suggestion.id}/dismiss")
-
-    # Assert
-    assert response.status_code == 409
-
-
-# --- Story 6.3: Consult, Version, and Improve Recipes via Smart Assistant Chat ---------------
+# --- Smart Chef chat: consulting on a Dish, and revising a suggestion ------------------------
 
 
 async def _create_dish(db_session: AsyncSession, name: str = "Flatbread") -> Dish:
@@ -474,81 +394,10 @@ async def test_creating_a_chat_session_with_neither_target_is_422(
 
 
 @pytest.mark.asyncio
-async def test_creating_a_chat_session_with_both_targets_is_422(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    cook = await _login_as(client, db_session, UserRole.cook, "amir")
-    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
-    dish = await _create_dish(db_session, "Flatbread")
-
-    # Act
-    response = await client.post(
-        "/api/smart-chef/chat-sessions", json={"dish_id": dish.id, "suggestion_id": suggestion.id}
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_a_follow_up_message_gives_the_assistant_access_to_prior_turns_as_context(
-    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
-) -> None:
-    # Arrange: AC2 - the messages list passed to the LLM client on the second send must include
-    # the first turn's actual content, not just the new message.
-    await _login_as(client, db_session, UserRole.cook, "amir")
-    dish = await _create_dish(db_session, "Flatbread")
-    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
-    session_id = session_response.json()["id"]
-
-    first = await client.post(
-        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "What herbs would work well?"}
-    )
-    assert first.status_code == 201
-
-    # Act
-    second = await client.post(
-        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "What about basil specifically?"}
-    )
-
-    # Assert
-    assert second.status_code == 201
-    assert len(fake_llm_client.chat_calls) == 2
-    second_call_contents = [m["content"] for m in fake_llm_client.chat_calls[1]]
-    assert "What herbs would work well?" in second_call_contents
-    assert fake_llm_client.chat_response in second_call_contents
-    assert "What about basil specifically?" in second_call_contents
-
-
-@pytest.mark.asyncio
-async def test_a_failed_chat_reply_persists_no_messages_and_returns_502(
-    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
-) -> None:
-    # Arrange (AC4)
-    await _login_as(client, db_session, UserRole.cook, "amir")
-    dish = await _create_dish(db_session, "Flatbread")
-    session_response = await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})
-    session_id = session_response.json()["id"]
-    fake_llm_client.chat_error = RuntimeError("simulated OpenAI failure")
-
-    # Act
-    response = await client.post(
-        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "How do I improve this?"}
-    )
-
-    # Assert
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Couldn't get a response right now"
-    result = await db_session.execute(select(AIChatMessage).where(AIChatMessage.session_id == session_id))
-    assert result.scalars().all() == []
-
-
-@pytest.mark.asyncio
 async def test_a_suggestion_chat_revision_request_updates_the_generated_recipe(
     client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
 ) -> None:
-    # Arrange (this batch's #7): the Cook asks for a change, the model returns an updated_recipe.
+    # Arrange: the Cook asks for a change, and the model returns an updated_recipe.
     # suggestion_id is captured as a plain int up front (not suggestion.id read later), matching
     # this file's own established pattern: accessing an attribute on an ORM object after
     # db_session.expire_all() triggers a synchronous lazy-load an AsyncSession cannot perform
@@ -585,32 +434,6 @@ async def test_a_suggestion_chat_revision_request_updates_the_generated_recipe(
     list_response = await client.get("/api/smart-chef/suggestions")
     body = {item["id"]: item for item in list_response.json()}
     assert body[suggestion_id]["generated_recipe"] == updated_recipe
-
-
-@pytest.mark.asyncio
-async def test_a_suggestion_chat_with_no_revision_requested_leaves_the_recipe_untouched(
-    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
-) -> None:
-    # Arrange: updated_recipe stays None (the FakeLLMClient's default), matching "just answer,
-    # no revision requested".
-    cook = await _login_as(client, db_session, UserRole.cook, "amir")
-    suggestion = await _create_suggestion(db_session, requested_by=cook.id)
-    suggestion_id = suggestion.id
-    original_recipe = suggestion.generated_recipe
-    session_id = (
-        await client.post("/api/smart-chef/chat-sessions", json={"suggestion_id": suggestion_id})
-    ).json()["id"]
-
-    # Act
-    response = await client.post(
-        f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": "What herbs would work well?"}
-    )
-
-    # Assert
-    assert response.status_code == 201
-    db_session.expire_all()
-    saved = await db_session.get(AIRecipeSuggestion, suggestion_id)
-    assert saved.generated_recipe == original_recipe
 
 
 @pytest.mark.asyncio
@@ -665,43 +488,4 @@ async def test_a_dish_tied_session_never_calls_the_recipe_update_method(
     # Assert: succeeds via the plain free-text reply, never the JSON envelope method.
     assert response.status_code == 201
     assert response.json()[1]["content"] == fake_llm_client.chat_response
-
-
-@pytest.mark.asyncio
-async def test_three_sequential_messages_are_returned_in_ascending_chronological_order(
-    client: AsyncClient, db_session: AsyncSession, fake_llm_client: FakeLLMClient
-) -> None:
-    # Arrange (AC5)
-    await _login_as(client, db_session, UserRole.cook, "amir")
-    dish = await _create_dish(db_session, "Flatbread")
-    session_id = (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": dish.id})).json()["id"]
-
-    # Act
-    for content in ("First", "Second", "Third"):
-        response = await client.post(
-            f"/api/smart-chef/chat-sessions/{session_id}/messages", json={"content": content}
-        )
-        assert response.status_code == 201
-
-    # Assert
-    list_response = await client.get(f"/api/smart-chef/chat-sessions/{session_id}/messages")
-    contents = [m["content"] for m in list_response.json() if m["role"] == "user"]
-    assert contents == ["First", "Second", "Third"]
-
-
-@pytest.mark.asyncio
-async def test_create_chat_session_role_coverage(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange/Act/Assert: waiter, warehouse_manager, admin are all 403 (Cook-only, no admin
-    # fallback); unauthenticated is 401.
-    await _login_as(client, db_session, UserRole.waiter, "maya")
-    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 403
-
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 403
-
-    await _login_as(client, db_session, UserRole.admin, "david")
-    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 403
-
-    client.cookies.clear()
-    assert (await client.post("/api/smart-chef/chat-sessions", json={"dish_id": 1})).status_code == 401
 

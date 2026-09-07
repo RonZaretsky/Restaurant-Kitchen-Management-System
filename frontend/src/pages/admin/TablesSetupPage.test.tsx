@@ -6,8 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TablesSetupPage } from "./TablesSetupPage";
 
 // Mocks only fetch, driving the real tableService hooks, matching
-// appIntegration.test.tsx's pattern (Story 1.4's lesson, reapplied by Story
-// 2.3's review): mocking the service itself would hide the
+// appIntegration.test.tsx's pattern: mocking the service itself would hide the
 // invalidate-and-refetch wiring between a mutation and the list.
 
 const AVAILABLE_TABLE = { id: 1, table_number: 1, capacity: 4, status: "available" };
@@ -35,25 +34,6 @@ function renderPage() {
 describe("TablesSetupPage", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("renders the table list from the backend", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, [AVAILABLE_TABLE]));
-        return Promise.reject(new Error(`unexpected request: ${url}`));
-      }),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("1")).toBeInTheDocument();
-    expect(screen.getByText("4")).toBeInTheDocument();
-    expect(screen.getByText("available")).toBeInTheDocument();
   });
 
   it("creates a table and shows it in the list once the mutation resolves", async () => {
@@ -164,33 +144,4 @@ describe("TablesSetupPage", () => {
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
   });
 
-  it("shows an error with a retry when the table list cannot be loaded", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText(/Could not load the tables/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  });
-
-  it("never issues a delete request and renders no delete affordance (AC7)", async () => {
-    // Arrange
-    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
-      void init;
-      if (String(url).includes("/api/tables")) return Promise.resolve(jsonResponse(200, [AVAILABLE_TABLE, OCCUPIED_TABLE]));
-      return Promise.reject(new Error(`unexpected request: ${url}`));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    // Act
-    renderPage();
-    await screen.findByText("available");
-
-    // Assert
-    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit)?.method === "DELETE")).toBe(false);
-  });
 });

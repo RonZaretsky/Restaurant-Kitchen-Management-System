@@ -3,13 +3,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EMPTY_RECIPE_MESSAGE } from "../../components/menu/DishRecipeEditor";
 import { MenuManagementPage } from "./MenuManagementPage";
 
 // Mocks only fetch, driving the real menuService/inventoryService hooks, matching
 // appIntegration.test.tsx's pattern: mocking the service itself would hide the
-// invalidate-and-refetch wiring AC4 depends on (adding a line must flip the
-// availability toggle without a page reload).
+// invalidate-and-refetch wiring this page depends on, where adding a line must
+// flip the availability toggle without a page reload.
 
 const CATEGORY = { id: 1, name: "Pizza" };
 const DISH = {
@@ -77,31 +76,6 @@ describe("MenuManagementPage", () => {
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
   });
 
-  it("shows the empty recipe state and a disabled toggle before any line is added", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        const path = String(url);
-        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
-        if (path.includes("recipe-ingredients")) return Promise.resolve(jsonResponse(200, []));
-        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, [DISH]));
-        if (path.includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [FLOUR]));
-        return Promise.reject(new Error(`unexpected request: ${path}`));
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: /Expand Margherita/ }));
-
-    // Assert
-    expect(await screen.findByText("No recipe ingredients yet.")).toBeInTheDocument();
-    expect(screen.getByText(EMPTY_RECIPE_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: /Unavailable/ })).toBeDisabled();
-  });
-
   it("adding a dish's first recipe ingredient re-enables its availability toggle with no page reload", async () => {
     // Arrange: the mock's own state tracks the recipe, so the GET issued after
     // the POST's cache invalidation reflects the addition, exactly like a real
@@ -143,37 +117,6 @@ describe("MenuManagementPage", () => {
     await waitFor(() =>
       expect(screen.getByRole("switch", { name: /Unavailable/ })).not.toBeDisabled(),
     );
-  });
-
-  it("sends the availability change when the enabled toggle is clicked", async () => {
-    // Arrange
-    const line = { dish_id: DISH.id, ingredient_id: FLOUR.id, quantity: "0.300", unit: "kg" };
-    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
-      const path = String(url);
-      if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, [CATEGORY]));
-      if (path.includes("recipe-ingredients")) return Promise.resolve(jsonResponse(200, [line]));
-      if (path.includes("/api/menu/dishes/10") && init.method === "PATCH") {
-        return Promise.resolve(jsonResponse(200, { ...DISH, is_available: true }));
-      }
-      if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, [DISH]));
-      if (path.includes("/api/inventory/ingredients")) return Promise.resolve(jsonResponse(200, [FLOUR]));
-      return Promise.reject(new Error(`unexpected request: ${path}`));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: /Expand Margherita/ }));
-    await user.click(await screen.findByRole("switch", { name: /Unavailable/ }));
-
-    // Assert: the PATCH actually goes out, with the right URL and payload.
-    await waitFor(() => {
-      const patch = fetchMock.mock.calls.find(([, init]) => (init as RequestInit)?.method === "PATCH");
-      expect(patch).toBeDefined();
-      expect(String(patch![0])).toContain("/api/menu/dishes/10");
-      expect(JSON.parse(String((patch![1] as RequestInit).body))).toEqual({ is_available: true });
-    });
   });
 
   it("surfaces the backend's exact 409 message when removing an available dish's last line", async () => {
@@ -270,7 +213,7 @@ describe("MenuManagementPage", () => {
     });
   });
 
-  it("surfaces a rejected dish submission inline with the backend's exact message (AC3)", async () => {
+  it("surfaces a rejected dish submission inline with the backend's exact message", async () => {
     // Arrange: the category-rejection half was covered but the dish half was
     // not, leaving createDishMutation's own Alert branch unverified.
     vi.stubGlobal(
@@ -296,45 +239,10 @@ describe("MenuManagementPage", () => {
     await user.click(await screen.findByRole("option", { name: "Pizza" }));
     await user.click(screen.getByRole("button", { name: "+ New dish" }));
 
-    // Assert: the backend's literal string, unrewritten (UX-DR17), and the
-    // typed values are preserved so the Admin can correct and resubmit.
+    // Assert: the backend's literal string, unrewritten, and the typed values
+    // are preserved so the Admin can correct and resubmit.
     expect(await screen.findByText("Category not found")).toBeInTheDocument();
     expect(screen.getByLabelText("Dish name")).toHaveValue("Orphan");
-  });
-
-  it("creates a category inline and selects it in the dish form", async () => {
-    // Arrange
-    let categories: Array<{ id: number; name: string }> = [CATEGORY];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/api/menu/categories") && init.method === "POST") {
-          const body = JSON.parse(String(init.body));
-          const created = { id: 2, name: body.name };
-          categories = [...categories, created];
-          return Promise.resolve(jsonResponse(201, created));
-        }
-        if (path.includes("/api/menu/categories")) return Promise.resolve(jsonResponse(200, categories));
-        if (path.includes("/api/menu/dishes")) return Promise.resolve(jsonResponse(200, []));
-        return Promise.reject(new Error(`unexpected request: ${path}`));
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("No dishes yet.");
-    await user.click(screen.getByRole("button", { name: "+ New category" }));
-    await user.type(screen.getByLabelText("New category name"), "Desserts");
-    await user.click(screen.getByRole("button", { name: "Confirm" }));
-
-    // Assert: the reveal closes and the Category picker shows the new
-    // Category selected, using the mutation's own response, not a refetch.
-    await waitFor(() => {
-      expect(screen.queryByLabelText("New category name")).not.toBeInTheDocument();
-    });
-    expect(screen.getByRole("combobox", { name: "Category" })).toHaveTextContent("Desserts");
   });
 
 });

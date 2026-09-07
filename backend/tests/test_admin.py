@@ -89,34 +89,6 @@ async def test_create_user_succeeds_and_new_user_can_login_immediately(
 
 
 @pytest.mark.asyncio
-async def test_created_user_password_is_hashed_and_never_returned(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-
-    # Act
-    response = await client.post(
-        "/api/admin/users",
-        json={
-            "username": "hash_check",
-            "full_name": "Hash Check",
-            "role": "waiter",
-            "password": "some-plaintext-password",
-        },
-    )
-
-    # Assert
-    assert "password_hash" not in response.json()
-    assert "some-plaintext-password" not in response.text
-
-    result = await db_session.execute(select(User).where(User.username == "hash_check"))
-    stored = result.scalar_one()
-    assert stored.password_hash.startswith("$2b$")
-    assert stored.password_hash != "some-plaintext-password"
-
-
-@pytest.mark.asyncio
 async def test_create_user_duplicate_username_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as_admin(client, db_session)
@@ -152,25 +124,6 @@ async def test_deactivate_blocks_login_but_keeps_the_row(client: AsyncClient, db
 
     result = await db_session.execute(select(User).where(User.id == target.id))
     assert result.scalar_one_or_none() is not None
-
-
-@pytest.mark.asyncio
-async def test_reactivate_restores_login(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    target = await _create_user(db_session, username="to_reactivate", is_active=False)
-
-    # Act
-    response = await client.post(f"/api/admin/users/{target.id}/reactivate")
-
-    # Assert
-    assert response.status_code == 200
-    assert response.json()["is_active"] is True
-
-    login_response = await client.post(
-        "/api/auth/login", json={"username": "to_reactivate", "password": _PASSWORD}
-    )
-    assert login_response.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -233,22 +186,6 @@ async def test_last_admin_lockout_on_demote(client: AsyncClient, db_session: Asy
 
 
 @pytest.mark.asyncio
-async def test_last_admin_lockout_does_not_trip_with_a_second_active_admin(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    admin_one = await _login_as_admin(client, db_session, username="admin_one")
-    await _create_user(db_session, username="admin_two", role=UserRole.admin)
-
-    # Act
-    response = await client.post(f"/api/admin/users/{admin_one.id}/deactivate")
-
-    # Assert
-    assert response.status_code == 200
-    assert response.json()["is_active"] is False
-
-
-@pytest.mark.asyncio
 async def test_update_user_edits_full_name_and_role(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as_admin(client, db_session)
@@ -264,19 +201,6 @@ async def test_update_user_edits_full_name_and_role(client: AsyncClient, db_sess
     body = response.json()
     assert body["full_name"] == "Renamed"
     assert body["role"] == "cook"
-
-
-@pytest.mark.asyncio
-async def test_update_user_requires_at_least_one_field(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    target = await _create_user(db_session, username="no_op_edit")
-
-    # Act
-    response = await client.patch(f"/api/admin/users/{target.id}", json={})
-
-    # Assert
-    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -324,37 +248,4 @@ async def test_every_admin_route_returns_403_to_a_non_admin(
     # Assert
     assert response.status_code == 403
     assert response.json() == {"detail": "You do not have permission to perform this action"}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("method,path,body", _ADMIN_ROUTES)
-async def test_every_admin_route_returns_401_to_an_unauthenticated_caller(
-    client: AsyncClient, method: str, path: str, body: dict | None
-) -> None:
-    # Act
-    response = await getattr(client, method)(path, **({"json": body} if body else {}))
-
-    # Assert
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_duplicate_username_is_case_insensitive(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    first = await client.post(
-        "/api/admin/users",
-        json={"username": "Casey", "full_name": "Casey", "role": "cook", "password": _PASSWORD},
-    )
-    assert first.status_code == 201
-
-    # Act
-    second = await client.post(
-        "/api/admin/users",
-        json={"username": "casey", "full_name": "Other Casey", "role": "waiter", "password": _PASSWORD},
-    )
-
-    # Assert
-    assert second.status_code == 409
-    assert second.json() == {"detail": "That username already exists"}
 

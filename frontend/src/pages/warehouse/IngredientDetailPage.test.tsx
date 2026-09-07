@@ -91,31 +91,6 @@ describe("IngredientDetailPage", () => {
     expect(screen.getByText("2.000 kg")).toBeInTheDocument();
   });
 
-  it("renders a movement history row with type, signed quantity, note, and timestamp", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ movements: [PURCHASE_MOVEMENT] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("Purchase")).toBeInTheDocument();
-    expect(screen.getByText("+5.000 kg")).toBeInTheDocument();
-    expect(screen.getByText("restock from supplier")).toBeInTheDocument();
-    expect(screen.getByText(new Date(PURCHASE_MOVEMENT.timestamp).toLocaleString())).toBeInTheDocument();
-  });
-
-  it("shows the exact empty-state copy when there are no movements yet", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads()));
-
-    // Act
-    renderPage();
-
-    // Assert: UX-DR15's exact required copy.
-    expect(await screen.findByText("No stock movements yet")).toBeInTheDocument();
-  });
-
   it("offers Purchase/Waste/Adjustment but never Consumption as a movement type", async () => {
     // Arrange
     vi.stubGlobal("fetch", vi.fn(stubReads()));

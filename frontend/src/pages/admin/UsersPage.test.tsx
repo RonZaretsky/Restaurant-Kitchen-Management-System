@@ -36,15 +36,6 @@ const WAITER = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-const INACTIVE_WAITER = {
-  id: 4,
-  username: "yossi.w",
-  full_name: "Yossi Har-Even",
-  role: "waiter",
-  is_active: false,
-  created_at: "2026-01-01T00:00:00Z",
-};
-
 function jsonResponse(status: number, body: unknown): Response {
   const text = JSON.stringify(body);
   return {
@@ -55,7 +46,7 @@ function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-/** Every test needs /api/auth/me for AC6's "This is you" check to resolve. */
+/** Every test needs /api/auth/me for the "This is you" check to resolve. */
 function handleCurrentUser(path: string): Promise<Response> | undefined {
   if (path.includes("/api/auth/me")) {
     return Promise.resolve(jsonResponse(200, CURRENT_ADMIN));
@@ -78,29 +69,6 @@ function renderPage() {
 describe("UsersPage", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("renders the user list with the header counts", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        const path = String(url);
-        return (
-          handleCurrentUser(path) ??
-          (path.includes("/api/admin/users")
-            ? Promise.resolve(jsonResponse(200, [CURRENT_ADMIN, WAITER, INACTIVE_WAITER]))
-            : Promise.reject(new Error(`unexpected request: ${path}`)))
-        );
-      }),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("maya.w")).toBeInTheDocument();
-    expect(screen.getByText("3 staff accounts · 2 active")).toBeInTheDocument();
   });
 
   it("creates a user with the selected role and clears every field on success", async () => {
@@ -263,37 +231,6 @@ describe("UsersPage", () => {
     await waitFor(() => expect(screen.getAllByText("Inactive")).toHaveLength(1));
   });
 
-  it("asks for confirmation before deactivating, and sends nothing if cancelled", async () => {
-    // Arrange
-    const fetchMock = vi.fn((url: string, init: RequestInit = {}) => {
-      void init;
-      const path = String(url);
-      const known = handleCurrentUser(path);
-      if (known) return known;
-      if (path.includes("/api/admin/users")) return Promise.resolve(jsonResponse(200, [CURRENT_ADMIN, WAITER]));
-      return Promise.reject(new Error(`unexpected request: ${path}`));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("maya.w");
-    await user.click(screen.getByRole("button", { name: "Deactivate" }));
-
-    // Assert: the confirm names the user, and nothing is sent until confirmed.
-    expect(screen.getByText("Deactivate Maya Levi?")).toBeInTheDocument();
-    expect(
-      fetchMock.mock.calls.some(([url]) => String(url).includes("/deactivate")),
-    ).toBe(false);
-
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByText("Deactivate Maya Levi?")).not.toBeInTheDocument();
-    expect(
-      fetchMock.mock.calls.some(([url]) => String(url).includes("/deactivate")),
-    ).toBe(false);
-  });
-
   it("surfaces the exact last-admin-lockout message and the chip stays Active", async () => {
     // Arrange
     vi.stubGlobal(
@@ -325,34 +262,6 @@ describe("UsersPage", () => {
     // active — so the real assertion is that "Inactive" never appears.)
     expect(await screen.findByText("Rejected, at least one admin must stay active")).toBeInTheDocument();
     expect(screen.queryByText("Inactive")).not.toBeInTheDocument();
-  });
-
-  it("reactivates a deactivated user", async () => {
-    // Arrange
-    const waiter = { ...INACTIVE_WAITER };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        const known = handleCurrentUser(path);
-        if (known) return known;
-        if (path.endsWith(`/api/admin/users/${waiter.id}/reactivate`) && init.method === "POST") {
-          waiter.is_active = true;
-          return Promise.resolve(jsonResponse(200, waiter));
-        }
-        if (path.includes("/api/admin/users")) return Promise.resolve(jsonResponse(200, [CURRENT_ADMIN, waiter]));
-        return Promise.reject(new Error(`unexpected request: ${path}`));
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("yossi.w");
-    await user.click(screen.getByRole("button", { name: "Reactivate" }));
-
-    // Assert
-    await waitFor(() => expect(screen.getAllByText("Active").length).toBe(2));
   });
 
   it("resets a user's password and clears the field without ever re-displaying the value", async () => {

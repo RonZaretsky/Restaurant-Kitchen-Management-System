@@ -5,11 +5,9 @@ import App from "./App";
 import * as authService from "./services/authService";
 import { ApiError } from "./services/httpClient";
 
-// App.tsx became the provider composition root in Story 1.4, replacing the
-// old bare-<h1> placeholder this file used to assert on. This smoke test
-// covers the same ground at the new root: an unauthenticated visitor ends
-// up on the Login screen, proving the full provider stack (Query, theme,
-// router, route guard) wires together correctly.
+// App.tsx is the provider composition root. This smoke test covers it end to
+// end: an unauthenticated visitor ends up on the Login screen, proving the
+// full provider stack (Query, theme, router, route guard) wires together.
 vi.mock("./services/authService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./services/authService")>();
   return { ...actual, useCurrentUser: vi.fn(), useLogin: vi.fn() };

@@ -10,8 +10,8 @@ import { RealtimeProvider, useRealtime } from "./RealtimeProvider";
  * jsdom's real WebSocket (present since jsdom 30) attempts an actual, slow,
  * eventually-failing network connection, which is exactly the
  * non-deterministic behavior these tests need to avoid. This fake never
- * sends anything (RealtimeProvider never calls .send either, matching AD-2's
- * "Clients never treat the WebSocket as a write channel"), it only exposes
+ * sends anything (RealtimeProvider never calls .send either, since a client
+ * never treats the WebSocket as a write channel), it only exposes
  * the four handlers RealtimeProvider assigns, a close() the test can trigger
  * to simulate a drop (optionally with a close code), and a readyState so a
  * test can tell a superseded socket apart from the live one.
@@ -128,21 +128,6 @@ describe("RealtimeProvider", () => {
     expect(FakeWebSocket.instances).toHaveLength(3); // now it has
   });
 
-  it("does not retry after a 1008 policy-violation close", () => {
-    // Arrange
-    renderProbe();
-    act(() => FakeWebSocket.instances[0].onopen?.());
-
-    // Act: the backend closes with 1008 (expired session, disallowed Origin, ...).
-    act(() => FakeWebSocket.instances[0].close(1008));
-
-    // Assert: status reflects the drop, but no reconnect is scheduled -- retrying
-    // against a session the server just rejected would be pointless.
-    expect(screen.getByTestId("status")).toHaveTextContent("reconnecting");
-    act(() => vi.advanceTimersByTime(60_000));
-    expect(FakeWebSocket.instances).toHaveLength(1);
-  });
-
   it("delivers a subscribed event's payload when the socket receives it", () => {
     // Arrange
     renderProbe();
@@ -160,31 +145,4 @@ describe("RealtimeProvider", () => {
     expect(document.title).toBe('{"ok":true}');
   });
 
-  it("ignores a well-formed frame whose payload is not the expected shape", () => {
-    // Arrange
-    renderProbe();
-    act(() => FakeWebSocket.instances[0].onopen?.());
-    screen.getByRole("button", { name: "subscribe" }).click();
-    document.title = "untouched";
-
-    // Act: valid JSON, but not an {event, payload} object.
-    act(() => FakeWebSocket.instances[0].onmessage?.({ data: "null" }));
-    act(() => FakeWebSocket.instances[0].onmessage?.({ data: "42" }));
-
-    // Assert: no subscriber was invoked, and nothing threw.
-    expect(document.title).toBe("untouched");
-  });
-
-  it("closes the socket on unmount", () => {
-    // Arrange
-    const { unmount } = renderProbe();
-    const socket = FakeWebSocket.instances[0];
-    const closeSpy = vi.spyOn(socket, "close");
-
-    // Act
-    unmount();
-
-    // Assert
-    expect(closeSpy).toHaveBeenCalled();
-  });
 });

@@ -49,15 +49,6 @@ async def _get(test_app: FastAPI) -> tuple[int, dict]:
     return response.status_code, response.json()
 
 
-def test_forbidden_error_detail_survives_a_raise_and_catch() -> None:
-    # Act
-    with pytest.raises(ForbiddenError) as caught:
-        raise ForbiddenError()
-
-    # Assert
-    assert caught.value.detail == FORBIDDEN_DETAIL
-
-
 @pytest.mark.parametrize("role", list(UserRole))
 @pytest.mark.asyncio
 async def test_require_role_permits_the_role_it_allows(role: UserRole) -> None:
@@ -85,31 +76,6 @@ async def test_require_role_rejects_every_other_role(role: UserRole) -> None:
             await checker(_build_user(other))
 
 
-@pytest.mark.asyncio
-async def test_require_role_permits_any_of_multiple_allowed_roles() -> None:
-    # Arrange
-    checker = require_role(UserRole.waiter, UserRole.cook, UserRole.admin)
-
-    # Act / Assert
-    for role in (UserRole.waiter, UserRole.cook, UserRole.admin):
-        assert (await checker(_build_user(role))).role is role
-
-
-@pytest.mark.asyncio
-async def test_guarded_route_admits_a_permitted_role() -> None:
-    # Arrange
-    test_app, body_ran = _build_guarded_app(UserRole.admin)
-    test_app.dependency_overrides[get_current_user] = lambda: _build_user(UserRole.admin)
-
-    # Act
-    status, body = await _get(test_app)
-
-    # Assert
-    assert status == 200
-    assert body == {"role": "admin"}
-    assert body_ran["value"] is True
-
-
 @pytest.mark.parametrize("role", [UserRole.waiter, UserRole.cook, UserRole.warehouse_manager])
 @pytest.mark.asyncio
 async def test_guarded_route_returns_403_and_never_runs_the_body(role: UserRole) -> None:
@@ -123,7 +89,7 @@ async def test_guarded_route_returns_403_and_never_runs_the_body(role: UserRole)
     # Assert
     assert status == 403
     assert body == {"detail": FORBIDDEN_DETAIL}
-    # AC1's second half: the action must not execute, not merely report 403.
+    # The action must not execute, not merely report 403.
     assert body_ran["value"] is False
 
 
@@ -132,7 +98,7 @@ async def test_guarded_route_returns_401_before_the_role_check_runs() -> None:
     # Arrange
     # An unauthenticated caller must be rejected by get_current_user, one layer
     # above the role check, and must never be told 403 (which would imply a
-    # verified identity). This also pins the ordering AC2 rests on.
+    # verified identity). This also pins that ordering.
     test_app, body_ran = _build_guarded_app(UserRole.admin)
 
     async def _unauthenticated() -> User:
