@@ -35,6 +35,13 @@ import re
 import sys
 import zipfile
 
+# Windows gives a redirected stdout the ANSI codepage, which cannot hold Hebrew.
+# The success line below carries the document's own path, so without this the
+# script raises after the file was already patched, and the build reports a
+# failure that did not happen.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # Inside <w:pPr>: w:bidi precedes w:spacing, and w:jc follows w:ind.
 _P_PR_DEFAULT = re.compile(r"(<w:pPrDefault>\s*<w:pPr>)(.*?)(</w:pPr>\s*</w:pPrDefault>)", re.S)
 
