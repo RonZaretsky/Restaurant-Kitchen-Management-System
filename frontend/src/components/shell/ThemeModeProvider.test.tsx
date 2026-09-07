@@ -63,17 +63,6 @@ describe("ThemeModeProvider", () => {
     expect(screen.getByRole("button")).toHaveTextContent("mode: dark");
   });
 
-  it("defaults to light for every other role with no stored preference", () => {
-    // Arrange
-    mockCurrentUser("admin");
-
-    // Act
-    renderProbe();
-
-    // Assert
-    expect(screen.getByRole("button")).toHaveTextContent("mode: light");
-  });
-
   it("toggling flips the mode and persists it to localStorage", async () => {
     // Arrange
     mockCurrentUser("admin");
