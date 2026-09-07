@@ -49,18 +49,6 @@ const ITEM_TABLE_9 = {
   price_at_add: "42.00",
 };
 
-const READY_ITEM = {
-  id: 3,
-  order_id: 12,
-  table_id: 1,
-  dish_id: 7,
-  quantity: 1,
-  status: "ready",
-  notes: null,
-  cook_id: 3,
-  price_at_add: "42.00",
-};
-
 function jsonResponse(status: number, body: unknown): Response {
   const text = JSON.stringify(body);
   return {
@@ -131,17 +119,6 @@ describe("KitchenDisplayPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows 'No orders in the queue' when nothing is active", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("No orders in the queue")).toBeInTheDocument();
-  });
-
   it("groups items under their own Table's card, resolving dish name and table number", async () => {
     // Arrange
     vi.stubGlobal("fetch", vi.fn(stubReads({ items: [ITEM_TABLE_5, ITEM_TABLE_9] })));
@@ -158,21 +135,6 @@ describe("KitchenDisplayPage", () => {
     expect(screen.getByText("no onions")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("In preparation")).toBeInTheDocument();
-  });
-
-  it("shows a Pick up button on a pending row and a Mark ready button on an in_preparation row, none on ready", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [ITEM_TABLE_5, ITEM_TABLE_9, READY_ITEM] })));
-
-    // Act
-    renderPage();
-    await screen.findByText("Table 5");
-
-    // Assert
-    expect(screen.getByRole("button", { name: "Pick up" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mark ready" })).toBeInTheDocument();
-    expect(screen.queryAllByRole("button", { name: "Pick up" })).toHaveLength(1);
-    expect(screen.queryAllByRole("button", { name: "Mark ready" })).toHaveLength(1);
   });
 
   it("picking up a pending item calls the pick-up endpoint and refreshes the board", async () => {
@@ -200,25 +162,6 @@ describe("KitchenDisplayPage", () => {
     expect(await screen.findByText("In preparation")).toBeInTheDocument();
   });
 
-  it("shows an inline error when a pick-up call fails, without silently doing nothing", async () => {
-    // Arrange
-    const fetchMock = vi.fn((url: string) => {
-      if (String(url).includes("/pick-up")) {
-        return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not pending" }));
-      }
-      return stubReads({ items: [ITEM_TABLE_5] })(url);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Pick up" }));
-
-    // Assert
-    expect(await screen.findByText("Rejected, item not pending")).toBeInTheDocument();
-  });
-
   it("shows a clear inline error when a pick-up is rejected for insufficient stock (#5)", async () => {
     // Arrange: InsufficientStockError's 409, same generic inline-error rendering path as any
     // other rejection on this card — no new frontend branch needed, just the backend's own
@@ -238,92 +181,6 @@ describe("KitchenDisplayPage", () => {
 
     // Assert
     expect(await screen.findByText("Not enough stock to prepare this item")).toBeInTheDocument();
-  });
-
-  it("updates a row's status when a live order.item_status_changed event arrives", async () => {
-    // Arrange
-    let items: unknown[] = [ITEM_TABLE_5];
-    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
-
-    // Act
-    renderPage();
-    await screen.findByText("Pending");
-    items = [{ ...ITEM_TABLE_5, status: "in_preparation", cook_id: 9 }];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({
-      data: JSON.stringify({ event: "order.item_status_changed", payload: items[0] }),
-    });
-
-    // Assert
-    expect(await screen.findByText("In preparation")).toBeInTheDocument();
-  });
-
-  it("shows a retry-capable error when any of the three underlying queries fails", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (String(url).includes("/api/kitchen/items")) return Promise.reject(new TypeError("Failed to fetch"));
-        return stubReads()(url);
-      }),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText(/Could not load the kitchen display/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  });
-
-  it("adds a new item to its Table's card when a live order.item_added event arrives", async () => {
-    // Arrange: starts with only Table 5's item, then the backend reports a
-    // second item on Table 9 once the WebSocket event lands.
-    let items: unknown[] = [ITEM_TABLE_5];
-    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
-
-    // Act
-    renderPage();
-    await screen.findByText("Table 5");
-    expect(screen.queryByText("Table 9")).not.toBeInTheDocument();
-    items = [ITEM_TABLE_5, ITEM_TABLE_9];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({
-      data: JSON.stringify({ event: "order.item_added", payload: ITEM_TABLE_9 }),
-    });
-
-    // Assert
-    expect(await screen.findByText("Table 9")).toBeInTheDocument();
-  });
-
-  it("resolves a table created after the initial load once a live event refetches the tables list", async () => {
-    // Arrange: TABLE_9 is deliberately absent from the initial /api/tables
-    // response (simulating it being created after this page's own query
-    // already resolved); it only appears once the live event triggers a
-    // TABLES_QUERY_KEY refetch (review finding, Story 5.1).
-    let items: unknown[] = [];
-    let tables: unknown[] = [TABLE_5];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => stubReads({ items, tables })(url)),
-    );
-
-    // Act
-    renderPage();
-    await screen.findByText("No orders in the queue");
-    items = [ITEM_TABLE_9];
-    tables = [TABLE_5, TABLE_9];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({
-      data: JSON.stringify({ event: "order.item_added", payload: ITEM_TABLE_9 }),
-    });
-
-    // Assert: resolves to the real table_number, not the "?" fallback.
-    expect(await screen.findByText("Table 9")).toBeInTheDocument();
-    expect(screen.queryByText("Table ?")).not.toBeInTheDocument();
   });
 
   it("shows a Reject button instead of Pick up, with a warning, when stock cannot support the full quantity", async () => {

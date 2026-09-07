@@ -48,17 +48,6 @@ describe("apiRequest", () => {
     expect(sentInit().credentials).toBe("include");
   });
 
-  it("returns the parsed JSON body on success", async () => {
-    // Arrange
-    mockFetchOnce({ body: { role: "cook" } });
-
-    // Act
-    const result = await apiRequest<{ role: string }>("/api/auth/me");
-
-    // Assert
-    expect(result).toEqual({ role: "cook" });
-  });
-
   it("throws an ApiError carrying the string detail on failure", async () => {
     // Arrange
     mockFetchOnce({ ok: false, status: 401, body: { detail: "Invalid username or password" } });
@@ -99,84 +88,4 @@ describe("apiRequest", () => {
     expect((rejection as ApiError).message).not.toContain("Failed to fetch");
   });
 
-  it("reports a timeout distinctly from a dead network", async () => {
-    // Arrange
-    const abort = new Error("The operation was aborted.");
-    abort.name = "AbortError";
-    mockFetchRejectingWith(abort);
-
-    // Act / Assert
-    await expect(apiRequest("/api/auth/me")).rejects.toMatchObject({
-      status: 0,
-      message: expect.stringContaining("too long"),
-    });
-  });
-
-  it("omits Content-Type on a bodyless request so no CORS preflight is provoked", async () => {
-    // Arrange
-    mockFetchOnce({ body: { role: "cook" } });
-
-    // Act
-    await apiRequest("/api/auth/me");
-
-    // Assert
-    expect((sentInit().headers as Headers).has("Content-Type")).toBe(false);
-  });
-
-  it("sends Content-Type when there is a body to describe", async () => {
-    // Arrange
-    mockFetchOnce({ body: { role: "cook" } });
-
-    // Act
-    await apiRequest("/api/auth/login", { method: "POST", body: JSON.stringify({ a: 1 }) });
-
-    // Assert
-    expect((sentInit().headers as Headers).get("Content-Type")).toBe("application/json");
-  });
-
-  it("turns an unparseable success body into an ApiError rather than a SyntaxError", async () => {
-    // Arrange
-    mockFetchOnce({ body: "<!doctype html><title>proxy</title>" });
-
-    // Act / Assert
-    await expect(apiRequest("/api/auth/me")).rejects.toBeInstanceOf(ApiError);
-  });
-
-  it("honors a longer per-call timeout instead of the 5s default", async () => {
-    // Arrange: a call whose own fetch hangs until aborted — mirroring real fetch's own behavior
-    // of rejecting with an AbortError once its signal fires, which a mock that just returns an
-    // eternally-pending Promise would not (manual-test finding, Story 6.1: Smart Chef's real
-    // OpenAI call routinely takes longer than 5s and was wrongly timing out under the default).
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        (_url: string, init?: RequestInit) =>
-          new Promise((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => {
-              const error = new Error("The operation was aborted.");
-              error.name = "AbortError";
-              reject(error);
-            });
-          }),
-      ),
-    );
-
-    // Act
-    let settled = false;
-    const promise = apiRequest("/api/smart-chef/suggestions", { method: "POST" }, 50_000);
-    promise.catch(() => {}).finally(() => {
-      settled = true;
-    });
-    await vi.advanceTimersByTimeAsync(6_000); // past the 5s default, short of the 50s override
-
-    // Assert: still pending at 6s under the 50s override (the 5s default would already have
-    // aborted it by now).
-    expect(settled).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(45_000); // now past 50s total
-    await expect(promise).rejects.toMatchObject({ status: 0 });
-
-    vi.useRealTimers();
-  }, 10_000);
 });

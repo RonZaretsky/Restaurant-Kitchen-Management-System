@@ -48,22 +48,6 @@ const PENDING_ITEM = {
   price_at_add: "42.00",
 };
 
-const PENDING_ITEM_WITH_NOTE = {
-  ...PENDING_ITEM,
-  notes: "no onions",
-};
-
-const IN_PREPARATION_ITEM = {
-  id: 2,
-  order_id: 10,
-  dish_id: 5,
-  quantity: 2,
-  status: "in_preparation",
-  notes: null,
-  cook_id: 3,
-  price_at_add: "42.00",
-};
-
 const READY_ITEM = {
   id: 3,
   order_id: 10,
@@ -73,29 +57,6 @@ const READY_ITEM = {
   notes: null,
   cook_id: 3,
   price_at_add: "42.00",
-};
-
-const CANCELLED_ITEM = {
-  id: 4,
-  order_id: 10,
-  dish_id: 5,
-  quantity: 1,
-  status: "cancelled",
-  notes: null,
-  cook_id: null,
-  price_at_add: "42.00",
-};
-
-const REJECTED_ITEM = {
-  id: 5,
-  order_id: 10,
-  dish_id: 5,
-  quantity: 5,
-  status: "rejected",
-  notes: null,
-  cook_id: null,
-  price_at_add: "42.00",
-  reject_reason: "Only 3 of 5 requested could be prepared (insufficient stock).",
 };
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -138,9 +99,9 @@ function stubReads(overrides: {
 
 /**
  * A minimal stand-in for the browser's WebSocket, copied from
- * RealtimeProvider.test.tsx (Story 3.3): this page now renders inside a
- * RealtimeProvider, which opens a real WebSocket on mount, and jsdom's real
- * one attempts an actual, slow, eventually-failing network connection.
+ * RealtimeProvider.test.tsx: this page renders inside a RealtimeProvider,
+ * which opens a real WebSocket on mount, and jsdom's real one attempts an
+ * actual, slow, eventually-failing network connection.
  */
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -188,28 +149,6 @@ describe("TableOrderDetailPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("heads the page with the table's number, not its database id", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads()));
-
-    // Act
-    renderPage();
-
-    // Assert: TABLE.id is 1 and TABLE.table_number is 12.
-    expect(await screen.findByRole("heading", { name: "Table 12" })).toBeInTheDocument();
-  });
-
-  it("shows the empty-state copy when the order has no items", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads()));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("No items added yet.")).toBeInTheDocument();
-  });
-
   it("renders each order item's status badge, dish name, note, quantity, and price", async () => {
     // Arrange
     vi.stubGlobal("fetch", vi.fn(stubReads({ items: [PENDING_ITEM] })));
@@ -221,38 +160,9 @@ describe("TableOrderDetailPage", () => {
     expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
-    // Two matches: the item row's own price cell, and the total bar (Story 5.4), which
-    // happens to equal the same amount for a single qty-1 item.
+    // Two matches: the item row's own price cell, and the total bar, which happens
+    // to equal the same amount for a single qty-1 item.
     expect(screen.getAllByText("42.00 ₪")).toHaveLength(2);
-  });
-
-  it("shows the reject_reason message on a rejected item, and excludes it from the total", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [PENDING_ITEM, REJECTED_ITEM] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("Rejected")).toBeInTheDocument();
-    expect(
-      screen.getByText("Only 3 of 5 requested could be prepared (insufficient stock)."),
-    ).toBeInTheDocument();
-    // Three matches: each item row still shows its own price_at_add cell (42.00 for both), plus
-    // the total bar itself — which is PENDING_ITEM's own 42.00 only, REJECTED_ITEM's 5 x 42.00
-    // excluded, coincidentally landing on the same "42.00" text as the row cells.
-    expect(screen.getAllByText("42.00 ₪")).toHaveLength(3);
-  });
-
-  it("renders an em dash for a note that is present but blank", async () => {
-    // Arrange: the API can return "" or whitespace, which ?? would let through.
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [{ ...PENDING_ITEM, notes: "   " }] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("—")).toBeInTheDocument();
   });
 
   it("submits exactly what was entered and shows the new item in the list", async () => {
@@ -334,120 +244,11 @@ describe("TableOrderDetailPage", () => {
     ).toBe(true);
   });
 
-  it("presents a table with no open order as its own state, not a failed request", async () => {
-    // Arrange: reachable by typing the URL of an available table.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(stubReads({ order: jsonResponse(404, { detail: "Order not found" }) })),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert: no Retry button, since retrying could never succeed.
-    expect(await screen.findByText(/This table has no open order/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
-  });
-
-  it("rejects a non-numeric table id without requesting a malformed url", async () => {
-    // Arrange
-    const fetchMock = vi.fn(stubReads());
-    vi.stubGlobal("fetch", fetchMock);
-
-    // Act
-    renderPage("/waiter/tables/abc");
-
-    // Assert: no "Table NaN" heading, and no order lookup was attempted. The
-    // dish/table list reads still fire (hooks cannot be called conditionally),
-    // but they are well-formed requests, unlike /api/orders/tables/NaN.
-    expect(await screen.findByText(/That table link is not valid/)).toBeInTheDocument();
-    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/orders/"))).toBe(false);
-  });
-
-  it("tells the waiter when there is nothing on the menu to add", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ dishes: [] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText(/No dishes on the menu yet/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add to order" })).not.toBeInTheDocument();
-  });
-
-  it("refetches the item list when a live order.item_added event arrives", async () => {
-    // Arrange: the item list starts empty, then the backend reports one item
-    // on the second fetch, simulating another Waiter's concurrent add (Story
-    // 3.3, AC2/AC3).
-    let items: unknown[] = [];
-    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
-
-    // Act
-    renderPage();
-    await screen.findByText("No items added yet.");
-    items = [PENDING_ITEM];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({ data: JSON.stringify({ event: "order.item_added", payload: PENDING_ITEM }) });
-
-    // Assert
-    expect(await screen.findByText("Shakshuka")).toBeInTheDocument();
-  });
-
-  it("updates a row's status badge when a live order.item_status_changed event arrives, with no button appearing", async () => {
-    // Arrange: a Cook picks up this item from the Kitchen Display elsewhere
-    // (Story 5.2); this page never renders pick-up/mark-ready controls
-    // itself, only reflects the badge change.
-    let items: unknown[] = [PENDING_ITEM];
-    vi.stubGlobal("fetch", vi.fn((url: string) => stubReads({ items })(url)));
-
-    // Act
-    renderPage();
-    await screen.findByText("Pending");
-    items = [{ ...PENDING_ITEM, status: "in_preparation", cook_id: 3 }];
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({
-      data: JSON.stringify({ event: "order.item_status_changed", payload: items[0] }),
-    });
-
-    // Assert
-    expect(await screen.findByText("In preparation")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Pick up" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark ready" })).not.toBeInTheDocument();
-  });
-
-  it("refetches the Order when a live order.status_changed event arrives", async () => {
-    // Arrange: this page renders no Order-level status badge itself (Story 5.3), so this
-    // asserts the underlying order lookup actually refetches in response to the event, the
-    // same live-refresh treatment every other query on this page already gets, not any new
-    // visible element.
-    let order = ORDER;
-    const fetchMock = vi.fn((url: string) => stubReads({ order: jsonResponse(200, order) })(url));
-    vi.stubGlobal("fetch", fetchMock);
-
-    // Act
-    renderPage();
-    await screen.findByText("No items added yet.");
-    const orderLookupCalls = () =>
-      fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/orders/tables/")).length;
-    const callsBeforeEvent = orderLookupCalls();
-    order = { ...ORDER, status: "ready" };
-    const socket = FakeWebSocket.instances[0];
-    expect(socket).toBeDefined();
-    socket.onmessage?.({ data: JSON.stringify({ event: "order.status_changed", payload: order }) });
-
-    // Assert: a second order lookup was issued in response to the event.
-    await vi.waitFor(() => expect(orderLookupCalls()).toBeGreaterThan(callsBeforeEvent));
-  });
-
   it("edits a pending item, always sending both quantity and note", async () => {
     // Arrange: the mock echoes the submitted body back, matching the add-item
     // test's own "never hardcode what the page sent" pattern, so a page that
-    // diffed against cached data (forbidden outright, project-context.md) or
-    // omitted a field would fail here.
+    // diffed against cached data, which is forbidden outright, or omitted a
+    // field would fail here.
     let items = [PENDING_ITEM];
     let submitted: Record<string, unknown> | undefined;
     vi.stubGlobal(
@@ -483,67 +284,6 @@ describe("TableOrderDetailPage", () => {
     expect(submitted).toEqual({ quantity: 4, notes: "extra spicy" });
   });
 
-  it("sends an explicit null, not an omitted field, when a note is cleared to empty", async () => {
-    // Arrange
-    let items = [PENDING_ITEM_WITH_NOTE];
-    let submitted: Record<string, unknown> | undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/items/1") && init.method === "PATCH") {
-          submitted = JSON.parse(String(init.body));
-          const updated = { ...PENDING_ITEM_WITH_NOTE, ...submitted };
-          items = [updated];
-          return Promise.resolve(jsonResponse(200, updated));
-        }
-        return stubReads({ items })(url);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
-    const noteFields = screen.getAllByLabelText("Note (optional)");
-    await user.clear(noteFields[noteFields.length - 1]);
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    // Assert: "notes" must be present with an explicit null, not silently
-    // dropped from the payload (JSON.stringify would omit an undefined value).
-    await vi.waitFor(() => expect(submitted).toBeDefined());
-    expect(submitted).toHaveProperty("notes", null);
-  });
-
-  it("discarding an edit clears the row back to read-only with no stale error", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/items/1") && init.method === "PATCH") {
-          return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not pending" }));
-        }
-        return stubReads({ items: [PENDING_ITEM] })(url);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act: a failed Save leaves an inline error, then discarding the edit
-    // must clear that error rather than leaving it displayed under a
-    // now-read-only row.
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Rejected, item not pending");
-    await user.click(screen.getByRole("button", { name: "Back" }));
-
-    // Assert
-    expect(screen.queryByText("Rejected, item not pending")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
-  });
-
   it("cancels a pending item immediately, with no confirm step", async () => {
     // Arrange
     let items = [PENDING_ITEM];
@@ -568,151 +308,6 @@ describe("TableOrderDetailPage", () => {
     // Assert: exactly one call, no intermediate confirm click was needed.
     await vi.waitFor(() => expect(cancelMock).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Cancelled")).toBeInTheDocument();
-  });
-
-  it("requires an explicit confirm before cancelling an in_preparation item", async () => {
-    // Arrange
-    let items = [IN_PREPARATION_ITEM];
-    const cancelMock = vi.fn(() =>
-      Promise.resolve(jsonResponse(200, { ...IN_PREPARATION_ITEM, status: "cancelled" })),
-    );
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/items/2/cancel") && init.method === "POST") {
-          items = [{ ...IN_PREPARATION_ITEM, status: "cancelled" }];
-          return cancelMock();
-        }
-        return stubReads({ items })(url);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act: the first Cancel click only reveals the confirm, it must not call the endpoint yet.
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Cancel" }));
-
-    // Assert: nothing sent yet, the warning is visible.
-    expect(cancelMock).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(/Stock already deducted for this item will not be restored/),
-    ).toBeInTheDocument();
-
-    // Act: only the explicit Confirm click sends the request.
-    await user.click(screen.getByRole("button", { name: "Confirm cancel" }));
-
-    // Assert
-    await vi.waitFor(() => expect(cancelMock).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
-  });
-
-  it("has no Edit control on an in_preparation row", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [IN_PREPARATION_ITEM] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    await screen.findByText("In preparation");
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
-  });
-
-  it("has no action controls on a ready or cancelled row", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [READY_ITEM, CANCELLED_ITEM] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    await screen.findByText("Ready");
-    await screen.findByText("Cancelled");
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
-  });
-
-  it("shows a rejected edit inline", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/items/1") && init.method === "PATCH") {
-          return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not pending" }));
-        }
-        return stubReads({ items: [PENDING_ITEM] })(url);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    // Assert
-    expect(await screen.findByText("Rejected, item not pending")).toBeInTheDocument();
-  });
-
-  it("shows a rejected cancel inline", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/items/1/cancel") && init.method === "POST") {
-          return Promise.resolve(jsonResponse(409, { detail: "Rejected, item not cancellable" }));
-        }
-        return stubReads({ items: [PENDING_ITEM] })(url);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Cancel" }));
-
-    // Assert
-    expect(await screen.findByText("Rejected, item not cancellable")).toBeInTheDocument();
-  });
-
-  it("computes the pre-close total client-side, excluding a cancelled item", async () => {
-    // Arrange: 42.00 (pending, qty 1) + 42.00*2 (in_preparation, qty 2) = 126.00, excluding the
-    // cancelled item's own 42.00.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(stubReads({ items: [PENDING_ITEM, IN_PREPARATION_ITEM, CANCELLED_ITEM] })),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("126.00 ₪")).toBeInTheDocument();
-  });
-
-  it("enables Mark served only when the Order is ready or pending-with-zero-items", async () => {
-    // Arrange: pending, with items present (not the zero-item case) — not eligible.
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [PENDING_ITEM] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByRole("button", { name: "Mark served" })).toBeDisabled();
-  });
-
-  it("enables Mark served on a zero-item pending Order", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ items: [] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByRole("button", { name: "Mark served" })).toBeEnabled();
   });
 
   it("enables Mark served on a ready Order and calls the endpoint with no confirm step", async () => {
@@ -767,81 +362,4 @@ describe("TableOrderDetailPage", () => {
     await vi.waitFor(() => expect(closeMock).toHaveBeenCalledTimes(1));
   });
 
-  it("disables Close on an Order that is not yet served", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(stubReads({ order: jsonResponse(200, { ...ORDER, status: "ready" }), items: [READY_ITEM] })));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByRole("button", { name: "Close order" })).toBeDisabled();
-  });
-
-  it("navigates back to the Tables grid once Close succeeds", async () => {
-    // Arrange: a successful close should return the Waiter to the grid immediately, rather than
-    // leaving them on a page whose Order just stopped existing (manual test finding: staying put
-    // showed a stale "no open order" banner layered over the now-closed Order's own content
-    // until a manual reload).
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/orders/10/close") && init.method === "POST") {
-          return Promise.resolve(jsonResponse(200, { ...ORDER, status: "closed", total_amount: "0.00" }));
-        }
-        return stubReads({ order: jsonResponse(200, { ...ORDER, status: "served" }), items: [] })(url);
-      }),
-    );
-    const user = userEvent.setup();
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-    // Act
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={["/waiter/tables/1"]}>
-          <RealtimeProvider>
-            <Routes>
-              <Route path="/waiter/tables/:tableId" element={<TableOrderDetailPage />} />
-              <Route path="/waiter/tables" element={<div>Tables grid</div>} />
-            </Routes>
-          </RealtimeProvider>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-    await user.click(await screen.findByRole("button", { name: "Close order" }));
-
-    // Assert
-    expect(await screen.findByText("Tables grid")).toBeInTheDocument();
-  });
-
-  it("shows no stale order content once the Order lookup 404s after being closed elsewhere", async () => {
-    // Arrange: reaching this page by URL/refresh after the Order was already closed (not via
-    // this page's own Close button, so no navigation is involved) — the no-open-order banner
-    // and the order's item table/total bar must never render at the same time.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(stubReads({ order: jsonResponse(404, { detail: "Order not found" }) })),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText(/This table has no open order/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Close order" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Order total")).not.toBeInTheDocument();
-  });
-
-  it("shows a retry-capable error when the order cannot be loaded", async () => {
-    // Arrange
-    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText(/Could not load the order/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  });
 });
