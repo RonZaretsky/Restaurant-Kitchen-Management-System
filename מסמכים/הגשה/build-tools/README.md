@@ -7,20 +7,25 @@ RTL תקין.
 
 ```powershell
 # שני המסמכים, כולל רינדור מחדש של כל הדיאגרמות
-powershell -File "מסמכים\הגשה\build\build-docs.ps1"
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1"
 
 # מסמך אחד בלבד
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -Document analysis
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -Document design
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -Document analysis
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -Document design
 
 # בלי לרנדר דיאגרמות מחדש (מהיר, כשרק הטקסט השתנה)
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -SkipDiagrams
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -SkipDiagrams
 
 # DOCX בלבד, בלי לפתוח את Word
-powershell -File "מסמכים\הגשה\build\build-docs.ps1" -SkipPdf
+powershell -File "מסמכים\הגשה\build-tools\build-docs-windows.ps1" -SkipPdf
 ```
 
 הפלט נכתב ל-`מסמכים/הגשה/output/`.
+
+**מסמך האפיון אינו נבנה עוד מן המקור שכאן.** מ-5 בספטמבר 2026 רון עורך אותו ישירות
+ב-Word, והגרסה הקובעת היא `output/OutputFromRon/`. קבצי ה-Markdown שתחת `אפיון-וניתוח/`
+נשארים כתיעוד של האופן שבו המסמך נבנה, אך הם מפגרים אחרי הגרסה הערוכה. הסקריפט מתריע על
+כך בכל בנייה של אותו מסמך, מפני שהקובץ שהוא מייצר נושא בדיוק את השם של הקובץ האמיתי.
 
 ## מה צריך להיות מותקן
 
@@ -43,10 +48,41 @@ node "lib\puppeteer\node\cli.js" install chrome
 
 | קובץ | תפקיד |
 |---|---|
-| `build-docs.ps1` | הפייפליין המלא: איחוד פרקים <- pandoc <- RTL <- Word |
+| `build-docs-windows.ps1` | הפייפליין המלא: איחוד פרקים <- pandoc <- RTL <- Word |
 | `render-diagrams.ps1` | מרנדר כל `diagrams/*.md` ל-`diagrams/rendered/<שם>.png` |
 | `apply-rtl.py` | מזריק לקובץ ה-DOCX את מאפייני ה-RTL של OOXML |
 | `make-screenshot-placeholders.ps1` | מייצר ממלא מקום לכל צילום מסך שעדיין לא צולם |
+| `extract-comments.py` | מחלץ מעותק מוער את הערות ה-Word ואת הטקסט הצבוע |
+| `check-diagram-signatures.py` | משווה כל חתימה שבדיאגרמות מול הקוד בפועל |
+
+## חילוץ הערות מעותק מוער
+
+```powershell
+python "מסמכים\הגשה\build-tools\extract-comments.py" "מסמכים\הגשה\ביקורת\<הקובץ>.docx"
+```
+
+הפלט מונה כל הערה עם מספרה, עם הטקסט שאליו היא מעוגנת ועם הסעיף שבו היא יושבת, ולאחריו
+כל ריצה הנושאת צבע. **המספר הוא המזהה** שבו משתמש `review-register.md`.
+
+הערה: Word משנה את מזהי הסגנונות בשמירה, כך שכותרת שנכתבה על ידי pandoc כ-`Heading2`
+נשמרת כ-`2` בלבד. הסקריפט מזהה את שתי הצורות, ובלעדי זאת כל ההערות היו מדווחות כיושבות
+לפני הכותרת הראשונה.
+
+## בדיקת התאמה בין הדיאגרמות לקוד
+
+```powershell
+python "מסמכים\הגשהuild-tools\check-diagram-signatures.py"
+```
+
+הסקריפט סורק את כל `diagrams/*.md`, מוציא מהן כל חתימת מתודה, ומשווה אותה לקוד שבצד
+השרת. **יש להריץ אותו לפני כל הגשה**, מפני שדיאגרמה מתיישנת בשקט: תיקון בדיאגרמת מחלקות
+אינו מגיע מאליו לדיאגרמת הרצף הקוראת לאותה מתודה, ואיש אינו מבחין בכך עד שקורא עושה זאת.
+
+ההשוואה שונה בין שני סוגי הדיאגרמות, ובכוונה: שורה בדיאגרמת מחלקות היא **הצהרה**, ולפיכך
+מושווים בה שמות הפרמטרים, ואילו הודעה בדיאגרמת רצף היא **קריאה** המציגה ערכים, ולפיכך
+מושווה בה מספר הארגומנטים בלבד. זה מה שתופס פרמטר שנוסף לקוד ולא נוסף לדיאגרמה.
+
+קוד היציאה הוא 1 כאשר נמצא פער, כך שניתן לשלב את הבדיקה בבנייה.
 
 ## איך משבצים דיאגרמה בתוך פרק
 
@@ -78,7 +114,7 @@ node "lib\puppeteer\node\cli.js" install chrome
 שיצלם. **אין רשימת צילומים נפרדת**, הסקריפט סורק את הפרקים עצמם, ולכן אין שתי רשימות
 שיכולות להתפצל.
 
-הרוחב **לא** נכתב בפרק. `build-docs.ps1` מוסיף `{ width=14cm }` לכל תמונת `screenshots/`
+הרוחב **לא** נכתב בפרק. `build-docs-windows.ps1` מוסיף `{ width=14cm }` לכל תמונת `screenshots/`
 בזמן האיחוד, כך שכל הצילומים יוצאים באותו רוחב בלי לחזור על עצמנו 33 פעם.
 
 `make-screenshot-placeholders.ps1` **לעולם אינו דורס קובץ קיים**. החלפת ממלא מקום בצילום
@@ -90,7 +126,7 @@ node "lib\puppeteer\node\cli.js" install chrome
 הדרך המתבקשת הייתה לפתוח את המסמך ב-Word דרך COM ולהגדיר `ReadingOrder` לכל פסקה.
 זה **לא עובד**: Word לא שומר את המאפיין בקובץ (נבדק - הוא שומר רק יישור לימין), והוא
 לא הופך את סדר העמודות בטבלה בכלל. התוצאה נראית נכונה כל עוד הטקסט עברית טהורה,
-ומתקלקלת ברגע שיש עברית ואנגלית באותה שורה - כלומר בכל מסמך עיצוב הפתרון.
+ומתקלקלת ברגע שיש עברית ואנגלית באותה שורה - כלומר בכל מסמך העיצוב.
 
 לכן `apply-rtl.py` כותב ישירות ל-OOXML:
 

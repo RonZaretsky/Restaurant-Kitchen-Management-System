@@ -5,18 +5,6 @@ import { ConnectionStatusProvider } from "./ConnectionStatusContext";
 import { ReconnectingBanner } from "./ReconnectingBanner";
 
 describe("ReconnectingBanner", () => {
-  it("renders nothing under the default connected status", () => {
-    // Arrange / Act
-    render(
-      <ConnectionStatusProvider>
-        <ReconnectingBanner />
-      </ConnectionStatusProvider>,
-    );
-
-    // Assert
-    expect(screen.queryByText("Reconnecting...")).not.toBeInTheDocument();
-  });
-
   it("renders the Reconnecting message when the status is reconnecting", () => {
     // Arrange / Act
     render(

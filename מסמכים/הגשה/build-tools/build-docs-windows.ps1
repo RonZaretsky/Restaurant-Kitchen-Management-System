@@ -12,11 +12,11 @@
     Requirements: pandoc, mermaid-cli (mmdc), python, and Microsoft Word.
 
     Usage:
-        pwsh -File מסמכים/הגשה/build-tools/build-docs.ps1              # both documents
-        pwsh -File .../build-docs.ps1 -Document analysis         # part A only
-        pwsh -File .../build-docs.ps1 -Document design           # part B only
-        pwsh -File .../build-docs.ps1 -SkipDiagrams              # reuse existing PNGs
-        pwsh -File .../build-docs.ps1 -SkipPdf                   # DOCX only, no Word
+        pwsh -File מסמכים/הגשה/build-tools/build-docs-windows.ps1              # both documents
+        pwsh -File .../build-docs-windows.ps1 -Document analysis         # part A only
+        pwsh -File .../build-docs-windows.ps1 -Document design           # part B only
+        pwsh -File .../build-docs-windows.ps1 -SkipDiagrams              # reuse existing PNGs
+        pwsh -File .../build-docs-windows.ps1 -SkipPdf                   # DOCX only, no Word
 #>
 
 [CmdletBinding()]
@@ -90,25 +90,49 @@ if (-not $SkipPdf) {
     Assert-WordClosed
 }
 
+# The title page. Shared by both documents, since only the subtitle differs.
+# Ron's identity number is still a placeholder, and is deliberately written in
+# a form nobody could mistake for a real one.
+$course        = "סדנה בתכנות מונחה עצמים (20586)"
+$supervisor    = "מנחה: דני כלפון"
+$submissionDay = "8 בספטמבר 2026"
+$authors       = @(
+    "אופק רותם, ת.ז. 204365092",
+    "רון זרצקי, ת.ז. להשלמה"
+)
+
 $documents = @(
     [pscustomobject]@{
         Key       = "analysis"
         SourceDir = Join-Path $submissionDir "אפיון-וניתוח"
         BaseName  = "מסמך-אפיון-וניתוח"
-        Title     = "מערכת ניהול מטבח ומסעדה"
+        Title     = "Restaurant Kitchen Management System"
         Subtitle  = "מסמך אפיון וניתוח"
     },
     [pscustomobject]@{
         Key       = "design"
         SourceDir = Join-Path $submissionDir "עיצוב-פתרון"
-        BaseName  = "מסמך-עיצוב-פתרון"
-        Title     = "מערכת ניהול מטבח ומסעדה"
-        Subtitle  = "מסמך עיצוב הפתרון"
+        BaseName  = "מסמך-עיצוב"
+        Title     = "Restaurant Kitchen Management System"
+        Subtitle  = "מסמך עיצוב"
     }
 )
 
 if ($Document -ne "all") {
     $documents = $documents | Where-Object { $_.Key -eq $Document }
+}
+
+# Ron edited the analysis document directly in Word from 5/9/2026 onward, so the
+# markdown under אפיון-וניתוח/ is behind and rebuilding from it silently produces
+# an out-of-date document under the exact name the real one carries. The build is
+# left working (the sources are still the record of how that document was made),
+# but it says so loudly, because the failure mode is submitting the wrong file.
+if ($documents.Key -contains "analysis") {
+    Write-Host ""
+    Write-Host "  אזהרה: מסמך האפיון נבנה מקבצי Markdown שאינם מעודכנים." -ForegroundColor Yellow
+    Write-Host "  הגרסה הקובעת היא output\OutputFromRon\מסמך-אפיון-וניתוח ערוך.pdf" -ForegroundColor Yellow
+    Write-Host "  אין להגיש את הקובץ שייווצר כאן. ראו ביקורת/הערות-למסמך-האפיון-של-רון.md" -ForegroundColor Yellow
+    Write-Host ""
 }
 
 # ---------------------------------------------------------------------------
@@ -187,10 +211,38 @@ function Expand-DiagramMarker {
     return "$imageRef`r`n`r`n$explanation`r`n"
 }
 
+function Remove-ThematicBreaks {
+    <#
+        Drops the horizontal rules a chapter uses to separate its sections.
+
+        They are useful while writing the Markdown and unwanted in the finished
+        document, where a heading already marks every boundary and pandoc draws
+        a rule as a bordered empty paragraph.
+
+        Only a rule sitting on its own after a blank line is removed. A run of
+        dashes directly under a line of text is not a rule at all: Markdown
+        reads it as a setext heading, and dropping it would silently demote
+        that heading to body text.
+    #>
+    param([string]$Text)
+
+    $kept = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($Text -split "\r?\n")) {
+        $isRule = $line -match '^[ \t]*(-{3,}|\*{3,}|_{3,})[ \t]*$'
+        $afterBlank = ($kept.Count -eq 0) -or ($kept[$kept.Count - 1].Trim() -eq "")
+        if ($isRule -and $afterBlank) {
+            continue
+        }
+        [void]$kept.Add($line)
+    }
+    return ($kept -join "`r`n")
+}
+
 function Merge-Chapters {
     <#
         Concatenates a document's chapter files in filename order into one
-        Markdown file, expanding every diagram marker on the way.
+        Markdown file, expanding every diagram marker and dropping every
+        horizontal rule on the way.
     #>
     param([pscustomobject]$Doc, [string]$MergedPath)
 
@@ -203,14 +255,21 @@ function Merge-Chapters {
 
     $sb = New-Object System.Text.StringBuilder
 
-    # Pandoc reads this block as document metadata, not as body text.
+    # Pandoc reads this block as document metadata, not as body text, and the
+    # docx writer renders it as the title page ahead of the table of contents.
+    # The course and the supervisor ride in the author list rather than in
+    # fields of their own: those are the only repeatable title-page lines the
+    # writer offers, and on the page itself they read exactly as intended.
     [void]$sb.AppendLine('---')
     [void]$sb.AppendLine('title: "' + $Doc.Title + '"')
     [void]$sb.AppendLine('subtitle: "' + $Doc.Subtitle + '"')
     [void]$sb.AppendLine('author:')
-    [void]$sb.AppendLine('  - אופק')
-    [void]$sb.AppendLine('  - רון')
-    [void]$sb.AppendLine('date: "' + (Get-Date -Format "dd/MM/yyyy") + '"')
+    foreach ($author in $authors) {
+        [void]$sb.AppendLine('  - "' + $author + '"')
+    }
+    [void]$sb.AppendLine('  - "' + $course + '"')
+    [void]$sb.AppendLine('  - "' + $supervisor + '"')
+    [void]$sb.AppendLine('date: "' + $submissionDay + '"')
     [void]$sb.AppendLine('lang: he')
     [void]$sb.AppendLine('dir: rtl')
     [void]$sb.AppendLine('toc-title: "תוכן עניינים"')
@@ -222,6 +281,7 @@ function Merge-Chapters {
         # output stream is captured into its return value alongside the count.
         Write-Host ("  + " + $chapter.Name)
         $text = Get-Content -Path $chapter.FullName -Raw -Encoding utf8
+        $text = Remove-ThematicBreaks -Text $text
 
         $text = [regex]::Replace($text, '<!--\s*diagram:\s*([A-Za-z0-9\-_]+)\s*-->', {
             param($m)
@@ -311,7 +371,7 @@ foreach ($doc in $documents) {
     }
 
     & $pandoc $mergedPath `
-        --from=markdown+raw_attribute `
+        --from=markdown+raw_attribute-smart `
         --to=docx `
         --toc `
         --toc-depth=2 `

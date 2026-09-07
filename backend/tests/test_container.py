@@ -39,7 +39,7 @@ async def test_startup_does_not_create_the_schema(empty_database: str) -> None:
         await container.shutdown_resources()
 
     # Assert
-    # This is the guard for AD-4. If create_all is reintroduced, or an alembic
+    # The migration chain owns the schema alone. If create_all is reintroduced, or an alembic
     # upgrade is dropped into the FastAPI lifespan, this fails.
     assert table_count == 0
 

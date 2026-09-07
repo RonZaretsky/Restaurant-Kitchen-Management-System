@@ -7,8 +7,18 @@ never flips a table's own column order, so this patches the OOXML directly:
                 right alignment, which every style inherits
   styles.xml    the Source Code style overrides both back to left-to-right, so
                 English identifiers and file paths still read correctly
+  styles.xml    the Verbatim Char style, which an inline code span carries,
+                is forced left-to-right too, so a leading underscore is drawn
+                at the start of an identifier and not at its end
+  styles.xml    every heading style gains space above it, so a new sub-section
+                is visibly separated from the paragraph that closed the last one
   document.xml  every table gains <w:bidiVisual/>, which flips its column order
-                so the first column sits on the right
+                so the first column sits on the right, plus a full set of
+                borders so every cell boundary is drawn
+  document.xml  a diagram's caption is pulled tight under its image, and a gap
+                is opened between a table and the text that follows it
+  document.xml  a page break on each side of the table of contents, so the
+                title page stands alone and chapter 1 opens a page of its own
 
 Element order inside <w:pPr> and <w:tblPr> is fixed by the OOXML schema, and
 Word rejects a file whose elements are out of order, hence the explicit
@@ -25,6 +35,13 @@ import re
 import sys
 import zipfile
 
+# Windows gives a redirected stdout the ANSI codepage, which cannot hold Hebrew.
+# The success line below carries the document's own path, so without this the
+# script raises after the file was already patched, and the build reports a
+# failure that did not happen.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # Inside <w:pPr>: w:bidi precedes w:spacing, and w:jc follows w:ind.
 _P_PR_DEFAULT = re.compile(r"(<w:pPrDefault>\s*<w:pPr>)(.*?)(</w:pPr>\s*</w:pPrDefault>)", re.S)
 
@@ -34,8 +51,89 @@ _SOURCE_CODE = re.compile(
     r'(<w:style\b[^>]*w:styleId="SourceCode"[^>]*>.*?<w:pPr>)(.*?)(</w:pPr>)', re.S
 )
 
+# Same shape, for every heading level.
+_HEADING_STYLE = re.compile(
+    r'(<w:style\b[^>]*w:styleId="Heading[1-6]"[^>]*>.*?<w:pPr>)(.*?)(</w:pPr>)', re.S
+)
+
+_SPACING = re.compile(r"<w:spacing\b[^>]*/>")
+_HEADING_SPACING = '<w:spacing w:before="360" w:after="160"/>'
+
+# The character style pandoc gives an inline code span. It carries a font but
+# no direction, so the span inherits the paragraph's. That matters for a
+# leading underscore: U+005F is bidi-neutral, so inside a right-to-left
+# paragraph it resolves to the paragraph's direction and Word draws it at the
+# far end of the identifier. _lock_ingredient then reads as lock_ingredient_.
+_VERBATIM_CHAR = re.compile(
+    r'(<w:style\b[^>]*w:styleId="VerbatimChar"[^>]*>.*?<w:rPr>)(.*?)(</w:rPr>)', re.S
+)
+
+# w:rtl sits after w:sz and w:szCs, and before any of these, per the schema.
+_AFTER_RTL = ("<w:cs", "<w:em", "<w:lang", "<w:eastAsianLayout", "<w:specVanish", "<w:oMath")
+
 _TBL_PR = re.compile(r"<w:tblPr>.*?</w:tblPr>", re.S)
 _TBL_STYLE = re.compile(r"^<w:tblPr>\s*(<w:tblStyle\b[^>]*?/>)?\s*")
+
+# Every cell boundary drawn, not just the outer frame.
+_BORDER_KINDS = ("top", "left", "bottom", "right", "insideH", "insideV")
+_TBL_BORDERS = (
+    "<w:tblBorders>"
+    + "".join(
+        '<w:%s w:val="single" w:sz="4" w:space="0" w:color="auto"/>' % kind
+        for kind in _BORDER_KINDS
+    )
+    + "</w:tblBorders>"
+)
+
+# w:tblBorders sits after w:tblInd and before any of these, per the schema.
+_AFTER_BORDERS = ("<w:shd", "<w:tblLayout", "<w:tblCellMar", "<w:tblLook")
+
+# The table of contents, which pandoc emits as a structured document tag
+# between the title block and the first chapter. Matched by the gallery name
+# rather than by position, so an unrelated tag elsewhere cannot be mistaken
+# for it.
+_TOC_SDT = re.compile(
+    r"<w:sdt>(?:(?!</w:sdt>).)*?Table of Contents(?:(?!</w:sdt>).)*?</w:sdt>", re.S
+)
+_PAGE_BREAK = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+
+# A run carrying the inline-code character style, and the text inside it.
+# Marking the style left-to-right is not enough on its own: a leading
+# underscore is bidi-neutral, and Word resolves it against the surrounding
+# paragraph before the run's own direction applies, so it still lands at the
+# far end of the identifier. A LEFT-TO-RIGHT MARK placed ahead of the text
+# gives that underscore a strong left-to-right neighbour to attach to.
+_VERBATIM_RUN = re.compile(r"<w:r>(?:(?!</w:r>).)*?VerbatimChar(?:(?!</w:r>).)*?</w:r>", re.S)
+_RUN_TEXT = re.compile(r"(<w:t\b[^>]*>)")
+_LRM = chr(0x200E)  # LEFT-TO-RIGHT MARK, by code point so it stays visible here
+
+# A paragraph holding an image, and the paragraph that follows a table.
+_IMAGE_P = re.compile(r"<w:p\b[^>]*>(?:(?!</w:p>).)*?<w:drawing>.*?</w:p>", re.S)
+_AFTER_TBL = re.compile(r"(</w:tbl>\s*)(<w:p\b[^>]*>)")
+_P_OPEN = re.compile(r"<w:p\b[^>]*>")
+_P_PR_LEAD = re.compile(r"(?:<w:pStyle\b[^>]*/>)?(?:<w:bidi\b[^>]*/>)?")
+
+
+def _set_paragraph_spacing(paragraph, spacing):
+    """Forces one paragraph's spacing, inserting <w:pPr> if it has none.
+
+    Args:
+        paragraph: The full <w:p> ... </w:p> string.
+        spacing: The <w:spacing/> element to apply.
+
+    Returns:
+        The paragraph with that spacing applied.
+    """
+    match = re.search(r"<w:pPr>(.*?)</w:pPr>", paragraph, re.S)
+    if not match:
+        opening = _P_OPEN.match(paragraph).group(0)
+        return paragraph.replace(opening, opening + "<w:pPr>" + spacing + "</w:pPr>", 1)
+
+    body = _SPACING.sub("", match.group(1))
+    # w:spacing follows w:pStyle and w:bidi, and precedes everything else here.
+    lead = _P_PR_LEAD.match(body).group(0)
+    replacement = "<w:pPr>" + lead + spacing + body[len(lead) :] + "</w:pPr>"
+    return paragraph.replace(match.group(0), replacement, 1)
 
 
 def patch_styles(xml):
@@ -63,6 +161,30 @@ def patch_styles(xml):
         patched = match.group(1) + "<w:bidi/>" + match.group(2) + match.group(3)
         xml = xml.replace(match.group(0), patched)
 
+    # Room above every heading. Replacing any spacing pandoc's reference
+    # document already set, rather than adding a second one.
+    for heading in _HEADING_STYLE.finditer(xml):
+        body = _SPACING.sub("", heading.group(2))
+        patched = heading.group(1) + _HEADING_SPACING + body + heading.group(3)
+        xml = xml.replace(heading.group(0), patched)
+
+    # An inline code span stays left-to-right for the same reason a code block
+    # does, and additionally so that a leading underscore is drawn where it was
+    # written rather than at the other end of the identifier.
+    verbatim = _VERBATIM_CHAR.search(xml)
+    if verbatim and "<w:rtl " not in verbatim.group(2):
+        body = verbatim.group(2)
+        positions = [body.find(tag) for tag in _AFTER_RTL if tag in body]
+        at = min(positions) if positions else len(body)
+        patched = (
+            verbatim.group(1)
+            + body[:at]
+            + '<w:rtl w:val="0"/>'
+            + body[at:]
+            + verbatim.group(3)
+        )
+        xml = xml.replace(verbatim.group(0), patched)
+
     # Code blocks stay left-to-right: they hold English identifiers and paths.
     code = _SOURCE_CODE.search(xml)
     if code and "<w:bidi " not in code.group(2):
@@ -79,7 +201,11 @@ def patch_styles(xml):
 
 
 def patch_document(xml):
-    """Flips every table's column order to right-to-left.
+    """Applies the table, image and spacing fixes to the document body.
+
+    Flips every table's column order to right-to-left and draws all of its
+    borders, pulls each diagram's caption tight under its image, and opens a
+    gap between a table and the text that follows it.
 
     Args:
         xml: The contents of word/document.xml.
@@ -88,15 +214,49 @@ def patch_document(xml):
         The patched XML.
     """
 
-    def add_bidi_visual(match):
+    def patch_table_properties(match):
         block = match.group(0)
-        if "<w:bidiVisual/>" in block:
-            return block
-        # w:bidiVisual follows w:tblStyle and precedes w:tblW.
-        head = _TBL_STYLE.match(block).group(0)
-        return head + "<w:bidiVisual/>" + block[len(head):]
+        if "<w:bidiVisual/>" not in block:
+            # w:bidiVisual follows w:tblStyle and precedes w:tblW.
+            head = _TBL_STYLE.match(block).group(0)
+            block = head + "<w:bidiVisual/>" + block[len(head) :]
+        if "<w:tblBorders>" not in block:
+            positions = [block.find(tag) for tag in _AFTER_BORDERS if tag in block]
+            at = min(positions) if positions else block.find("</w:tblPr>")
+            block = block[:at] + _TBL_BORDERS + block[at:]
+        return block
 
-    return _TBL_PR.sub(add_bidi_visual, xml)
+    # The title page stands alone, and the first chapter opens a page of its
+    # own: a page break on each side of the table of contents gives both.
+    xml = _TOC_SDT.sub(lambda m: _PAGE_BREAK + m.group(0) + _PAGE_BREAK, xml, count=1)
+
+    # A left-to-right mark ahead of every inline code span, so a leading
+    # underscore stays at the start of the identifier it belongs to.
+    def mark_verbatim(match):
+        run = match.group(0)
+        if _LRM in run:
+            return run
+        return _RUN_TEXT.sub(lambda tag: tag.group(1) + _LRM, run, count=1)
+
+    xml = _VERBATIM_RUN.sub(mark_verbatim, xml)
+
+    xml = _TBL_PR.sub(patch_table_properties, xml)
+
+    # No gap between a diagram and the italic caption directly beneath it: the
+    # two read as one unit, and Word's default paragraph spacing splits them.
+    xml = _IMAGE_P.sub(
+        lambda m: _set_paragraph_spacing(m.group(0), '<w:spacing w:after="0"/>'), xml
+    )
+
+    # A gap after a table, so its bottom border does not touch the next line.
+    # Only the opening tag is matched, so the paragraph is closed with a stub,
+    # spaced, and then reopened without it.
+    def open_gap(match):
+        stub = match.group(2) + "</w:p>"
+        spaced = _set_paragraph_spacing(stub, '<w:spacing w:before="240"/>')
+        return match.group(1) + spaced[: -len("</w:p>")]
+
+    return _AFTER_TBL.sub(open_gap, xml)
 
 
 def main(docx_path):

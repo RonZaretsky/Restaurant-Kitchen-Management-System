@@ -8,7 +8,7 @@ os.environ["DB_NAME"] = os.environ.get("TEST_DB_NAME") or "kitchen_test"
 
 # The client fixture below runs the real app lifespan (app.router.lifespan_context), which would
 # otherwise auto-create a default Admin on every test's empty database — silently breaking every
-# test that assumes a genuinely empty users table (e.g. AD-15's last-Admin guard tests).
+# test that assumes a genuinely empty users table (e.g. the last-Admin guard tests).
 os.environ["BOOTSTRAP_ADMIN"] = "false"
 
 from collections.abc import AsyncGenerator, Generator
@@ -132,7 +132,7 @@ async def db_session(migrated_database: str) -> AsyncGenerator[AsyncSession, Non
 async def client(migrated_database: str) -> AsyncGenerator[AsyncClient, None]:
     # Entering the lifespan initialises and disposes container resources exactly as the
     # app does for real. migrated_database is depended on so the schema exists first.
-    # base_url is https (not http): the session cookie is Secure-flagged (AD-3), and
+    # base_url is https (not http): the session cookie is Secure-flagged, and
     # unlike a browser, httpx enforces Secure literally with no localhost exemption, so
     # an http base_url would silently drop the cookie on every request after login.
     async with app.router.lifespan_context(app):
