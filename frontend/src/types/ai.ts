@@ -14,7 +14,7 @@ export interface AIRecipeSuggestion {
   confirmed_dish_id: number | null;
 }
 
-/** Mirrors the JSON shape of `backend/data_models/ai.py`'s `AIChatSessionResponse` (Story 6.3). */
+/** Mirrors the JSON shape of `backend/data_models/ai.py`'s `AIChatSessionResponse`. */
 export interface AIChatSession {
   id: number;
   user_id: number;
@@ -24,7 +24,7 @@ export interface AIChatSession {
   created_at: string;
 }
 
-/** Mirrors the JSON shape of `backend/data_models/ai.py`'s `AIChatMessageResponse` (Story 6.3). */
+/** Mirrors the JSON shape of `backend/data_models/ai.py`'s `AIChatMessageResponse`. */
 export interface AIChatMessage {
   id: number;
   session_id: number;

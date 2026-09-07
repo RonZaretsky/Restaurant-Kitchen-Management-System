@@ -77,7 +77,7 @@ class LastAdminLockoutError(ConflictError):
     """Raised when a mutation would leave zero active Admins in the system.
 
     Covers both deactivating the last active Admin and demoting them to a
-    different Role (AD-15).
+    different Role.
     """
 
     detail = "Rejected, at least one admin must stay active"
@@ -95,7 +95,7 @@ class DuplicateIngredientNameError(ConflictError):
 class StockMovementWouldGoNegativeError(ConflictError):
     """Raised when a manual Stock Movement would drive an Ingredient's current_stock negative.
 
-    Reverses AD-16 ("current_stock is never floor-capped at zero"): manual movements (purchase,
+    Reverses the "current_stock is never floor-capped at zero" default: manual movements (purchase,
     waste, adjustment) are now rejected cleanly, before any mutation, rather than applied in full
     past zero.
     """
@@ -105,7 +105,7 @@ class StockMovementWouldGoNegativeError(ConflictError):
 
 class InsufficientStockError(ConflictError):
     """Raised when a Kitchen pick-up's Recipe-driven consumption would drive an Ingredient's
-    current_stock negative (Story 5.2's apply_consumption, reused by OrderService.pick_up_item).
+    current_stock negative (InventoryService.apply_consumption, called by OrderService.pick_up_item).
 
     Distinct from StockMovementWouldGoNegativeError (a manual movement) even though both guard
     the same invariant, mirroring this codebase's existing per-call-site error naming convention
@@ -124,7 +124,7 @@ class DuplicateCategoryNameError(ConflictError):
 class EmptyRecipeError(ConflictError):
     """Raised when attempting to mark a Dish available with zero Recipe Ingredient lines.
 
-    AD-8: a Dish must have a defined recipe before it can be ordered, so
+    A Dish must have a defined recipe before it can be ordered, so
     automatic stock deduction is never silently a no-op for a live menu item.
     """
 
@@ -195,7 +195,7 @@ class DuplicateRecipeIngredientError(ConflictError):
 
 
 class CannotRemoveLastRecipeIngredientError(ConflictError):
-    """Raised when removing a Dish's last Recipe Ingredient line while it is available (AD-8, second half)."""
+    """Raised when removing a Dish's last Recipe Ingredient line while it is available."""
 
     detail = "Cannot remove the last recipe ingredient while the dish is available"
 
@@ -207,7 +207,7 @@ class DuplicateTableNumberError(ConflictError):
 
 
 class TableInUseError(ConflictError):
-    """Raised when editing a Table whose status is not available (AD-6 pattern).
+    """Raised when editing a Table whose status is not available.
 
     Covers both an edit attempted while already occupied/reserved, and the race
     where the Table stopped being available between the Admin loading the form
@@ -237,9 +237,9 @@ class OrderNotFoundError(NotFoundError):
 
 
 class TableNotAvailableError(ConflictError):
-    """Raised when opening a Table that is not currently available (AC2).
+    """Raised when opening a Table that is not currently available.
 
-    Distinct from TableInUseError (Story 2.4), which is specifically about an
+    Distinct from TableInUseError, which is specifically about an
     Admin's edit attempt; this is about a Waiter's open attempt. Covers both
     an already-occupied/reserved Table and the race where a second Waiter
     opens the same Table between this request's read and write, the guarded
@@ -251,9 +251,9 @@ class TableNotAvailableError(ConflictError):
 
 
 class DishNotAvailableError(ConflictError):
-    """Raised when adding an Order Item for a Dish currently marked unavailable (AC2).
+    """Raised when adding an Order Item for a Dish currently marked unavailable.
 
-    Distinct from EmptyRecipeError (Story 2.2), which blocks an Admin from making a Dish
+    Distinct from EmptyRecipeError, which blocks an Admin from making a Dish
     available; this blocks a Waiter from ordering one that already isn't.
     """
 
@@ -267,7 +267,7 @@ class OrderItemNotFoundError(NotFoundError):
 
 
 class OrderItemNotPendingError(ConflictError):
-    """Raised when editing an Order Item that is not currently pending (AC4, Story 3.4).
+    """Raised when editing an Order Item that is not currently pending.
 
     The guarded UPDATE cannot distinguish "already in_preparation" from "lost the race between
     this request's read and write", and both use the same detail, mirroring
@@ -278,7 +278,7 @@ class OrderItemNotPendingError(ConflictError):
 
 
 class OrderItemNotCancellableError(ConflictError):
-    """Raised when cancelling an Order Item that is not pending or in_preparation (AC2/AC3, Story 3.4).
+    """Raised when cancelling an Order Item that is not pending or in_preparation.
 
     Covers an item already ready or already cancelled, and the race where a second cancel/edit
     lands between this request's read and its guarded UPDATE.
@@ -288,7 +288,7 @@ class OrderItemNotCancellableError(ConflictError):
 
 
 class OrderItemNotInPreparationError(ConflictError):
-    """Raised when marking an Order Item ready that is not currently in_preparation (AC4/AC5, Story 5.2).
+    """Raised when marking an Order Item ready that is not currently in_preparation.
 
     Covers a pending item skipping straight to ready, an already-ready item re-triggering the
     transition, and a cancelled item, plus the race where a second transition lands between this
@@ -299,12 +299,11 @@ class OrderItemNotInPreparationError(ConflictError):
 
 
 class OrderNotServableError(ConflictError):
-    """Raised when marking an Order served that is not currently ready or pending-with-zero-items
-    (AC2, Story 5.4).
+    """Raised when marking an Order served that is not currently ready or pending-with-zero-items.
 
     Covers an Order with a non-cancelled item still short of ready, an already-served/closed
     Order re-triggering the transition, and the race where a second transition lands between this
-    request's read and its guarded UPDATE. `pending` is included in the guard because, per FR-12,
+    request's read and its guarded UPDATE. `pending` is included in the guard because
     an Order is `pending` if and only if it currently has zero non-cancelled Order Items — the
     status column already encodes the "zero items" case, no separate count is needed.
     """
@@ -313,7 +312,7 @@ class OrderNotServableError(ConflictError):
 
 
 class OrderNotClosableError(ConflictError):
-    """Raised when closing an Order that is not currently served (AC4, Story 5.4).
+    """Raised when closing an Order that is not currently served.
 
     Covers an Order not yet served and an already-closed Order re-triggering the transition, plus
     the race where a second transition lands between this request's read and its guarded UPDATE.
@@ -326,7 +325,7 @@ class UnitMismatchError(ConflictError):
     """Raised when a Recipe Ingredient line's unit differs from its Ingredient's own unit.
 
     Nothing in this system converts between units, so a line recorded in
-    liters against an ingredient stocked in kilograms would make Epic 5's
+    liters against an ingredient stocked in kilograms would make the
     automatic stock deduction subtract the wrong amount silently. The line
     must be recorded in the unit the ingredient is stocked in.
     """
@@ -335,8 +334,7 @@ class UnitMismatchError(ConflictError):
 
 
 class SuggestionGenerationInProgressError(ConflictError):
-    """Raised when a Cook requests a Recipe Suggestion while one is already generating for them
-    (AC3, Story 6.1, AD-14).
+    """Raised when a Cook requests a Recipe Suggestion while one is already generating for them.
 
     Reject, don't queue: a second concurrent request is rejected inline rather than waiting for
     the first to finish.
@@ -346,7 +344,7 @@ class SuggestionGenerationInProgressError(ConflictError):
 
 
 class ExternalServiceError(Exception):
-    """Base for a failure calling a third-party service (Story 6.1, the first of its kind here).
+    """Base for a failure calling a third-party service.
 
     One handler in main.py turns any subclass into a 502 carrying that subclass's `detail`,
     mirroring AuthError/ConflictError/NotFoundError's own base-class-plus-handler shape.
@@ -357,7 +355,7 @@ class ExternalServiceError(Exception):
 
 class AIGenerationFailedError(ExternalServiceError):
     """Raised when the OpenAI call for a Recipe Suggestion fails, times out, or returns
-    unparseable content (AC4, Story 6.1, FR-21/AD-14).
+    unparseable content.
 
     No Recipe Suggestion row is ever created on this path — the insert only happens after the
     call succeeds, so this error never leaves an orphaned row behind.
@@ -367,14 +365,13 @@ class AIGenerationFailedError(ExternalServiceError):
 
 
 class SuggestionNotFoundError(NotFoundError):
-    """Raised when a request references a Recipe Suggestion id that does not exist (Story 6.2)."""
+    """Raised when a request references a Recipe Suggestion id that does not exist."""
 
     detail = "Recipe suggestion not found"
 
 
 class SuggestionAlreadyDismissedError(ConflictError):
-    """Raised when confirming or dismissing a Recipe Suggestion that is already dismissed
-    (Story 6.2, AC4).
+    """Raised when confirming or dismissing a Recipe Suggestion that is already dismissed.
     """
 
     detail = "Rejected, suggestion is already dismissed"
@@ -382,7 +379,7 @@ class SuggestionAlreadyDismissedError(ConflictError):
 
 class SuggestionAlreadyConfirmedError(ConflictError):
     """Raised when confirming or dismissing a Recipe Suggestion that already has a Dish citing
-    it as its source (Story 6.2, AC1/AC4).
+    it as its source.
 
     "Confirmed" is derived — this fires whenever a Dish with a matching source_suggestion_id
     already exists, not from a stored status column.
@@ -392,19 +389,19 @@ class SuggestionAlreadyConfirmedError(ConflictError):
 
 
 class ChatSessionNotFoundError(NotFoundError):
-    """Raised when a request references a Chat Session id that does not exist (Story 6.3)."""
+    """Raised when a request references a Chat Session id that does not exist."""
 
     detail = "Chat session not found"
 
 
 class ChatMessageInProgressError(ConflictError):
     """Raised when a Cook sends a message into a Chat Session while a reply is already generating
-    for that same session (Story 6.3, AD-14).
+    for that same session.
 
     Scoped to the session, not the Cook — reject, don't queue, mirroring
     SuggestionGenerationInProgressError's exact shape, just keyed by session id instead of user
     id. A Cook may legitimately have two different sessions open in two tabs; only two concurrent
-    sends into the *same* session race the message-ordering guarantee AC2 relies on.
+    sends into the *same* session race the chat's message-ordering guarantee.
     """
 
     detail = "Rejected, a reply is already generating for this session"
@@ -412,7 +409,7 @@ class ChatMessageInProgressError(ConflictError):
 
 class AIChatReplyFailedError(ExternalServiceError):
     """Raised when the OpenAI call for a Chat Message fails, times out, or returns unusable
-    content (Story 6.3, AC4, FR-21/AD-14).
+    content.
 
     No AIChatMessage row (neither the user's nor the assistant's) is ever created on this path —
     both are inserted together, in one transaction, only after the call succeeds.

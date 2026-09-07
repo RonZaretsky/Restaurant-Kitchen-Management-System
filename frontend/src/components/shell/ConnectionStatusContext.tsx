@@ -15,7 +15,7 @@ interface ConnectionStatusContextValue {
 /**
  * Transport-agnostic connection signal.
  *
- * Defaults to "connected". Story 1.5's RealtimeProvider is the live
+ * Defaults to "connected". RealtimeProvider is the live
  * WebSocket signal that drives this via ConnectionStatusProvider; this
  * default only matters for a consumer rendered outside that provider (there
  * is none today, RealtimeProvider wraps the whole authenticated shell).

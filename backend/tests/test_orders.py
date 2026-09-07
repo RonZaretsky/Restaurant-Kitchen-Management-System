@@ -1387,6 +1387,36 @@ async def test_pick_up_below_available_stock_is_rejected_and_item_stays_pending(
 
 
 @pytest.mark.asyncio
+async def test_pick_up_of_a_deactivated_ingredient_is_rejected_even_with_stock_on_hand(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: plenty of current_stock, but the Ingredient itself is deactivated. A deactivated
+    # Ingredient must behave like it's out of stock, not like it isn't part of the check at all.
+    dish, ingredient = await _create_available_dish_with_ingredient(
+        client, db_session, name="Deactivated Chicken Dish", ingredient_stock="10.000"
+    )
+    deactivate_response = await client.post(f"/api/inventory/ingredients/{ingredient}/deactivate")
+    assert deactivate_response.status_code == 200
+    order, _waiter, _table = await _open_table(client, db_session, table_number=59)
+    item = await _add_item(client, order["id"], dish["id"])
+    await _login_as_cook(client, db_session, "deactivated-ingredient-cook")
+
+    # Act
+    response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
+
+    # Assert: rejected, the item stays pending, and stock is untouched despite being sufficient.
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Not enough stock to prepare this item"
+    db_session.expire_all()
+    unchanged_item = await db_session.get(OrderItem, item["id"])
+    assert unchanged_item.status is OrderItemStatus.pending
+    updated_ingredient = await db_session.get(Ingredient, ingredient)
+    assert updated_ingredient.current_stock == Decimal("10.000")
+    movements = await db_session.execute(select(StockMovement).where(StockMovement.ingredient_id == ingredient))
+    assert movements.scalars().all() == []
+
+
+@pytest.mark.asyncio
 async def test_pick_up_rejected_for_one_insufficient_recipe_line_does_not_partially_deduct_earlier_lines(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

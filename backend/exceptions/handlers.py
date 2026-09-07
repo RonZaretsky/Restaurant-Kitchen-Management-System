@@ -84,8 +84,7 @@ async def _not_found_error_handler(request: Request, exc: NotFoundError) -> JSON
 async def _external_service_error_handler(request: Request, exc: ExternalServiceError) -> JSONResponse:
     """Turn a third-party service call failure into a 502 carrying its message.
 
-    One handler for the whole ExternalServiceError family (Story 6.1's AIGenerationFailedError is
-    the first member), mirroring _not_found_error_handler's exact shape.
+    One handler for the whole ExternalServiceError family, mirroring _not_found_error_handler's exact shape.
 
     Args:
         request: The incoming request that triggered the error.

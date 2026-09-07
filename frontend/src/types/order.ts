@@ -21,8 +21,7 @@ export interface Order {
 /**
  * Mirrors backend/data_models/order.py's OrderItemStatus enum values exactly.
  *
- * `cancelled` (AD-11) added by Story 3.4's own migration. `rejected` added by this batch's own
- * migration (a1b2c3d4e5f6) — a pending item the kitchen could not currently prepare.
+ * `rejected` is a pending item the kitchen could not currently prepare.
  */
 export type OrderItemStatus = "pending" | "in_preparation" | "ready" | "cancelled" | "rejected";
 

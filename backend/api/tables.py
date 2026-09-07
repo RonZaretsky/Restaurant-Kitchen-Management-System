@@ -20,23 +20,21 @@ from services.table_service import TableService
 
 router = APIRouter(prefix="/api/tables", tags=["tables"])
 
-# Table management (create/edit) is Admin-only (FR-24), same shape as MenuDep,
+# Table management (create/edit) is Admin-only, same shape as MenuDep,
 # not InventoryWriteDep's two-Role form.
 TablesDep = Annotated[User, Depends(require_role(UserRole.admin))]
 
-# Reads permit a Waiter too (Story 3.1, FR-4): a Waiter needs to see every
+# Reads permit a Waiter too: a Waiter needs to see every
 # Table's status to open one into a new Order. Mirrors MenuReadDep/
 # InventoryReadDep's established split between a read-only dependency and a
-# write-only one. This closes a gap project-context.md's own Domain rules
-# section flagged as a deliberate Story 2.4 scoping choice earmarked for
-# Epic 3 to widen. Story 5.1 widened it again to admin/waiter/cook: the
-# Kitchen Display resolves each card's table_number client-side via this same
-# endpoint, the same incremental-widening pattern InventoryReadDep/
-# DishCatalogReadDep/MenuReadDep have each already gone through.
+# write-only one. Widened again to include a Cook: the Kitchen Display
+# resolves each card's table_number client-side via this same endpoint. The
+# same incremental-widening pattern InventoryReadDep/DishCatalogReadDep/
+# MenuReadDep have each already gone through.
 TablesReadDep = Annotated[User, Depends(require_role(UserRole.admin, UserRole.waiter, UserRole.cook))]
 
 # Path ids need the same int4 upper bound their request-body counterparts carry
-# (trap 16, applied proactively here per Story 2.3's review finding).
+# so an out-of-range value 422s instead of 500ing.
 TableIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
 
 _ERROR_DESCRIPTIONS = {
@@ -85,7 +83,7 @@ async def create_table(
     db: SessionDep,
     table_service: TableService = Depends(Provide[Container.table_service]),
 ) -> RestaurantTable:
-    """Create a new Restaurant Table, starting available (AC1).
+    """Create a new Restaurant Table, starting available.
 
     Args:
         payload: The submitted table number and capacity.

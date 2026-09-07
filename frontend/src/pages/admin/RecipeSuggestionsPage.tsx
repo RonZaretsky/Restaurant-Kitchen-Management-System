@@ -26,13 +26,13 @@ function errorMessage(error: Error): string {
 }
 
 /**
- * One "awaiting review" Recipe Suggestion card (Story 6.2, AC4-AC6).
+ * One "awaiting review" Recipe Suggestion card.
  *
- * Wraps `SuggestionSummary`'s read-only content with the two actions this story adds. Confirm
+ * Wraps `SuggestionSummary`'s read-only content with the Confirm and Dismiss actions. Confirm
  * opens `ConfirmSuggestionDialog` in place (manual-test finding: the original navigate-to-Menu-
  * Management design left every Recipe Ingredient line to be re-added by hand afterward; the
  * dialog creates the Dish and its Recipe Ingredient lines together). Dismiss fires immediately,
- * no confirm step: the row is retained for audit (AC4), so dismissing is not a data-loss action.
+ * no confirm step: the row is retained for audit, so dismissing is not a data-loss action.
  *
  * @param suggestion - The Recipe Suggestion this card describes.
  * @returns The suggestion card with its Confirm/Dismiss actions.
@@ -73,12 +73,12 @@ function ReviewableSuggestionCard({ suggestion }: { suggestion: AIRecipeSuggesti
 }
 
 /**
- * The Admin's Recipe Suggestions review surface (Story 6.2).
+ * The Admin's Recipe Suggestions review surface.
  *
- * Fetches every Recipe Suggestion (Story 6.1's `useSuggestions`, already
- * Admin-accessible) and filters client-side to those "awaiting review" —
- * `!dismissed && confirmed_dish_id === null` — matching AD-9's client-side
- * filtering convention rather than adding a new backend query param. A
+ * Fetches every Recipe Suggestion (`useSuggestions`, already Admin-accessible)
+ * and filters client-side to those "awaiting review" —
+ * `!dismissed && confirmed_dish_id === null` — matching this codebase's
+ * client-side filtering convention rather than adding a new backend query param. A
  * suggestion that is dismissed or already confirmed into a Dish drops off
  * this list even though the raw response still includes it.
  *

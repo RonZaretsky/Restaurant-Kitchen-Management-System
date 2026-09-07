@@ -45,13 +45,13 @@ class OrderService:
 
     Config-free aside from the realtime_service/inventory_service collaborators, so it is
     registered as a container-level Factory with the logger, realtime_service, and
-    inventory_service injected, matching TableService's shape plus the push seam Story 3.3 adds
-    and the stock-deduction seam Story 5.2 adds. The realtime_service seam is an Observer/Pub-Sub
+    inventory_service injected, matching TableService's shape plus a live-push seam and a
+    stock-deduction seam. The realtime_service seam is an Observer/Pub-Sub
     pattern: this service publishes table.status_changed/order.item_added/
     order.item_status_changed events without knowing who, if anyone, is listening, and
-    RealtimeService/ConnectionRegistry fan them out to every subscribed frontend client (AD-2).
+    RealtimeService/ConnectionRegistry fan them out to every subscribed frontend client.
     inventory_service is used by pick_up_item to atomically deduct Recipe-driven stock
-    consumption in the same transaction as the OrderItem status transition (AD-6, NFR-3),
+    consumption in the same transaction as the OrderItem status transition,
     reusing InventoryService.apply_consumption rather than duplicating its row-lock/
     threshold-crossing logic here.
     """
@@ -62,24 +62,24 @@ class OrderService:
         Args:
             logger: The loguru logger injected from the container.
             realtime_service: Injected service used to push live updates to
-                connected Waiter/Cook terminals (AD-2, Story 3.3/5.2).
+                connected Waiter/Cook terminals.
             inventory_service: Injected service used to atomically deduct
                 Recipe-driven stock consumption when an Order Item is picked
-                up (FR-13, Story 5.2).
+                up.
         """
         self._logger = logger
         self._realtime_service = realtime_service
         self._inventory_service = inventory_service
 
     async def open_table(self, db: AsyncSession, actor: User, table_id: int) -> Order:
-        """Mark an available Table occupied and start a new Order on it (AC1).
+        """Mark an available Table occupied and start a new Order on it.
 
         The Table-status check and the write happen in one guarded UPDATE
         (WHERE status = 'available'), never a separate read-then-write, so two
-        Waiters opening the same Table at once cannot both succeed (AD-6
-        pattern, the same shape TableService.update_table already uses). A
+        Waiters opening the same Table at once cannot both succeed (the same
+        guarded-transition shape TableService.update_table already uses). A
         zero-rowcount result means the Table was already occupied/reserved,
-        or lost exactly that race (AC2); the guarded UPDATE cannot
+        or lost exactly that race; the guarded UPDATE cannot
         distinguish the two, and both raise the same error. The Order is only
         inserted, and both writes only committed together, once that UPDATE
         succeeds: a Table left occupied with no Order to show for it (or vice
@@ -141,9 +141,9 @@ class OrderService:
     async def get_open_order_for_table(self, db: AsyncSession, actor: User, table_id: int) -> Order:
         """Fetch the Order currently open on a Table.
 
-        "Open" means not yet closed, FR-8's close action (a later story) is the only thing that
+        "Open" means not yet closed; closing the Order at checkout is the only thing that
         can ever change that. Only one non-closed Order can exist per Table at a time, opening a
-        Table requires it to be available first (Story 3.1's AC2), so this is a single filtered
+        Table requires it to be available first, so this is a single filtered
         SELECT, not a "most recent of several" query.
 
         Args:
@@ -181,13 +181,13 @@ class OrderService:
         return order
 
     async def list_open_orders(self, db: AsyncSession, actor: User) -> Sequence[Order]:
-        """List every currently open (non-closed) Order, across every Table (AC4).
+        """List every currently open (non-closed) Order, across every Table.
 
         The first bulk Order read in this codebase — every other Order read is scoped to one
         Table (get_open_order_for_table) or one Order's items. Backs the Tables grid's need to
-        know, across every occupied Table at once, which one has a ready Order (the Story 5.3
+        know, across every occupied Table at once, which one has a ready Order (the
         attention-state tile treatment) without an N+1 per-tile request. No actor-based filtering
-        (AD-9: permissions are Role-level only), actor is accepted only for signature symmetry
+        (permissions are Role-level only), actor is accepted only for signature symmetry
         with every other method in this service, unused otherwise.
 
         Args:
@@ -224,10 +224,10 @@ class OrderService:
     async def add_item(
         self, db: AsyncSession, actor: User, order_id: int, payload: CreateOrderItemRequest
     ) -> OrderItem:
-        """Add a new Order Item to an Order, at status pending (AC1).
+        """Add a new Order Item to an Order, at status pending.
 
-        No guarded/atomic UPDATE is needed here: AD-6 governs transitioning an existing OrderItem's
-        status, not this plain insert of a new one. No row lock is needed either, this mirrors
+        No guarded/atomic UPDATE is needed here: the guarded-transition rule governs moving an
+        existing OrderItem between statuses, not this plain insert of a new one. No row lock is needed either, this mirrors
         MenuService.add_recipe_ingredient's plain check-then-insert shape.
 
         Args:
@@ -238,7 +238,7 @@ class OrderService:
 
         Returns:
             The newly created Order Item, price_at_add copied from the Dish's
-            current price (AD-7).
+            current price.
 
         Raises:
             OrderNotFoundError: If no Order matches order_id.
@@ -303,12 +303,12 @@ class OrderService:
         item_id: int,
         payload: UpdateOrderItemRequest,
     ) -> OrderItem:
-        """Edit a pending Order Item's quantity and/or note (AC1).
+        """Edit a pending Order Item's quantity and/or note.
 
-        Guarded on status = 'pending' at the moment of the write (AD-6): an item that has already
+        Guarded on status = 'pending' at the moment of the write: an item that has already
         moved to in_preparation between this request's read and write must reject the edit, not
-        silently apply it (AC4). Broadcasts order.item_status_changed to [waiter, cook] after
-        commit (Story 5.5, NFR-1) — the same event/payload/recipients pick_up_item/mark_item_ready
+        silently apply it. Broadcasts order.item_status_changed to [waiter, cook] after
+        commit — the same event/payload/recipients pick_up_item/mark_item_ready
         already use, reused here even though the item's status itself did not change, since both
         live consumers (Kitchen Display, Table/Order Detail) already treat this event generically
         as "refetch this Order's items," not as a status-specific signal.
@@ -361,18 +361,18 @@ class OrderService:
         return item
 
     async def cancel_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
-        """Cancel a pending or in_preparation Order Item (AC2/AC3).
+        """Cancel a pending or in_preparation Order Item.
 
-        Guarded on status IN ('pending', 'in_preparation') at the moment of the write (AD-6): an
+        Guarded on status IN ('pending', 'in_preparation') at the moment of the write: an
         item already ready or already cancelled cannot be cancelled again. Cancelling never
-        reverses a prior stock deduction (AD-11), no compensating StockMovement is inserted here
+        reverses a prior stock deduction, no compensating StockMovement is inserted here
         or anywhere else; the frontend's confirm dialog for an in_preparation item is what tells
-        the actor this before they commit to it (AC3, UX-DR12), the backend enforces no stock rule
+        the actor this before they commit to it, the backend enforces no stock rule
         because there is none to enforce, only the state transition itself. Broadcasts
-        order.item_status_changed to [waiter, cook] after commit (Story 5.5, NFR-1), unconditional
+        order.item_status_changed to [waiter, cook] after commit, unconditional
         and placed before the existing order.status_changed conditional below — the item-level
         event is the primary signal, the order-level one a secondary, conditional follow-up
-        (Story 5.3's own ordering convention).
+        (this file's ordering convention throughout).
 
         Args:
             db: The active database session.
@@ -428,17 +428,17 @@ class OrderService:
         return item
 
     async def pick_up_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
-        """Pick up a pending Order Item, deducting its Recipe's stock atomically (AC1, AC2, AC4, AC7, AC8).
+        """Pick up a pending Order Item, deducting its Recipe's stock atomically.
 
-        A single guarded UPDATE (AD-6, trap 18) moves the item from pending to in_preparation and
+        A single guarded UPDATE moves the item from pending to in_preparation and
         records the acting Cook, in the same transaction as every Recipe Ingredient's stock
-        deduction and StockMovement insert (InventoryService.apply_consumption, trap 9's row lock,
+        deduction and StockMovement insert (InventoryService.apply_consumption, with its row lock,
         composed here rather than duplicated). Guarding on status == pending is also what rejects
-        a re-trigger on an already in_preparation/ready/cancelled item (AC2/AC5): the precondition
+        a re-trigger on an already in_preparation/ready/cancelled item: the precondition
         simply no longer holds, regardless of what the current status actually is. Deduction is
         rejected, whole-item and all-or-nothing, if any Recipe Ingredient line would drive its
-        Ingredient's current_stock negative (AD-16 reversed) — see InsufficientStockError below.
-        Epic 4's existing low-stock crossing check still fires on a successful pick-up (AC7),
+        Ingredient's current_stock negative — see InsufficientStockError below. The existing
+        low-stock threshold-crossing check still fires on a successful pick-up,
         broadcast only after this transaction's own commit succeeds.
 
         Args:
@@ -481,7 +481,7 @@ class OrderService:
         # quantity in the narrow window between _get_item's read and this UPDATE. Now that our own
         # UPDATE has moved status to in_preparation, no further edit_item call can land (its own
         # guard requires status == pending), so this refresh is the last point a quantity change
-        # could still be pending, and the one this deduction must use (review finding, Story 5.2).
+        # could still be pending, and the one this deduction must use.
         await db.refresh(item)
 
         recipe_result = await db.execute(
@@ -504,7 +504,7 @@ class OrderService:
                 if crossed:
                     crossed_ingredient_ids.append(recipe_ingredient.ingredient_id)
         except (IngredientNotFoundError, InsufficientStockError):
-            # Explicit rollback, matching every other rejection branch in this file (trap 20):
+            # Explicit rollback, matching every other rejection branch in this file:
             # the guarded status UPDATE above already ran on this session but was never committed,
             # so this discards it rather than relying on the session's own close-time behavior.
             # Also discards every already-applied deduction from an earlier RecipeIngredient line
@@ -555,7 +555,7 @@ class OrderService:
         return item
 
     async def reject_item(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
-        """Reject a pending Order Item the kitchen cannot currently prepare (this batch).
+        """Reject a pending Order Item the kitchen cannot currently prepare.
 
         The Kitchen Display disables "Pick up" and shows "Reject" instead once a pending item's
         `KitchenItemResponse.max_preparable_quantity` (`InventoryService.max_preparable_quantities`,
@@ -636,14 +636,14 @@ class OrderService:
         return item
 
     async def mark_item_ready(self, db: AsyncSession, actor: User, order_id: int, item_id: int) -> OrderItem:
-        """Mark an in_preparation Order Item ready, a pure status change (AC3, AC5, AC6, AC8).
+        """Mark an in_preparation Order Item ready, a pure status change.
 
-        Guarded on status == in_preparation (AD-6, trap 18): rejects a pending item skipping ahead
-        (AC4), an already-ready item re-triggering the transition, and any reverse transition
-        (AC5). Does not reassign cook_id — the Cook recorded is whoever picked the item up, marking
-        it ready never overwrites that attribution, since it is for audit only, not an access lock
-        (AC6): any active Cook may call this regardless of whose cook_id is already set, including
-        finishing an item a since-deactivated Cook picked up. No stock movement of any kind (AC3).
+        Guarded on status == in_preparation: rejects a pending item skipping ahead,
+        an already-ready item re-triggering the transition, and any reverse transition.
+        Does not reassign cook_id — the Cook recorded is whoever picked the item up, marking
+        it ready never overwrites that attribution, since it is for audit only, not an access lock:
+        any active Cook may call this regardless of whose cook_id is already set, including
+        finishing an item a since-deactivated Cook picked up. No stock movement of any kind.
 
         Args:
             db: The active database session.
@@ -696,11 +696,11 @@ class OrderService:
         return item
 
     async def mark_served(self, db: AsyncSession, actor: User, order_id: int) -> Order:
-        """Mark a ready (or zero-item) Order served, a pure status change (AC1, AC2, FR-11).
+        """Mark a ready (or zero-item) Order served, a pure status change.
 
-        A guarded transition (AD-6, trap 18), unlike Story 5.3's `_recompute_order_status`: there
+        A guarded transition, unlike `_recompute_order_status` below: there
         is a real expected prior status to check here, not a pure recompute. The guard accepts
-        both `ready` and `pending` because, per FR-12, an Order is `pending` if and only if it
+        both `ready` and `pending` because an Order is `pending` if and only if it
         currently has zero non-cancelled, non-rejected Order Items — the status column already encodes that
         fact, so no separate item count is needed.
 
@@ -715,7 +715,7 @@ class OrderService:
         Raises:
             OrderNotFoundError: If no Order matches order_id.
             OrderNotServableError: If the Order's status is not ready or pending at the moment of
-                the write (AC2).
+                the write.
         """
         order = await self._get_order(db, actor, order_id)
 
@@ -744,23 +744,23 @@ class OrderService:
         return order
 
     async def close_order(self, db: AsyncSession, actor: User, order_id: int) -> Order:
-        """Close a served Order, computing its total and freeing its Table (AC3, AC4, AC5, FR-8).
+        """Close a served Order, computing its total and freeing its Table.
 
-        A guarded transition (AD-6, trap 18): Order.status moves from served to closed, in the
-        same transaction as computing Order.total_amount (sum of price_at_add x quantity over
-        non-cancelled, non-rejected Order Items, AD-7) and returning the owning Table to available. All three
-        writes commit together — a closed Order whose Table never reopened, or vice versa, is a
-        state nothing later can recover from cleanly, the same "things that change together
-        commit together" principle AD-6 already applies to pick-up's stock deduction.
+        A guarded transition: Order.status moves from served to closed, in the
+        same transaction as computing Order.total_amount (sum of the price captured at add-time
+        x quantity over non-cancelled, non-rejected Order Items) and returning the owning Table
+        to available. All three writes commit together — a closed Order whose Table never
+        reopened, or vice versa, is a state nothing later can recover from cleanly, the same
+        "things that change together commit together" principle pick-up's stock deduction uses.
 
-        No row lock is needed for the total's aggregate read (contrast trap 27, Story 5.3): by
-        the time an Order reaches served, every non-cancelled, non-rejected Order Item is already ready
-        (mark_served's own guard only accepts ready/pending, and ready per FR-12 means every
-        non-cancelled, non-rejected item already is), and no later action can change any Order Item's
-        status once its Order is served (cancel_item only accepts pending/in_preparation items, and
-        reject_item only a pending one, none of which exist once served). The item set is frozen,
-        so reading it here sees a value nothing
-        else can be concurrently mutating.
+        No row lock is needed for the total's aggregate read (unlike `_recompute_order_status`,
+        which does need one): by the time an Order reaches served, every non-cancelled,
+        non-rejected Order Item is already ready (mark_served's own guard only accepts
+        ready/pending, and a `ready` Order by definition means every non-cancelled,
+        non-rejected item already is), and no later action can change any Order Item's status
+        once its Order is served (cancel_item only accepts pending/in_preparation items, and
+        reject_item only a pending one, none of which exist once served). The item set is
+        frozen, so reading it here sees a value nothing else can be concurrently mutating.
 
         Args:
             db: The active database session.
@@ -772,8 +772,7 @@ class OrderService:
 
         Raises:
             OrderNotFoundError: If no Order matches order_id.
-            OrderNotClosableError: If the Order's status is not served at the moment of the write
-                (AC4).
+            OrderNotClosableError: If the Order's status is not served at the moment of the write.
         """
         order = await self._get_order(db, actor, order_id)
 
@@ -828,7 +827,7 @@ class OrderService:
         )
         await self._broadcast_order_status_changed(db, order)
         # Only broadcast the Table as freed if it genuinely was — otherwise a client would be
-        # told the table is available when its DB status never actually changed (review finding).
+        # told the table is available when its DB status never actually changed.
         if table_freed:
             await self._realtime_service.broadcast(
                 [UserRole.waiter],
@@ -838,12 +837,12 @@ class OrderService:
         return order
 
     async def _recompute_order_status(self, db: AsyncSession, order_id: int) -> tuple[Order | None, bool]:
-        """Recompute Order.status from its non-cancelled, non-rejected Items (FR-12).
+        """Recompute Order.status from its non-cancelled, non-rejected Items.
 
-        A pure recomputation, not a guarded transition (AD-6 does not apply): there is no expected
+        A pure recomputation, not a guarded transition: there is no expected
         prior status to check, only a value to overwrite with whatever the aggregate says right
         now, converging to the same correct answer however many times it runs *sequentially*.
-        `closed` is set explicitly (FR-8) and is never overwritten here — a closed Order is
+        `closed` is set explicitly and is never overwritten here — a closed Order is
         genuinely terminal, its bill already settled and its Table already freed. `served` (this
         batch's own fix) is NOT excluded the same way: `add_item` has no guard against adding a
         new, pending Order Item to an already-served Order (a legitimate "one more thing" request
@@ -852,7 +851,7 @@ class OrderService:
         for it) and put the item back within `KitchenService.list_active_items`'s
         `Order.status not in (served, closed)` filter, which excludes a `served` Order's items
         wholesale — a `served` Order.status stuck in place is exactly what previously hid a
-        newly-added item from the Kitchen Display entirely (review finding).
+        newly-added item from the Kitchen Display entirely.
 
         Reaching an empty non-cancelled/non-rejected item set here while `order.status` is
         `served` cannot happen: `mark_served`'s own guard requires the Order to already be
@@ -862,8 +861,8 @@ class OrderService:
         branch below is only ever reached with `order.status` already `pending`, never as a
         surprise regression from `served`.
 
-        The Order row is locked (`SELECT ... FOR UPDATE`, trap 9's row-lock idiom, the same
-        pattern `InventoryService._lock_ingredient`/`MenuService._lock_dish` already use) before
+        The Order row is locked (`SELECT ... FOR UPDATE`, the same row-lock idiom
+        `InventoryService._lock_ingredient`/`MenuService._lock_dish` already use) before
         reading its sibling Items. Without this lock, two concurrent transactions each finishing a
         *different* Item of the same multi-item Order could each read the other's not-yet-committed
         Item status, each independently compute "no change" from their own narrow view, and leave
@@ -874,8 +873,8 @@ class OrderService:
 
         Mutates the given Order's `.status` attribute in place, in the caller's own session, but
         does not commit — the caller commits this together with the OrderItem write that triggered
-        the recompute, in the same transaction (mirrors AD-6's "things that change together commit
-        together" principle for the stock-deduction path).
+        the recompute, in the same transaction (the same "things that change together commit
+        together" principle the stock-deduction path follows).
 
         Args:
             db: The active database session, mid-transaction.
@@ -926,7 +925,7 @@ class OrderService:
         return order, True
 
     async def _broadcast_order_status_changed(self, db: AsyncSession, order: Order) -> None:
-        """Refresh and broadcast an Order whose derived status just changed (AD-2, AC4).
+        """Refresh and broadcast an Order whose derived status just changed.
 
         Called only when `_recompute_order_status` returned a True changed-flag, after the
         caller's own `db.commit()`: `db.commit()`'s default `expire_on_commit=True` leaves every

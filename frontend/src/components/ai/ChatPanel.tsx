@@ -27,9 +27,8 @@ function errorMessage(error: Error): string {
 /**
  * One Chat Message bubble, styled distinctly per role.
  *
- * Translates the mockup's `.msg.user`/`.msg.assistant` inline styles (`key-smart-chef.html`,
- * `DESIGN.md` has no formal `{components.chat-*}` token for this) to MUI primitives rather than
- * inventing a new design-system entry: a right-aligned tinted bubble for the Cook's own turn, a
+ * Renders each turn with MUI primitives rather than inventing a new design-system entry
+ * (the design system has no chat-specific token): a right-aligned tinted bubble for the Cook's own turn, a
  * left-aligned neutral one for the assistant's reply, each labeled with who sent it.
  *
  * @param message - The Chat Message to render.
@@ -60,17 +59,17 @@ function ChatMessageBubble({ message }: { message: AIChatMessage }) {
 }
 
 /**
- * A self-contained Chat Session panel (Story 6.3, AC1, AC2, AC4, AC5).
+ * A self-contained Chat Session panel.
  *
- * Renders the session's full message history (oldest first, `useChatMessages`'s own AC5
+ * Renders the session's full message history (oldest first, `useChatMessages`'s own
  * ordering), a text input + Send button wired to `useSendChatMessage`, an in-flight indicator
  * while a reply is generating (matching `SmartChefPage.tsx`'s own `CircularProgress` + text
  * "generating" precedent rather than a new spinner shape), and an inline error Alert on a failed
- * send (AC4 — a failed send must render a clear failure state, not a silently-stuck "sending").
+ * send — a failed send must render a clear failure state, not a silently-stuck "sending".
  *
  * An empty message list (a freshly created session with zero messages yet) renders no special
- * copy — no AC names an empty-messages state distinct from "No chat sessions yet" (AC6, which is
- * about the sessions list, not one open session's own history).
+ * copy: the "No chat sessions yet" message is about the sessions list, not one open
+ * session's own history.
  *
  * @param sessionId - The Chat Session this panel renders and sends into.
  * @param suggestionId - The Recipe Suggestion this session is tied to, when applicable (this

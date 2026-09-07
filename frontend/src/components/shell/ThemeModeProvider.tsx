@@ -70,11 +70,10 @@ export function useThemeMode(): ThemeModeContextValue {
  *
  * Persists the mode per browser/terminal (not per user account) in
  * localStorage. With no stored preference yet, defaults to dark for a Cook
- * (Kitchen Display's home surface) and light for every other Role, per AC4.
+ * (Kitchen Display's home surface) and light for every other Role.
  * Once a preference is stored, it wins regardless of Role. Before the
  * current User's Role is known (still loading, or on the pre-auth Login
- * screen), the default is light, matching every non-Cook Role and the Login
- * mockup itself.
+ * screen), the default is light, matching every non-Cook Role.
  *
  * @param children - The subtree to theme.
  * @returns The themed subtree, wrapped with CssBaseline.

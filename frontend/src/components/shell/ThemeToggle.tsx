@@ -7,8 +7,7 @@ import { useThemeMode } from "./ThemeModeProvider";
 /**
  * App bar control that flips the light/dark theme mode.
  *
- * Stock MUI IconButton, no visual override, per DESIGN.md's
- * {components.theme-toggle}.
+ * Stock MUI IconButton, no visual override.
  *
  * @returns The toggle button, labelled with the mode it will switch to.
  */

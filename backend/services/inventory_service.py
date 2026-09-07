@@ -43,7 +43,7 @@ class InventoryService:
             realtime_service: Injected push-notification service, used to
                 broadcast inventory.alerts_changed when a Stock Movement
                 crosses an Ingredient's shortage threshold in either
-                direction (Story 4.2).
+                direction.
         """
         self._logger = logger
         self._realtime_service = realtime_service
@@ -64,10 +64,10 @@ class InventoryService:
         return result.scalars().all()
 
     async def list_alerts(self, db: AsyncSession) -> Sequence[Ingredient]:
-        """List every Ingredient currently in shortage (FR-14).
+        """List every Ingredient currently in shortage.
 
-        A Low-Stock Alert is a derived state, not a stored entity (see the
-        story's Scope note): an Ingredient is "in shortage" whenever its
+        A Low-Stock Alert is a derived state, not a stored entity: an
+        Ingredient is "in shortage" whenever its
         current_stock is strictly below its min_stock_threshold, computed
         fresh on every call. There is nothing to create, dedupe, or clear —
         at most one row per Ingredient exists to begin with, so "at most one
@@ -254,22 +254,22 @@ class InventoryService:
     async def record_movement(
         self, db: AsyncSession, actor: User, ingredient_id: int, payload: CreateStockMovementRequest
     ) -> StockMovement:
-        """Log a manual Stock Movement and update the Ingredient's current stock (AC1/AC2).
+        """Log a manual Stock Movement and update the Ingredient's current stock.
 
-        Not a guarded UPDATE (trap 18 does not apply here): nothing about the Ingredient's own
+        Not a guarded UPDATE: nothing about the Ingredient's own
         state blocks a movement the way an OrderItem's status blocks an edit. It is still a
         read-modify-write on current_stock, so the read locks the row (mirrors MenuService's
-        _lock_dish, trap 9's shape): without the lock, two concurrent movements on the same
+        _lock_dish): without the lock, two concurrent movements on the same
         Ingredient would both read the same starting current_stock and the later commit would
         silently discard the earlier delta, even though both StockMovement audit rows would still
-        insert correctly, leaving current_stock disagreeing with its own audit trail (NFR-4). Both
-        the Ingredient update and the new StockMovement insert commit together in one transaction
-        (NFR-4). purchase/waste apply as +/-quantity; adjustment applies payload.quantity as
+        insert correctly, leaving current_stock disagreeing with its own audit trail. Both
+        the Ingredient update and the new StockMovement insert commit together in one transaction.
+        purchase/waste apply as +/-quantity; adjustment applies payload.quantity as
         already signed. current_stock is rejected cleanly (before any mutation) if the movement
-        would drive it negative (AD-16 reversed): manual movements can no longer drive stock below
+        would drive it negative: manual movements can no longer drive stock below
         zero.
 
-        Story 4.2: broadcasts inventory.alerts_changed to warehouse_manager connections, but only
+        Broadcasts inventory.alerts_changed to warehouse_manager connections, but only
         when this movement crosses the shortage threshold in either direction (current_stock <
         min_stock_threshold flips), not on every movement. was_low is read for free from the
         Ingredient row _lock_ingredient already loaded, no extra query; is_low still costs the
@@ -313,7 +313,7 @@ class InventoryService:
 
         delta = -payload.quantity if payload.movement_type == MovementType.waste else payload.quantity
 
-        # Checked before any mutation (no rollback needed, nothing written yet): AD-16 reversed,
+        # Checked before any mutation (no rollback needed, nothing written yet):
         # a manual movement that would drive current_stock negative is rejected cleanly rather
         # than applied in full past zero.
         if ingredient.current_stock + delta < 0:
@@ -369,14 +369,14 @@ class InventoryService:
     async def apply_consumption(
         self, db: AsyncSession, ingredient_id: int, quantity: Decimal, actor_id: int, order_id: int
     ) -> bool:
-        """Deduct a Recipe-driven consumption amount from an Ingredient (FR-13, Story 5.2).
+        """Deduct a Recipe-driven consumption amount from an Ingredient.
 
-        Reuses record_movement's own row-lock (trap 9) and threshold-crossing shape, but is a
+        Reuses record_movement's own row-lock and threshold-crossing shape, but is a
         distinct method rather than a call to record_movement, for two reasons: (1)
         CreateStockMovementRequest explicitly rejects movement_type=consumption as manually
         submittable, so record_movement's payload contract cannot represent this call at all; (2)
         this deduction must be atomic with OrderService.pick_up_item's own OrderItem status UPDATE
-        (AD-6, NFR-3) — record_movement commits its own transaction, which would let the stock
+         — record_movement commits its own transaction, which would let the stock
         deduction land even if the status UPDATE's guard later failed, or vice versa. So this
         method locks the Ingredient row and stages both the current_stock decrement and the
         StockMovement insert on the given session, but deliberately does not call db.commit() or
@@ -390,11 +390,11 @@ class InventoryService:
             ingredient_id: The id of the Ingredient being consumed.
             quantity: The amount to deduct (RecipeIngredient.quantity * OrderItem.quantity),
                 always applied as a subtraction. Rejected before any mutation if it would drive
-                current_stock negative (AD-16 reversed) — see InsufficientStockError below.
+                current_stock negative — see InsufficientStockError below.
             actor_id: The id of the Cook performing the triggering pick-up, recorded as the
                 StockMovement's performed_by.
             order_id: The id of the Order whose item triggered this consumption, recorded as the
-                StockMovement's reference_id (FR-13's "referencing the Order").
+                StockMovement's reference_id, so the deduction is traceable to its Order.
 
         Returns:
             True if this deduction crosses the Ingredient's shortage threshold in either
@@ -405,16 +405,28 @@ class InventoryService:
             IngredientNotFoundError: If no Ingredient matches ingredient_id.
             InsufficientStockError: If this deduction would drive current_stock below zero. The
                 caller (OrderService.pick_up_item) is responsible for rolling back any earlier
-                deduction already staged on this same session in the same loop (AD-6, whole-item
-                all-or-nothing) — this method itself only guards its own single deduction.
+                deduction already staged on this same session in the same loop (a pick-up is
+                whole-item all-or-nothing) — this method guards only its own single deduction.
         """
         ingredient = await self._lock_ingredient(db, ingredient_id)
+
+        # A deactivated Ingredient is treated as zero available stock, not skipped: a Recipe
+        # line on it can never be fulfilled regardless of current_stock, so this raises the same
+        # InsufficientStockError a real shortage would (matches max_preparable_quantities below,
+        # which also floors a deactivated line's contribution to 0).
+        if not ingredient.is_active:
+            self._logger.warning(
+                "Consumption rejected for order_id={}: ingredient_id={} is deactivated",
+                order_id,
+                ingredient_id,
+            )
+            raise InsufficientStockError()
 
         was_low = ingredient.current_stock < ingredient.min_stock_threshold
 
         # Checked before any mutation on this Ingredient (no partial effect for this one line);
         # the caller is responsible for discarding any earlier line's already-staged deduction in
-        # the same pick-up (AD-6, whole-item all-or-nothing rejection).
+        # the same pick-up (whole-item all-or-nothing rejection).
         if ingredient.current_stock - quantity < 0:
             self._logger.warning(
                 "Consumption rejected for order_id={}: ingredient_id={} current_stock={} "
@@ -441,8 +453,8 @@ class InventoryService:
         return was_low != is_low
 
     async def max_preparable_quantity(self, db: AsyncSession, dish_id: int) -> int:
-        """How many portions of one Dish current stock supports right now (this batch, FR-18's
-        stock-aware availability check, applied to the kitchen pick-up/reject flow).
+        """How many portions of one Dish current stock supports right now (the stock-aware
+        availability check behind the kitchen pick-up/reject flow).
 
         A single-dish convenience over `max_preparable_quantities` below — see that method for the
         actual computation and its edge cases.
@@ -466,14 +478,16 @@ class InventoryService:
         prepared" display (the Kitchen Display's insufficient-stock warning) and the message
         `OrderService.reject_item` records for the Waiter. The authoritative check stays
         `apply_consumption`'s own guard at the moment of an actual pick-up; a stock change between
-        this read and that write is expected and already handled there (AD-6's guarded-UPDATE
-        pattern), not a bug in this method.
+        this read and that write is expected and already handled there by its guarded UPDATE,
+        not a bug in this method.
 
         For each Dish, the answer is `min` over its Recipe Ingredient lines of
         `floor(Ingredient.current_stock / RecipeIngredient.quantity)` — the single scarcest
         ingredient line caps how many whole portions are possible, the same reasoning
         `InventoryService.apply_consumption` applies per-line but this method applies across a
-        whole recipe at once.
+        whole recipe at once. A line on a deactivated Ingredient contributes 0 regardless of its
+        current_stock, matching `apply_consumption`'s own guard: a deactivated Ingredient is
+        treated as out of stock, not as unlimited or as absent from the recipe.
 
         Args:
             db: The active database session.
@@ -489,13 +503,21 @@ class InventoryService:
         if not dish_ids:
             return {}
         result = await db.execute(
-            select(RecipeIngredient.dish_id, RecipeIngredient.quantity, Ingredient.current_stock)
+            select(
+                RecipeIngredient.dish_id,
+                RecipeIngredient.quantity,
+                Ingredient.current_stock,
+                Ingredient.is_active,
+            )
             .join(Ingredient, RecipeIngredient.ingredient_id == Ingredient.id)
             .where(RecipeIngredient.dish_id.in_(dish_ids))
         )
         max_by_dish: dict[int, int] = {}
-        for dish_id, recipe_quantity, current_stock in result.all():
-            preparable = int(current_stock // recipe_quantity)
+        for dish_id, recipe_quantity, current_stock, is_active in result.all():
+            # A deactivated line caps its Dish at 0, same as apply_consumption's own guard above:
+            # it isn't excluded from the min() (that would let the Dish's other, active lines
+            # decide availability instead), it forces it.
+            preparable = int(current_stock // recipe_quantity) if is_active else 0
             if dish_id not in max_by_dish or preparable < max_by_dish[dish_id]:
                 max_by_dish[dish_id] = preparable
         return max_by_dish
@@ -525,7 +547,7 @@ class InventoryService:
         Without a lock, two concurrent movements on the same Ingredient both read the same
         starting current_stock and the later commit silently overwrites the earlier delta, even
         though both StockMovement audit rows still insert correctly (mirrors MenuService._lock_dish,
-        trap 9's shape: lock the one row every caller contends on, so they serialize instead of
+        which locks the one row every caller contends on, so they serialize instead of
         racing or deadlocking).
 
         Args:

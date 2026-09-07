@@ -11,7 +11,7 @@ import {
 import config from "../../config/config";
 import { ConnectionStatusProvider, type ConnectionStatus } from "./ConnectionStatusContext";
 
-/** One push notification, in the `{domain}.{event}` envelope Story 1.5 fixes for every emitter. */
+/** One push notification, in the `{domain}.{event}` envelope every emitter uses. */
 interface RealtimeMessage {
   event: string;
   payload: unknown;
@@ -104,19 +104,19 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
 }
 
 /**
- * Owns the app's single WebSocket connection and drives Story 1.4's
+ * Owns the app's single WebSocket connection and drives the
  * transport-agnostic `ConnectionStatusContext` from its real state.
  *
  * Mounted only inside RequireAuth's authenticated subtree, never at App.tsx's
- * top level: the backend rejects an unauthenticated handshake anyway (AD-2's
- * AC2), and retrying against /api/ws from the pre-login screen would be pure
+ * top level: the backend rejects an unauthenticated handshake anyway,
+ * and retrying against /api/ws from the pre-login screen would be pure
  * waste. Retries with capped exponential backoff on a transient close, reset
- * to the initial delay once a connection succeeds (AC6). A 1008 policy
+ * to the initial delay once a connection succeeds. A 1008 policy
  * close (expired session, disallowed Origin) is not retried, since nothing
  * will change until the User signs in again; the status is left at
  * "reconnecting" so the shell still shows something is wrong, rather than
  * silently claiming "connected". The client never sends anything over the
- * socket (AD-2: "Clients never treat the WebSocket as a write channel"), it
+ * socket (clients never treat the WebSocket as a write channel), it
  * only receives.
  *
  * @param children - The subtree that can read connection status and

@@ -20,7 +20,7 @@ import type { Table } from "../../types/table";
 /**
  * Reads the human-readable message off a failed request.
  *
- * Accepts `Error | null` (not just `Error`) since Story 5.3's combined `isTablesError ||
+ * Accepts `Error | null` (not just `Error`) since the combined `isTablesError ||
  * isOpenOrdersError` breaks the discriminated-union narrowing TanStack Query's single-query
  * destructuring otherwise gives `error` for free — the caller now has to pass whichever of two
  * independent queries' `error` fields actually failed, and either can be null while the other
@@ -40,16 +40,16 @@ function errorMessage(error: Error | null): string {
  * One tile of the Tables grid.
  *
  * An `available` tile opens the Table into a new Order and navigates to its
- * detail page (AC1, Story 3.1). An `occupied` tile has an already-open Order
- * on it (Story 3.2 built that detail page's real content), so it navigates
+ * detail page. An `occupied` tile has an already-open Order
+ * on it, so it navigates
  * straight there with no open call. A `reserved` tile stays a read-only
- * status display, there is no reservation-arrival flow in v1 (PRD FR-4) so
+ * status display, there is no reservation-arrival flow in v1 so
  * nothing exists yet for a Waiter to reach by clicking it.
  *
- * Story 5.3: an `occupied` tile whose Order has reached `ready` additionally renders the
- * attention-state Chip (DESIGN.md's `table-tile.attention-state`, the same green/check
- * treatment as a `ready` OrderItemStatusBadge), layered next to the base table-status Chip,
- * never replacing it (AC4).
+ * An `occupied` tile whose Order has reached `ready` additionally renders the
+ * attention-state Chip (the same green/check treatment as a `ready`
+ * OrderItemStatusBadge), layered next to the base table-status Chip,
+ * never replacing it.
  *
  * @param table - The Table this tile describes.
  * @param onOpen - Called with this Table's id when an available tile is clicked.
@@ -57,7 +57,7 @@ function errorMessage(error: Error | null): string {
  * @param disabled - Whether an open request is currently in flight, shared
  *   page-wide across every tile so a second click cannot open a different
  *   Table while the first request is still resolving.
- * @param isReadyForAttention - Whether this Table's open Order has reached `ready` (AC4).
+ * @param isReadyForAttention - Whether this Table's open Order has reached `ready`.
  * @returns The tile for this Table.
  */
 function TableTile({
@@ -108,22 +108,20 @@ function TableTile({
 }
 
 /**
- * The Waiter's Tables grid (Story 3.1, extended by Story 3.2 and 3.3).
+ * The Waiter's Tables grid.
  *
- * Every Restaurant Table rendered as a tile with its status badge (AC3).
- * Clicking an available tile opens it into a new Order (AC1, Story 3.1) and
+ * Every Restaurant Table rendered as a tile with its status badge.
+ * Clicking an available tile opens it into a new Order and
  * navigates to its detail page. Clicking an occupied tile navigates straight
- * to that same detail page without opening anything, since Story 3.2 gave
- * that page real content (the Order's item list and add-dish form) — before
- * that story, an occupied tile had no click affordance at all because there
- * was nothing to see there yet. A reserved tile still has no click
+ * to that same detail page without opening anything, since that page holds
+ * the Order's item list and add-dish form. A reserved tile has no click
  * affordance, v1 has no reservation-arrival flow. Reuses `tableService.ts`'s
- * existing `useTables()` (Story 2.4's `GET /api/tables`, widened in Story 3.1
- * to permit a Waiter), rather than adding a second Table-list endpoint or hook.
- * Subscribes to the live `table.status_changed` push (Story 3.3) so another
- * Waiter opening a Table updates this grid without a manual refresh. Story 5.3 adds a second
+ * existing `useTables()` (`GET /api/tables`, which permits a Waiter) rather
+ * than adding a second Table-list endpoint or hook.
+ * Subscribes to the live `table.status_changed` push so another
+ * Waiter opening a Table updates this grid without a manual refresh. A second
  * query, `useOpenOrders()` (the bulk `GET /api/orders` read), resolved client-side into a
- * table_id -> `ready` lookup so occupied tiles can render the attention-state treatment (AC4),
+ * table_id -> `ready` lookup so occupied tiles can render the attention-state treatment,
  * and a second live subscription, `order.status_changed`, keeping that lookup live.
  *
  * @returns The Tables page.
@@ -163,7 +161,7 @@ export function TablesPage() {
     void refetchOpenOrders();
   };
 
-  // The set of table_ids whose open Order has reached `ready` (AC4). Only `occupied` tiles are
+  // The set of table_ids whose open Order has reached `ready`. Only `occupied` tiles are
   // ever consulted against this set (a Table only gets an Order via open_table, gated on
   // status == available; reserved/available tiles never have one in v1), but the set itself is
   // built off every open Order regardless of Table status, cheaper than filtering first.
@@ -172,14 +170,14 @@ export function TablesPage() {
     [openOrders],
   );
 
-  // Story 3.3: Observer/Pub-Sub. This component subscribes to the
+  // Observer/Pub-Sub. This component subscribes to the
   // table.status_changed event OrderService publishes without knowing which
   // Waiter's action triggered it, so any Waiter opening any Table flips its
-  // status live for every other connected Waiter (AC2/AC3). Invalidating
+  // status live for every other connected Waiter. Invalidating
   // the existing tables query is the refetch signal, matching this
   // codebase's established invalidate-then-refetch mutation pattern rather
   // than merging the pushed payload directly into the cache.
-  // Story 5.3: order.status_changed is a second, distinct event (an Order's derived status
+  // order.status_changed is a second, distinct event (an Order's derived status
   // moving, not a Table's own status), invalidating the open-orders query instead so the
   // attention-state lookup above stays live.
   useEffect(() => {

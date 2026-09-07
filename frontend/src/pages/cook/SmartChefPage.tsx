@@ -30,9 +30,9 @@ type ActiveDiscussion =
   | null;
 
 /**
- * Puts the current Cook's own items first, preserving each group's own relative order (AC3,
- * AD-10's sort-not-filter personalization). A plain client-side sort over an already-fetched
- * list, never a second server-side query parameter (AD-9).
+ * Puts the current Cook's own items first, preserving each group's own relative order.
+ * Personalization is a sort, never a filter: a plain client-side sort over an already-fetched
+ * list, never a second server-side query parameter.
  *
  * @param items - The already-fetched list, in its original (server) order.
  * @param currentUserId - The signed-in Cook's own id, or undefined while still loading.
@@ -62,12 +62,12 @@ function errorMessage(error: Error): string {
 }
 
 /**
- * One Recipe Suggestion card (Story 6.1, AC6; "Discuss via chat" added Story 6.3, AC1).
+ * One Recipe Suggestion card.
  *
  * Shows the suggestion's content, plus a "Discuss via chat" action that always starts a new
- * Chat Session tied to this suggestion (Scope note: never find-or-resumes an existing one — the
+ * Chat Session tied to this suggestion (never find-or-resumes an existing one — the
  * Chat Sessions list below is what reopens one). No Confirm/Dismiss actions render here: that
- * stays Story 6.2's Admin-only action, out of scope for this Cook-facing page.
+ * stays an Admin-only action, out of scope for this Cook-facing page.
  *
  * `requested_by` is shown as a raw `User #{id}`, not a resolved name: no endpoint a Cook can call
  * resolves a user id to a name (the same precedent `StockMovement`'s own "Recorded by" column
@@ -127,11 +127,11 @@ function SuggestionCard({
 }
 
 /**
- * One row in the Chat Sessions list (Story 6.3, AC3, AC6).
+ * One row in the Chat Sessions list.
  *
  * Clicking the row opens that exact session's history inline below it — the one place a
  * different Cook's session (or the current Cook's own, from an earlier visit) becomes reachable
- * again, satisfying AC3 concretely.
+ * again.
  *
  * @param session - The Chat Session this row describes.
  * @param isActive - Whether this session's panel is the one currently open.
@@ -167,12 +167,11 @@ function ChatSessionRow({
 }
 
 /**
- * The Cook's Smart Chef surface (Story 6.1).
+ * The Cook's Smart Chef surface.
  *
  * A request bar (optional free-text direction + "Request suggestion") and a list of the Cook's
  * persisted Recipe Suggestions, newest first (`useSuggestions`'s own `id.desc()` order),
- * matching the mockup's own "N recipe suggestions" subtitle and the `EXPERIENCE.md`-specified
- * empty/generating/error states (AC1-AC4, AC6).
+ * with an "N recipe suggestions" subtitle and explicit empty/generating/error states.
  *
  * @returns The Smart Chef page.
  */
@@ -203,8 +202,8 @@ export function SmartChefPage() {
     event.preventDefault();
     if (generateMutation.isPending) {
       // Re-checks the pending state directly rather than trusting the disabled button alone —
-      // Enter submits a form regardless of a disabled submit button (AC3's primary UX
-      // mechanism; the backend's 409 is the defense-in-depth backstop, not relied on here).
+      // Enter submits a form regardless of a disabled submit button. This is the primary
+      // guard; the backend's 409 is the defense-in-depth backstop, not relied on here.
       return;
     }
     const trimmedDirection = direction.trim();

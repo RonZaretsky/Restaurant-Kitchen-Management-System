@@ -319,6 +319,58 @@ async def test_a_pending_item_with_insufficient_stock_reports_its_true_max_prepa
 
 
 @pytest.mark.asyncio
+async def test_a_pending_item_on_a_deactivated_ingredient_reports_zero_preparable(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Arrange: plenty of current_stock, but the Ingredient itself is deactivated — must report 0
+    # preparable, not the stock-derived quantity, matching apply_consumption's own guard.
+    order, _table = await _open_table(client, db_session, table_number=1)
+    await _create_user(db_session, "dish-admin-Deactivated Stock Dish", UserRole.admin)
+    await _login(client, "dish-admin-Deactivated Stock Dish")
+    category_response = await client.post("/api/menu/categories", json={"name": "Deactivated Stock Dish Category"})
+    assert category_response.status_code == 201
+    category = category_response.json()
+    dish_response = await client.post(
+        "/api/menu/dishes",
+        json={
+            "name": "Deactivated Stock Dish",
+            "price": "12.50",
+            "category_id": category["id"],
+            "prep_time_minutes": 15,
+        },
+    )
+    assert dish_response.status_code == 201
+    dish = dish_response.json()
+    ingredient = Ingredient(
+        name="Deactivated Stock Dish Ingredient", unit=Unit.kg, current_stock="10.000", min_stock_threshold="1.000"
+    )
+    db_session.add(ingredient)
+    await db_session.commit()
+    await db_session.refresh(ingredient)
+    recipe_response = await client.post(
+        f"/api/menu/dishes/{dish['id']}/recipe-ingredients",
+        json={"ingredient_id": ingredient.id, "quantity": "1.000", "unit": "kg"},
+    )
+    assert recipe_response.status_code == 201
+    available_response = await client.patch(f"/api/menu/dishes/{dish['id']}", json={"is_available": True})
+    assert available_response.status_code == 200
+    dish = available_response.json()
+    deactivate_response = await client.post(f"/api/inventory/ingredients/{ingredient.id}/deactivate")
+    assert deactivate_response.status_code == 200
+    await _login(client, "waiter-1")
+    await _add_item(client, order["id"], dish["id"], quantity=2)
+    await _login_as(client, db_session, UserRole.cook, "amir")
+
+    # Act
+    response = await client.get("/api/kitchen/items")
+
+    # Assert
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["max_preparable_quantity"] == 0
+
+
+@pytest.mark.asyncio
 async def test_an_in_preparation_items_max_preparable_quantity_is_its_own_quantity(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:

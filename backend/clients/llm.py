@@ -4,7 +4,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 # Bounds how long a single generation can occupy AIService's in-process "in flight" slot for a
-# Cook (AD-14) — without this, a hung or very slow OpenAI call would lock that Cook out of ever
+# Cook — without this, a hung or very slow OpenAI call would lock that Cook out of ever
 # generating again until the process restarts, since nothing else clears the slot (review
 # finding). 45s comfortably covers a normal completion while still failing well inside any
 # reasonable request timeout on the caller's side.
@@ -12,12 +12,12 @@ _REQUEST_TIMEOUT_SECONDS = 45.0
 
 
 class LLMClient:
-    """The only place `openai` is imported in this codebase (AD-12, Story 6.1).
+    """The only place `openai` is imported in this codebase.
 
     The first external-service client in the project — `clients/database.py`/`clients/
     websocket.py` are both internal. `services/` depends only on this class's method signatures,
     never on the `openai` package directly, so the integration stays swappable/mockable in tests
-    without touching any service. Future Smart Chef calls (Story 6.3's chat) extend this same
+    without touching any service. Future Smart Chef calls (such as chat) extend this same
     class rather than introducing a second OpenAI client.
     """
 
@@ -33,7 +33,7 @@ class LLMClient:
         # `AsyncOpenAI(api_key="")` raises immediately at construction (confirmed empirically
         # against the installed SDK) — if that ran eagerly here, a never-configured key would
         # surface as a raw, unhandled error the first time this Singleton is constructed, not
-        # FR-21's intended graceful 502 (review finding). Deferring construction until a real
+        # intended graceful 502. Deferring construction until a real
         # call is made means the failure instead happens inside generate_recipe, which
         # AIService already wraps and translates.
         self._client = AsyncOpenAI(api_key=api_key) if api_key else None
@@ -47,7 +47,7 @@ class LLMClient:
         parseable structured response. Any failure (network error, API error, unparseable
         content) propagates to the caller as-is — this method's job is the API call and parsing,
         not deciding what a failure means to the rest of the app; `AIService` (its only caller)
-        translates any exception here into FR-21's graceful-degradation path, and also validates
+        translates any exception here into the graceful-degradation path, and also validates
         the parsed content's shape (this method only guarantees valid JSON, not the expected
         keys).
 
@@ -78,13 +78,13 @@ class LLMClient:
     async def send_chat_message(self, messages: list[dict[str, str]]) -> str:
         """Send a chat conversation to the configured model and return its free-text reply.
 
-        Story 6.3's own extension of this class (per its own docstring above, "future Smart Chef
-        calls extend this same class rather than introducing a second OpenAI client", AD-12).
+        The chat extension of this class, per its own docstring above: "future Smart Chef
+        calls extend this same class rather than introducing a second OpenAI client".
         Same call shape as `generate_recipe`, but no `response_format` (a chat reply is free
         text, not a structured suggestion) and returns the plain string content directly instead
         of parsing it as JSON. Any failure propagates to the caller as-is, same contract as
         `generate_recipe` — this method's job is the API call, not deciding what a failure means;
-        `AIService` (its only caller) translates any exception here into FR-21's
+        `AIService` (its only caller) translates any exception here into the
         graceful-degradation path.
 
         Args:

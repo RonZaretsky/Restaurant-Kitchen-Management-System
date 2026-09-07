@@ -35,7 +35,7 @@ const INVALID_AMOUNT_MESSAGE = "Enter a number, zero or greater";
 
 const UNIT_OPTIONS: Unit[] = ["kg", "liter", "piece"];
 
-/** The four sortable columns (this batch's #6). */
+/** The four sortable columns. */
 type SortableColumn = "name" | "unit" | "current_stock" | "min_stock_threshold";
 type SortOrder = "asc" | "desc";
 
@@ -80,7 +80,7 @@ function parseNonNegativeAmount(raw: string): string | null {
 }
 
 /**
- * Compares two Ingredients by one sortable column (this batch's #6).
+ * Compares two Ingredients by one sortable column.
  *
  * `current_stock`/`min_stock_threshold` compare numerically (parsed off their
  * Decimal-as-string wire shape), `name`/`unit` compare via `localeCompare`,
@@ -108,7 +108,7 @@ interface IngredientRowProps {
  * One row of the Ingredients list, owning its own deactivate-confirmation state.
  *
  * Mirrors UsersPage's UserListRow: an Active/Inactive Chip plus an in-row
- * Deactivate/Reactivate action (this batch's #3/#4), the same
+ * Deactivate/Reactivate action, the same
  * `"Deactivate {name}?"` inline-confirm pattern rather than a new dialog.
  * Action buttons stop click propagation so they never also trigger the row's
  * own navigate-to-detail click handler.
@@ -221,27 +221,25 @@ function IngredientRow({ ingredient, inShortage, onNavigate }: IngredientRowProp
 }
 
 /**
- * The Ingredients surface (Story 2.6, replacing Story 1.4's placeholder).
+ * The Ingredients surface.
  *
  * An always-visible "Add ingredient" form and a dense-row list (Name / Unit /
- * Current stock / Threshold / Status / Actions) of every Ingredient (AC4).
- * Story 4.1 added row click-through to the Ingredient detail page, since that
- * is plain navigation and needs no comparison logic (unlike sorting/
- * highlighting), and without it Story 4.1's own detail page (stat cards,
- * log-movement form, movement history) had no discoverable entry point from
- * this screen.
+ * Current stock / Threshold / Status / Actions) of every Ingredient.
+ * Each row clicks through to the Ingredient detail page (stat cards,
+ * log-movement form, movement history), which otherwise has no discoverable
+ * entry point from this screen.
  *
- * Story 4.3 added the shortage row treatment: in-shortage rows (reusing
- * useAlerts()'s already-derived shortage list, Story 4.2, not a second
+ * The shortage row treatment: in-shortage rows (reusing useAlerts()'s
+ * already-derived shortage list, not a second
  * current_stock < min_stock_threshold comparison here) render a
  * WarningAmberIcon plus error-colored text and sort to the top, alphabetical
- * within each group (DESIGN.md's ingredient-row.in-shortage token). Live
+ * within each group. Live
  * updates come free from AppShell.tsx's existing global
  * inventory.alerts_changed subscription invalidating the shared
  * ALERTS_QUERY_KEY this page's own useAlerts() call reads from — no second
  * subscription needed here.
  *
- * This batch's #6 added standard MUI TableSortLabel sorting on all four
+ * Standard MUI TableSortLabel sorting is available on all four
  * original columns: the shortage-first-then-alphabetical order above stays
  * the *initial* state (`sortColumn === null`); clicking a header switches to
  * sorting the full list by that column (asc, then desc on a repeated click of
@@ -249,8 +247,8 @@ function IngredientRow({ ingredient, inShortage, onNavigate }: IngredientRowProp
  * the active sort order — it is an orthogonal visual treatment, not a sort
  * key.
  *
- * This batch's #3/#4 added a Status column (Active/Inactive Chip) and a
- * per-row Deactivate/Reactivate action mirroring UsersPage's own in-row
+ * A Status column (Active/Inactive Chip) and a per-row
+ * Deactivate/Reactivate action mirror UsersPage's own in-row
  * confirm pattern, backed by useDeactivateIngredient/useReactivateIngredient.
  *
  * @returns The Ingredients page.
@@ -307,7 +305,7 @@ export function IngredientsPage() {
       const direction = sortOrder === "asc" ? 1 : -1;
       return [...ingredients].sort((a, b) => direction * compareByColumn(a, b, sortColumn));
     }
-    // The default view: shortage-first, then alphabetical (Story 4.3, unchanged).
+    // The default view: shortage-first, then alphabetical.
     const withShortageFlag = ingredients.map((ingredient) => ({
       ingredient,
       inShortage: shortageIds.has(ingredient.id),

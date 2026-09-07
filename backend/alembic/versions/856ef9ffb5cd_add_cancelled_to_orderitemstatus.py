@@ -19,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add the cancelled value to the orderitemstatus Postgres enum (AD-11).
+    """Add the cancelled value to the orderitemstatus Postgres enum.
 
     Autogenerate cannot see enum value additions, this has to be written by
     hand. Safe to run inside Alembic's transactional DDL on Postgres 12+, as

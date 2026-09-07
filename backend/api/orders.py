@@ -23,17 +23,16 @@ from services.order_service import OrderService
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
-# Opening a table into an Order is Waiter-only (FR-4). Unlike every prior
+# Opening a table into an Order is Waiter-only. Unlike every prior
 # domain router (Admin-only, or Admin plus one other Role), this is the first
 # route scoped to exactly one non-Admin Role with no Admin fallback.
 OrdersDep = Annotated[User, Depends(require_role(UserRole.waiter))]
 
-# Cancel is the one route in this file NOT waiter-only (FR-7): a Cook or Admin
+# Cancel is the one route in this file NOT waiter-only: a Cook or Admin
 # can also cancel, though neither role has a screen that reaches this endpoint
-# yet (Epic 5 builds Cook's Kitchen Display). Edit stays on the existing
-# waiter-only OrdersDep, unchanged. The first three-Role require_role call in
-# the project; require_role already supports any number of Roles (trap 8), no
-# change needed to it.
+# yet. Edit stays on the existing waiter-only OrdersDep, unchanged.
+# require_role already accepts any number of Roles, so no change was needed
+# to it for this three-Role case.
 OrderItemCancelDep = Annotated[User, Depends(require_role(UserRole.waiter, UserRole.cook, UserRole.admin))]
 
 # Pick-up and mark-ready are Cook-only (plus Admin), unlike every other route in this file
@@ -42,7 +41,7 @@ OrderItemCancelDep = Annotated[User, Depends(require_role(UserRole.waiter, UserR
 OrderItemProgressDep = Annotated[User, Depends(require_role(UserRole.cook, UserRole.admin))]
 
 # Path ids need the same int4 upper bound their request-body counterparts carry
-# (trap 16), matching api/tables.py's own TableIdPath.
+# so an out-of-range value 422s instead of 500ing, matching api/tables.py's TableIdPath.
 TableIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
 OrderIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
 ItemIdPath = Annotated[int, Path(gt=0, le=_INT4_MAX)]
@@ -135,7 +134,7 @@ async def list_open_orders(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> Sequence[Order]:
-    """List every currently open (non-closed) Order, across every Table (Story 5.3, AC4).
+    """List every currently open (non-closed) Order, across every Table.
 
     Backs the Tables grid's bulk read of Order status, so it can resolve which occupied Tables
     have a ready Order without an N+1 request per tile.
@@ -164,7 +163,7 @@ async def open_table(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> Order:
-    """Mark an available Table occupied and start a new Order on it (AC1).
+    """Mark an available Table occupied and start a new Order on it.
 
     Args:
         table_id: The id of the Table to open.
@@ -229,7 +228,7 @@ async def list_order_items(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> Sequence[OrderItem]:
-    """List every Order Item on an Order, in id order (AC3).
+    """List every Order Item on an Order, in id order.
 
     Args:
         order_id: The id of the Order whose items are being listed.
@@ -261,7 +260,7 @@ async def add_order_item(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> OrderItem:
-    """Add a new Order Item to an Order, at status pending (AC1).
+    """Add a new Order Item to an Order, at status pending.
 
     Args:
         order_id: The id of the Order the item is being added to.
@@ -279,7 +278,7 @@ async def add_order_item(
         DishNotFoundError: Propagated from order_service, handled globally
             as a 404, if no Dish matches payload.dish_id.
         DishNotAvailableError: Propagated from order_service, handled
-            globally as a 409, if the Dish is currently unavailable (AC2).
+            globally as a 409, if the Dish is currently unavailable.
     """
     return await order_service.add_item(db, actor, order_id, payload)
 
@@ -298,7 +297,7 @@ async def edit_order_item(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> OrderItem:
-    """Edit a pending Order Item's quantity and/or note (AC1).
+    """Edit a pending Order Item's quantity and/or note.
 
     Args:
         order_id: The id of the Order the item belongs to.
@@ -316,7 +315,7 @@ async def edit_order_item(
             globally as a 404, if no Order Item matches item_id on order_id.
         OrderItemNotPendingError: Propagated from order_service, handled
             globally as a 409, if the item's status is not pending at the
-            moment of the write (AC4).
+            moment of the write.
     """
     return await order_service.edit_item(db, actor, order_id, item_id, payload)
 
@@ -334,7 +333,7 @@ async def cancel_order_item(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> OrderItem:
-    """Cancel a pending or in_preparation Order Item (AC2/AC3).
+    """Cancel a pending or in_preparation Order Item.
 
     Args:
         order_id: The id of the Order the item belongs to.
@@ -369,7 +368,7 @@ async def pick_up_order_item(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> OrderItem:
-    """Pick up a pending Order Item, deducting its Recipe's stock atomically (AC1, AC2, AC4, AC7, AC8).
+    """Pick up a pending Order Item, deducting its Recipe's stock atomically.
 
     Args:
         order_id: The id of the Order the item belongs to.
@@ -410,7 +409,7 @@ async def reject_order_item(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> OrderItem:
-    """Reject a pending Order Item the kitchen cannot currently prepare (this batch).
+    """Reject a pending Order Item the kitchen cannot currently prepare.
 
     Args:
         order_id: The id of the Order the item belongs to.
@@ -445,7 +444,7 @@ async def mark_order_item_ready(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> OrderItem:
-    """Mark an in_preparation Order Item ready, a pure status change (AC3, AC5, AC6, AC8).
+    """Mark an in_preparation Order Item ready, a pure status change.
 
     Args:
         order_id: The id of the Order the item belongs to.
@@ -479,7 +478,7 @@ async def serve_order(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> Order:
-    """Mark a ready (or zero-item) Order served, a pure status change (AC1, AC2, FR-11).
+    """Mark a ready (or zero-item) Order served, a pure status change.
 
     Args:
         order_id: The id of the Order to mark served.
@@ -512,7 +511,7 @@ async def close_order(
     db: SessionDep,
     order_service: OrderService = Depends(Provide[Container.order_service]),
 ) -> Order:
-    """Close a served Order, computing its total and freeing its Table (AC3, AC4, AC5, FR-8).
+    """Close a served Order, computing its total and freeing its Table.
 
     Args:
         order_id: The id of the Order to close.
