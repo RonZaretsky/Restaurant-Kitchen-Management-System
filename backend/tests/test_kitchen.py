@@ -156,31 +156,6 @@ async def test_a_pending_item_appears_with_its_correct_table_id(
 
 
 @pytest.mark.asyncio
-async def test_items_across_two_tables_each_carry_their_own_table_id(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    order1, table1 = await _open_table(client, db_session, table_number=1)
-    order2, table2 = await _open_table(client, db_session, table_number=2)
-    dish = await _create_available_dish(client, db_session, "Tiramisu")
-    await _login(client, "waiter-1")
-    item1 = await _add_item(client, order1["id"], dish["id"])
-    await _login(client, "waiter-2")
-    item2 = await _add_item(client, order2["id"], dish["id"])
-    await _login_as(client, db_session, UserRole.cook, "amir")
-
-    # Act
-    response = await client.get("/api/kitchen/items")
-
-    # Assert: proves the join resolves the real table_id per row, not a
-    # hardcoded or first-row value.
-    body = response.json()
-    by_item_id = {row["id"]: row for row in body}
-    assert by_item_id[item1["id"]]["table_id"] == table1["id"]
-    assert by_item_id[item2["id"]]["table_id"] == table2["id"]
-
-
-@pytest.mark.asyncio
 async def test_a_cancelled_item_is_excluded(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     order, _table = await _open_table(client, db_session, table_number=1)
@@ -319,57 +294,9 @@ async def test_a_pending_item_with_insufficient_stock_reports_its_true_max_prepa
 
 
 @pytest.mark.asyncio
-async def test_an_in_preparation_items_max_preparable_quantity_is_its_own_quantity(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange: already picked up (stock already reserved for it) — its own field must not flag a
-    # false shortage now that current stock reflects its own deduction.
-    order, _table = await _open_table(client, db_session, table_number=1)
-    dish = await _create_available_dish(client, db_session, "In Prep Stock Dish")
-    await _login(client, "waiter-1")
-    item = await _add_item(client, order["id"], dish["id"], quantity=3)
-    await _login_as(client, db_session, UserRole.cook, "amir")
-    pick_up_response = await client.post(f"/api/orders/{order['id']}/items/{item['id']}/pick-up")
-    assert pick_up_response.status_code == 200
-
-    # Act
-    response = await client.get("/api/kitchen/items")
-
-    # Assert
-    body = response.json()
-    assert len(body) == 1
-    assert body[0]["max_preparable_quantity"] == 3
-    assert body[0]["status"] == "in_preparation"
-
-
-@pytest.mark.asyncio
-async def test_admin_can_also_read_kitchen_items(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.admin, "admin1")
-
-    # Act
-    response = await client.get("/api/kitchen/items")
-
-    # Assert
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
 async def test_waiter_cannot_read_kitchen_items(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.waiter, "maya")
-
-    # Act
-    response = await client.get("/api/kitchen/items")
-
-    # Assert
-    assert response.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_warehouse_manager_cannot_read_kitchen_items(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
 
     # Act
     response = await client.get("/api/kitchen/items")

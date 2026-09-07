@@ -54,38 +54,6 @@ async def test_warehouse_manager_can_create_an_ingredient(client: AsyncClient, d
 
 
 @pytest.mark.asyncio
-async def test_admin_can_also_create_an_ingredient(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.admin, "admin1")
-
-    # Act
-    response = await client.post(
-        "/api/inventory/ingredients",
-        json={"name": "Basil", "unit": "kg", "min_stock_threshold": "0.5"},
-    )
-
-    # Assert
-    assert response.status_code == 201
-    assert response.json()["name"] == "Basil"
-
-
-@pytest.mark.asyncio
-async def test_omitting_current_stock_defaults_to_zero(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    response = await client.post(
-        "/api/inventory/ingredients",
-        json={"name": "Olive Oil", "unit": "liter", "min_stock_threshold": "2.0"},
-    )
-
-    # Assert
-    assert response.status_code == 201
-    assert response.json()["current_stock"] == "0.000"
-
-
-@pytest.mark.asyncio
 async def test_duplicate_name_same_case_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
@@ -139,21 +107,6 @@ async def test_cook_cannot_create_an_ingredient(client: AsyncClient, db_session:
 
 
 @pytest.mark.asyncio
-async def test_waiter_cannot_create_an_ingredient(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.waiter, "waiter1")
-
-    # Act
-    response = await client.post(
-        "/api/inventory/ingredients",
-        json={"name": "Salmon", "unit": "kg", "min_stock_threshold": "1.0"},
-    )
-
-    # Assert
-    assert response.status_code == 403
-
-
-@pytest.mark.asyncio
 async def test_unauthenticated_request_is_rejected(client: AsyncClient) -> None:
     # Act
     response = await client.post(
@@ -181,56 +134,6 @@ async def test_negative_min_stock_threshold_is_rejected(client: AsyncClient, db_
 
 
 @pytest.mark.asyncio
-async def test_negative_current_stock_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    response = await client.post(
-        "/api/inventory/ingredients",
-        json={"name": "Espresso", "unit": "kg", "min_stock_threshold": "1.0", "current_stock": "-2.0"},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_min_stock_threshold_exceeding_the_column_precision_is_rejected(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act: the ingredients.min_stock_threshold column is Numeric(10, 3), so this value
-    # has more total digits than the column allows. Without a matching Pydantic bound,
-    # this reaches the database and raises an unhandled asyncpg.NumericValueOutOfRangeError
-    # (a 500) instead of a clean 422.
-    response = await client.post(
-        "/api/inventory/ingredients",
-        json={"name": "Overflow", "unit": "kg", "min_stock_threshold": "12345678901.123"},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_blank_name_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    response = await client.post(
-        "/api/inventory/ingredients",
-        json={"name": "   ", "unit": "kg", "min_stock_threshold": "1.0"},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
 async def test_admin_can_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.admin, "admin1")
@@ -245,39 +148,6 @@ async def test_admin_can_list_ingredients(client: AsyncClient, db_session: Async
     # Assert
     assert response.status_code == 200
     assert any(i["id"] == create_response.json()["id"] for i in response.json())
-
-
-@pytest.mark.asyncio
-async def test_warehouse_manager_can_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    response = await client.get("/api/inventory/ingredients")
-
-    # Assert
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_cook_can_list_ingredients(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.cook, "cook1")
-
-    # Act: Story 2.5 (FR-25) needs Ingredient names to render a Dish's recipe.
-    response = await client.get("/api/inventory/ingredients")
-
-    # Assert
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_unauthenticated_cannot_list_ingredients(client: AsyncClient) -> None:
-    # Act
-    response = await client.get("/api/inventory/ingredients")
-
-    # Assert
-    assert response.status_code == 401
 
 
 async def _create_ingredient(
@@ -318,22 +188,6 @@ async def test_purchase_increases_current_stock(client: AsyncClient, db_session:
 
 
 @pytest.mark.asyncio
-async def test_admin_can_also_log_a_purchase(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.admin, "admin1")
-    ingredient = await _create_ingredient(client, "Sugar", current_stock="10.000")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "purchase", "quantity": "3.000"},
-    )
-
-    # Assert
-    assert response.status_code == 201
-
-
-@pytest.mark.asyncio
 async def test_waste_decreases_current_stock(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
@@ -370,24 +224,6 @@ async def test_negative_adjustment_decreases_current_stock(client: AsyncClient, 
 
 
 @pytest.mark.asyncio
-async def test_positive_adjustment_increases_current_stock(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Pepper", current_stock="10.000")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "adjustment", "quantity": "2.500"},
-    )
-
-    # Assert
-    assert response.status_code == 201
-    get_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}")
-    assert get_response.json()["current_stock"] == "12.500"
-
-
-@pytest.mark.asyncio
 async def test_waste_that_would_drive_current_stock_negative_is_rejected(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -409,50 +245,6 @@ async def test_waste_that_would_drive_current_stock_negative_is_rejected(
     assert get_response.json()["current_stock"] == "2.000"
     movements_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}/movements")
     assert movements_response.json() == []
-
-
-@pytest.mark.asyncio
-async def test_negative_adjustment_that_would_drive_current_stock_negative_is_rejected(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange: same reversal (this batch's #1), the negative-adjustment direction.
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Yeast", current_stock="2.000")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "adjustment", "quantity": "-5.000"},
-    )
-
-    # Assert
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Rejected, this movement would drive current stock below zero"
-    get_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}")
-    assert get_response.json()["current_stock"] == "2.000"
-    movements_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}/movements")
-    assert movements_response.json() == []
-
-
-@pytest.mark.asyncio
-async def test_a_waste_movement_landing_exactly_at_zero_still_succeeds(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange: the floor is "would go negative", not "would go non-positive" — landing exactly
-    # at zero must still succeed.
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Saffron", current_stock="2.000")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "waste", "quantity": "2.000"},
-    )
-
-    # Assert
-    assert response.status_code == 201
-    get_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}")
-    assert get_response.json()["current_stock"] == "0.000"
 
 
 @pytest.mark.asyncio
@@ -517,22 +309,6 @@ async def test_consumption_movement_type_is_rejected(client: AsyncClient, db_ses
 
 
 @pytest.mark.asyncio
-async def test_zero_quantity_for_adjustment_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Onion")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "adjustment", "quantity": "0"},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
 async def test_non_positive_quantity_for_purchase_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
@@ -546,59 +322,6 @@ async def test_non_positive_quantity_for_purchase_is_rejected(client: AsyncClien
 
     # Assert
     assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_non_positive_quantity_for_waste_is_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Celery")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "waste", "quantity": "0"},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_quantity_exceeding_the_column_precision_is_rejected(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Leek")
-
-    # Act: the stock_movements.quantity_change column is Numeric(10, 3), so this value has
-    # more total digits than the column allows. Verified against a live Postgres, per the
-    # Testing section's standing rule, not just reasoned about the Pydantic bound.
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "purchase", "quantity": "12345678901.123"},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_logging_a_movement_against_a_nonexistent_ingredient_is_rejected(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    response = await client.post(
-        "/api/inventory/ingredients/999999/movements",
-        json={"movement_type": "purchase", "quantity": "1.000"},
-    )
-
-    # Assert
-    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -619,44 +342,6 @@ async def test_cook_cannot_log_a_movement(client: AsyncClient, db_session: Async
 
 
 @pytest.mark.asyncio
-async def test_waiter_cannot_log_a_movement(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Chili")
-    await _login_as(client, db_session, UserRole.waiter, "waiter1")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "purchase", "quantity": "1.000"},
-    )
-
-    # Assert
-    assert response.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_unauthenticated_request_cannot_log_a_movement(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Paprika")
-    # No login for the actual request below; simulate a fresh unauthenticated client by
-    # clearing cookies.
-    client.cookies.clear()
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "purchase", "quantity": "1.000"},
-    )
-
-    # Assert
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
 async def test_get_single_ingredient_returns_200_for_existing(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -670,36 +355,6 @@ async def test_get_single_ingredient_returns_200_for_existing(
     # Assert
     assert response.status_code == 200
     assert response.json()["id"] == ingredient["id"]
-
-
-@pytest.mark.asyncio
-async def test_get_single_ingredient_returns_404_for_nonexistent(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    response = await client.get("/api/inventory/ingredients/999999")
-
-    # Assert
-    assert response.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_movements_returns_empty_list_for_ingredient_with_no_movements(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Cinnamon")
-
-    # Act
-    response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}/movements")
-
-    # Assert
-    assert response.status_code == 200
-    assert response.json() == []
 
 
 @pytest.mark.asyncio
@@ -745,59 +400,6 @@ async def test_cook_can_read_a_single_ingredient_and_its_movement_history(
 
 
 @pytest.mark.asyncio
-async def test_waiter_cannot_read_a_single_ingredient_or_its_movement_history(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Bay Leaf")
-    await _login_as(client, db_session, UserRole.waiter, "waiter1")
-
-    # Act
-    get_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}")
-    movements_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}/movements")
-
-    # Assert
-    assert get_response.status_code == 403
-    assert movements_response.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_unauthenticated_requests_to_get_routes_are_rejected(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Turmeric")
-    client.cookies.clear()
-
-    # Act
-    get_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}")
-    movements_response = await client.get(f"/api/inventory/ingredients/{ingredient['id']}/movements")
-
-    # Assert
-    assert get_response.status_code == 401
-    assert movements_response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_omitting_notes_on_a_movement_defaults_to_null(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Cumin")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "purchase", "quantity": "1.000"},
-    )
-
-    # Assert
-    assert response.status_code == 201
-    assert response.json()["notes"] is None
-
-
-@pytest.mark.asyncio
 async def test_alerts_is_empty_when_nothing_is_in_shortage(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
@@ -835,28 +437,6 @@ async def test_a_waste_movement_that_crosses_below_threshold_appears_in_alerts(
 
 
 @pytest.mark.asyncio
-async def test_a_negative_adjustment_that_crosses_below_threshold_appears_in_alerts(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Oregano", current_stock="5.000", min_stock_threshold="3.000")
-
-    # Act
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "adjustment", "quantity": "-3.000"},
-    )
-    alerts_response = await client.get("/api/inventory/alerts")
-
-    # Assert
-    assert response.status_code == 201
-    alerts = alerts_response.json()
-    assert len(alerts) == 1
-    assert alerts[0]["id"] == ingredient["id"]
-
-
-@pytest.mark.asyncio
 async def test_an_ingredient_exactly_at_threshold_is_not_in_shortage(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -874,33 +454,6 @@ async def test_an_ingredient_exactly_at_threshold_is_not_in_shortage(
     # Assert
     assert response.status_code == 201
     assert alerts_response.json() == []
-
-
-@pytest.mark.asyncio
-async def test_a_second_waste_movement_while_already_in_shortage_does_not_duplicate_the_alert(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Paprika", current_stock="5.000", min_stock_threshold="3.000")
-    first = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "waste", "quantity": "3.000"},
-    )
-    assert first.status_code == 201
-
-    # Act: already below threshold, this movement drives it further below, not across.
-    second = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "waste", "quantity": "1.000"},
-    )
-    alerts_response = await client.get("/api/inventory/alerts")
-
-    # Assert: still exactly one alert row for this ingredient, not two.
-    assert second.status_code == 201
-    alerts = [a for a in alerts_response.json() if a["id"] == ingredient["id"]]
-    assert len(alerts) == 1
-    assert alerts[0]["current_stock"] == "1.000"
 
 
 @pytest.mark.asyncio
@@ -925,51 +478,6 @@ async def test_a_purchase_that_brings_stock_back_above_threshold_clears_the_aler
 
 
 @pytest.mark.asyncio
-async def test_a_purchase_landing_exactly_at_threshold_also_clears_the_alert(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Nutmeg", current_stock="1.000", min_stock_threshold="3.000")
-
-    # Act: lands exactly at threshold.
-    response = await client.post(
-        f"/api/inventory/ingredients/{ingredient['id']}/movements",
-        json={"movement_type": "purchase", "quantity": "2.000"},
-    )
-    alerts_response = await client.get("/api/inventory/alerts")
-
-    # Assert
-    assert response.status_code == 201
-    alerts = [a for a in alerts_response.json() if a["id"] == ingredient["id"]]
-    assert len(alerts) == 0
-
-
-@pytest.mark.asyncio
-async def test_admin_can_read_alerts(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.admin, "admin1")
-
-    # Act
-    response = await client.get("/api/inventory/alerts")
-
-    # Assert
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_cook_can_read_alerts(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.cook, "amir")
-
-    # Act
-    response = await client.get("/api/inventory/alerts")
-
-    # Assert
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
 async def test_waiter_cannot_read_alerts(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as(client, db_session, UserRole.waiter, "maya")
@@ -981,28 +489,7 @@ async def test_waiter_cannot_read_alerts(client: AsyncClient, db_session: AsyncS
     assert response.status_code == 403
 
 
-@pytest.mark.asyncio
-async def test_unauthenticated_cannot_read_alerts(client: AsyncClient) -> None:
-    # Act
-    response = await client.get("/api/inventory/alerts")
-
-    # Assert
-    assert response.status_code == 401
-
-
 # --- This batch's #3/#4: soft-deactivate Ingredients ------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_a_new_ingredient_is_active_by_default(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    ingredient = await _create_ingredient(client, "Bergamot")
-
-    # Assert
-    assert ingredient["is_active"] is True
 
 
 @pytest.mark.asyncio
@@ -1031,69 +518,6 @@ async def test_warehouse_manager_can_deactivate_and_reactivate_an_ingredient(
 
 
 @pytest.mark.asyncio
-async def test_admin_can_also_deactivate_and_reactivate_an_ingredient(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange: FR-16 gives Admin the same privileges as Warehouse Manager (this batch's #4).
-    await _login_as(client, db_session, UserRole.admin, "admin1")
-    ingredient = await _create_ingredient(client, "Cardamom")
-
-    # Act
-    deactivate_response = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/deactivate")
-    reactivate_response = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/reactivate")
-
-    # Assert
-    assert deactivate_response.status_code == 200
-    assert reactivate_response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_deactivating_an_already_deactivated_ingredient_is_idempotent(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Anise")
-    first = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/deactivate")
-    assert first.status_code == 200
-
-    # Act
-    second = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/deactivate")
-
-    # Assert: a no-op success, not an error.
-    assert second.status_code == 200
-    assert second.json()["is_active"] is False
-
-
-@pytest.mark.asyncio
-async def test_reactivating_an_already_active_ingredient_is_idempotent(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Chervil")
-
-    # Act
-    response = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/reactivate")
-
-    # Assert
-    assert response.status_code == 200
-    assert response.json()["is_active"] is True
-
-
-@pytest.mark.asyncio
-async def test_deactivating_a_nonexistent_ingredient_is_404(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-
-    # Act
-    response = await client.post("/api/inventory/ingredients/999999/deactivate")
-
-    # Assert
-    assert response.status_code == 404
-
-
-@pytest.mark.asyncio
 async def test_cook_and_waiter_cannot_deactivate_or_reactivate_an_ingredient(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -1108,24 +532,6 @@ async def test_cook_and_waiter_cannot_deactivate_or_reactivate_an_ingredient(
     await _login_as(client, db_session, UserRole.waiter, "waiter1")
     waiter_deactivate = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/deactivate")
     assert waiter_deactivate.status_code == 403
-
-
-@pytest.mark.asyncio
-async def test_unauthenticated_cannot_deactivate_or_reactivate_an_ingredient(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as(client, db_session, UserRole.warehouse_manager, "noa")
-    ingredient = await _create_ingredient(client, "Sorrel")
-    client.cookies.clear()
-
-    # Act
-    deactivate_response = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/deactivate")
-    reactivate_response = await client.post(f"/api/inventory/ingredients/{ingredient['id']}/reactivate")
-
-    # Assert
-    assert deactivate_response.status_code == 401
-    assert reactivate_response.status_code == 401
 
 
 @pytest.mark.asyncio

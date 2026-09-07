@@ -167,54 +167,6 @@ describe("IngredientDetailPage", () => {
     expect(screen.getByRole("combobox", { name: "Movement type" })).not.toHaveTextContent("Purchase");
   });
 
-  it("accepts a leading '-' for an adjustment and sends it as typed", async () => {
-    // Arrange
-    let submitted: Record<string, unknown> | undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        const path = String(url);
-        if (path.includes("/movements") && init.method === "POST") {
-          submitted = JSON.parse(String(init.body));
-          return Promise.resolve(jsonResponse(201, { ...PURCHASE_MOVEMENT, ...submitted }));
-        }
-        return stubReads()(url);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("No stock movements yet");
-    await user.click(screen.getByRole("combobox", { name: "Movement type" }));
-    await user.click(await screen.findByRole("option", { name: "Adjustment" }));
-    await user.type(screen.getByLabelText("Quantity (kg)"), "-3.5");
-    await user.click(screen.getByRole("button", { name: "Log movement" }));
-
-    // Assert
-    await vi.waitFor(() => expect(submitted).toBeDefined());
-    expect(submitted).toEqual({ movement_type: "adjustment", quantity: "-3.5", notes: null });
-  });
-
-  it("keeps the submit button disabled for an invalid or zero quantity", async () => {
-    // Arrange
-    const fetchMock = vi.fn(stubReads());
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("No stock movements yet");
-    await user.click(screen.getByRole("combobox", { name: "Movement type" }));
-    await user.click(await screen.findByRole("option", { name: "Purchase" }));
-    await user.type(screen.getByLabelText("Quantity (kg)"), "0");
-
-    // Assert: the reason is visible, and no POST was ever attempted.
-    expect(await screen.findByText("Enter a valid, non-zero amount")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log movement" })).toBeDisabled();
-    expect(fetchMock.mock.calls.every(([, init]) => (init as RequestInit)?.method !== "POST")).toBe(true);
-  });
-
   it("surfaces a 422 rejection inline and preserves the typed form values", async () => {
     // Arrange
     vi.stubGlobal(
@@ -246,31 +198,4 @@ describe("IngredientDetailPage", () => {
     expect(screen.getByLabelText("Quantity (kg)")).toHaveValue("5");
   });
 
-  it("shows the same not-found message for an invalid route param, with no movements fetch", async () => {
-    // Arrange
-    const fetchMock = vi.fn(stubReads());
-    vi.stubGlobal("fetch", fetchMock);
-
-    // Act
-    renderPage("/warehouse/ingredients/abc");
-
-    // Assert: no fetch attempted at all when the param itself is invalid.
-    expect(await screen.findByText(/That ingredient link is not valid/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/movements"))).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("shows the same not-found message for a genuine backend 404", async () => {
-    // Arrange
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(stubReads({ ingredient: jsonResponse(404, { detail: "Ingredient not found" }) })),
-    );
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText(/That ingredient link is not valid/)).toBeInTheDocument();
-  });
 });

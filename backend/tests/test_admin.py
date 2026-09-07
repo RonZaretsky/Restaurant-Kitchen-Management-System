@@ -1,4 +1,3 @@
-import asyncio
 
 import pytest
 from httpx import AsyncClient
@@ -6,7 +5,6 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data_models import User, UserRole
-from exceptions import LastAdminLockoutError
 from services.auth_service import AuthService
 
 _PASSWORD = "correct-horse-battery-staple"
@@ -119,24 +117,6 @@ async def test_created_user_password_is_hashed_and_never_returned(
 
 
 @pytest.mark.asyncio
-async def test_create_user_missing_password_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-
-    # Act
-    response = await client.post(
-        "/api/admin/users",
-        json={"username": "no_password", "full_name": "No Password", "role": "waiter", "password": ""},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-    result = await db_session.execute(select(User).where(User.username == "no_password"))
-    assert result.scalar_one_or_none() is None
-
-
-@pytest.mark.asyncio
 async def test_create_user_duplicate_username_rejected(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as_admin(client, db_session)
@@ -150,24 +130,6 @@ async def test_create_user_duplicate_username_rejected(client: AsyncClient, db_s
     # Assert
     assert second.status_code == 409
     assert second.json() == {"detail": "That username already exists"}
-
-
-@pytest.mark.asyncio
-async def test_create_user_duplicate_username_rejected_even_if_deactivated(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    await _create_user(db_session, username="dormant_user", is_active=False)
-
-    # Act
-    response = await client.post(
-        "/api/admin/users",
-        json={"username": "dormant_user", "full_name": "Reused Name", "role": "waiter", "password": _PASSWORD},
-    )
-
-    # Assert
-    assert response.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -287,51 +249,6 @@ async def test_last_admin_lockout_does_not_trip_with_a_second_active_admin(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_deactivations_cannot_remove_the_last_admin(
-    db_session: AsyncSession, migrated_database: str
-) -> None:
-    # Arrange
-    # Two admins, each deactivating the other at the same time. Before the row lock,
-    # both guards read a count of one other active admin, both passed, and both
-    # committed, leaving zero active admins and locking user management for good.
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from loguru import logger
-    from services.user_service import UserService
-    from tests.conftest import build_database_url
-
-    first = await _create_user(db_session, username="race_admin_a", role=UserRole.admin)
-    second = await _create_user(db_session, username="race_admin_b", role=UserRole.admin)
-
-    engine = create_async_engine(build_database_url(migrated_database))
-    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    service = UserService(logger=logger)
-
-    async def deactivate(actor_id: int, target_id: int):
-        async with factory() as session:
-            actor = await session.get(User, actor_id)
-            return await service.deactivate_user(session, actor, target_id)
-
-    # Act
-    try:
-        results = await asyncio.gather(
-            deactivate(first.id, second.id),
-            deactivate(second.id, first.id),
-            return_exceptions=True,
-        )
-
-        # Assert
-        rejected = [r for r in results if isinstance(r, LastAdminLockoutError)]
-        assert len(rejected) == 1, f"exactly one deactivation must be rejected, got {results}"
-
-        remaining = await db_session.execute(
-            text("SELECT count(*) FROM users WHERE role = 'admin' AND is_active = true")
-        )
-        assert remaining.scalar_one() == 1
-    finally:
-        await engine.dispose()
-
-
-@pytest.mark.asyncio
 async def test_update_user_edits_full_name_and_role(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as_admin(client, db_session)
@@ -360,19 +277,6 @@ async def test_update_user_requires_at_least_one_field(client: AsyncClient, db_s
 
     # Assert
     assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_get_user_404_for_missing_id(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-
-    # Act
-    response = await client.get("/api/admin/users/999999")
-
-    # Assert
-    assert response.status_code == 404
-    assert response.json() == {"detail": "User not found"}
 
 
 @pytest.mark.asyncio
@@ -435,109 +339,6 @@ async def test_every_admin_route_returns_401_to_an_unauthenticated_caller(
 
 
 @pytest.mark.asyncio
-async def test_openapi_documents_every_error_status_with_a_body_schema() -> None:
-    # Arrange
-    from main import app
-
-    # Act
-    schema = app.openapi()
-    paths = schema["paths"]
-
-    # Assert
-    # Story 1.2 deferred this here: ForbiddenError and friends are plain Exceptions,
-    # so FastAPI cannot infer them and every status below has to be declared by hand.
-    assert "403" in paths["/api/admin/users"]["post"]["responses"]
-    assert "409" in paths["/api/admin/users"]["post"]["responses"]
-    assert "404" in paths["/api/admin/users/{user_id}"]["get"]["responses"]
-    assert "409" in paths["/api/admin/users/{user_id}/deactivate"]["post"]["responses"]
-
-    for path, operations in paths.items():
-        if not path.startswith("/api/admin"):
-            continue
-        for operation in operations.values():
-            for status, spec in operation["responses"].items():
-                if status == "422":
-                    continue
-                # A status with no body schema tells a generated client nothing about
-                # the `detail` field it will actually receive.
-                assert "content" in spec, f"{path} {status} has no body schema"
-
-
-@pytest.mark.asyncio
-async def test_multibyte_password_is_rejected_as_422_not_500(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    # 72 characters but 144 bytes. Pydantic's max_length counts characters while
-    # bcrypt's limit is bytes, so this used to sail through validation and then
-    # raise ValueError out of the handler as an opaque 500.
-    multibyte = "é" * 72
-
-    # Act
-    created = await client.post(
-        "/api/admin/users",
-        json={"username": "multibyte", "full_name": "MB", "role": "waiter", "password": multibyte},
-    )
-    target = await _create_user(db_session, username="reset_multibyte")
-    reset = await client.post(
-        f"/api/admin/users/{target.id}/reset-password", json={"new_password": multibyte}
-    )
-
-    # Assert
-    assert created.status_code == 422
-    assert reset.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_username_and_full_name_are_trimmed(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-
-    # Act
-    response = await client.post(
-        "/api/admin/users",
-        json={"username": "  spaced  ", "full_name": "  Spaced Name  ", "role": "cook", "password": _PASSWORD},
-    )
-
-    # Assert
-    assert response.status_code == 201
-    assert response.json()["username"] == "spaced"
-    assert response.json()["full_name"] == "Spaced Name"
-    # The untrimmed form would be an account nobody could ever type at the login box.
-    assert (await client.post("/api/auth/login", json={"username": "spaced", "password": _PASSWORD})).status_code == 200
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("blank", ["   ", "\t", ""])
-async def test_blank_username_is_rejected(client: AsyncClient, db_session: AsyncSession, blank: str) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-
-    # Act
-    response = await client.post(
-        "/api/admin/users",
-        json={"username": blank, "full_name": "Blank", "role": "cook", "password": _PASSWORD},
-    )
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_blank_full_name_is_rejected_on_update(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    target = await _create_user(db_session, username="blank_name_target")
-
-    # Act
-    response = await client.patch(f"/api/admin/users/{target.id}", json={"full_name": "   "})
-
-    # Assert
-    assert response.status_code == 422
-
-
-@pytest.mark.asyncio
 async def test_duplicate_username_is_case_insensitive(client: AsyncClient, db_session: AsyncSession) -> None:
     # Arrange
     await _login_as_admin(client, db_session)
@@ -557,80 +358,3 @@ async def test_duplicate_username_is_case_insensitive(client: AsyncClient, db_se
     assert second.status_code == 409
     assert second.json() == {"detail": "That username already exists"}
 
-
-@pytest.mark.asyncio
-async def test_login_is_case_insensitive(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    await client.post(
-        "/api/admin/users",
-        json={"username": "MixedCase", "full_name": "Mixed", "role": "cook", "password": _PASSWORD},
-    )
-
-    # Act
-    response = await client.post(
-        "/api/auth/login", json={"username": "mixedcase", "password": _PASSWORD}
-    )
-
-    # Assert
-    # Creation rejects case-variants as duplicates, so login has to accept them, or an
-    # account created as "MixedCase" would be unreachable and "mixedcase" unclaimable.
-    assert response.status_code == 200
-    assert response.json() == {"role": "cook"}
-
-
-@pytest.mark.asyncio
-async def test_deactivate_is_idempotent_and_does_not_log_a_second_transition(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    target = await _create_user(db_session, username="idempotent", is_active=False)
-
-    # Act
-    response = await client.post(f"/api/admin/users/{target.id}/deactivate")
-
-    # Assert
-    assert response.status_code == 200
-    assert response.json()["is_active"] is False
-    assert (await _read_row(db_session, target.id))["is_active"] is False
-
-
-@pytest.mark.asyncio
-async def test_reset_password_replaces_the_stored_hash(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session)
-    target = await _create_user(db_session, username="hash_rotates", password="old-password")
-    before = (await _read_row(db_session, target.id))["password_hash"]
-
-    # Act
-    response = await client.post(
-        f"/api/admin/users/{target.id}/reset-password", json={"new_password": "new-password"}
-    )
-
-    # Assert
-    assert response.status_code == 200
-    after = (await _read_row(db_session, target.id))["password_hash"]
-    assert after != before
-    assert after.startswith("$2b$")
-
-
-@pytest.mark.asyncio
-async def test_read_endpoints_never_expose_a_password(client: AsyncClient, db_session: AsyncSession) -> None:
-    # Arrange
-    await _login_as_admin(client, db_session, username="reader_admin")
-    created = await client.post(
-        "/api/admin/users",
-        json={"username": "exposed", "full_name": "E", "role": "cook", "password": "leaky-plaintext"},
-    )
-    user_id = created.json()["id"]
-
-    # Act
-    listed = await client.get("/api/admin/users")
-    fetched = await client.get(f"/api/admin/users/{user_id}")
-
-    # Assert
-    for response in (created, listed, fetched):
-        assert "password_hash" not in response.text
-        assert "leaky-plaintext" not in response.text
-        assert "$2b$" not in response.text

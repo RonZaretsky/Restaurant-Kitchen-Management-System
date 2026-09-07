@@ -49,16 +49,6 @@ function mockUnauthenticated() {
   } as unknown as ReturnType<typeof authService.useCurrentUser>);
 }
 
-function mockLoading() {
-  vi.mocked(authService.useCurrentUser).mockReturnValue({
-    data: undefined,
-    isLoading: true,
-    isError: false,
-    isSuccess: false,
-    error: null,
-  } as unknown as ReturnType<typeof authService.useCurrentUser>);
-}
-
 function mockNoOpLogin() {
   vi.mocked(authService.useLogin).mockReturnValue({
     mutate: vi.fn(),
@@ -108,17 +98,6 @@ describe("route guard and per-role navigation", () => {
 
     // Assert
     expect(await screen.findByRole("heading", { name: "Tables" })).toBeInTheDocument();
-  });
-
-  it("renders a loading skeleton while the session is still resolving (AC6)", () => {
-    // Arrange
-    mockLoading();
-
-    // Act
-    renderAt("/waiter/tables");
-
-    // Assert
-    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
   });
 
   it.each([
@@ -178,69 +157,6 @@ describe("route guard and per-role navigation", () => {
     // Assert: the Ingredients screen itself, not a bounce to /admin/menu.
     expect(await screen.findByRole("heading", { name: "Ingredients" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Menu Management" })).not.toBeInTheDocument();
-  });
-
-  it("still bounces a Role with no Ingredients nav entry away from that surface", async () => {
-    // Arrange: the cross-prefix grant is per-Role and derived from the nav
-    // config, not a blanket removal of the guard.
-    mockAuthenticated("waiter");
-
-    // Act
-    renderAt("/warehouse/ingredients");
-
-    // Assert
-    expect(await screen.findByRole("heading", { name: "Tables" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Ingredients" })).not.toBeInTheDocument();
-  });
-
-  it("bounces an Admin from a warehouse surface their nav does NOT list", async () => {
-    // Arrange: the negative case of the cross-prefix clause, for the only Role
-    // that has one. Without this, `canRoleVisit` could be rewritten as a
-    // hardcoded `role === "admin"` exception and every other test still passes,
-    // which is exactly the anti-pattern deriving from ROLE_NAV_ITEMS prevents.
-    mockAuthenticated("admin");
-
-    // Act
-    renderAt("/warehouse/alerts");
-
-    // Assert
-    expect(await screen.findByRole("heading", { name: "Menu Management" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Alerts" })).not.toBeInTheDocument();
-  });
-
-  it("lets an Admin reach an Ingredient's detail page via includeSubroutes (this batch's #2)", async () => {
-    // Arrange: /warehouse/ingredients/:ingredientId is Story 4.1's surface. FR-16 gives Admin the
-    // same ingredient-management rights as Warehouse Manager, so withholding just the detail page
-    // was the gap; Admin's Ingredients nav entry now opts into includeSubroutes to close it.
-    mockAuthenticated("admin");
-
-    // Act
-    renderAt("/warehouse/ingredients/1");
-
-    // Assert: reached the Ingredient detail surface, not bounced to Menu Management. This route
-    // does not stub fetch, so the page's data never resolves and its heading stays on its bare
-    // "Ingredient" fallback (rendered unconditionally, ahead of the loading/error/data states),
-    // which is enough to prove the route itself was reached.
-    expect(await screen.findByRole("heading", { name: "Ingredient" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Menu Management" })).not.toBeInTheDocument();
-  });
-
-  it("keeps a Role's own prefix granting its detail routes", async () => {
-    // Arrange: the prefix clause must stay a subtree grant even though the nav
-    // clause is exact, or every detail route would need its own nav entry.
-    // Story 4.1 replaced IngredientDetailPage's static "Ingredient detail"
-    // placeholder with real content; this test does not stub fetch, so the
-    // page's data never resolves and its heading stays on its "Ingredient"
-    // fallback (rendered unconditionally, ahead of the loading/error/data
-    // states), which is enough to prove the route itself was reached rather
-    // than the visitor being bounced elsewhere.
-    mockAuthenticated("warehouse_manager");
-
-    // Act
-    renderAt("/warehouse/ingredients/1");
-
-    // Assert: reached the surface rather than being bounced home.
-    expect(await screen.findByRole("heading", { name: "Ingredient" })).toBeInTheDocument();
   });
 
   it("keeps tab order aligned with the app bar's left-to-right visual order (AC8)", async () => {

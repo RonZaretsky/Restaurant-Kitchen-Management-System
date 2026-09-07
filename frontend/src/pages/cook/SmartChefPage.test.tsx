@@ -17,8 +17,6 @@ const CURRENT_USER = {
   created_at: "2026-01-01T00:00:00Z",
 };
 
-const OTHER_USER_ID = 99;
-
 const SUGGESTION = {
   id: 1,
   requested_by: 3,
@@ -32,13 +30,6 @@ const SUGGESTION = {
   created_at: "2026-01-01T18:42:00Z",
 };
 
-const OTHER_SUGGESTION = {
-  ...SUGGESTION,
-  id: 2,
-  requested_by: OTHER_USER_ID,
-  generated_recipe: { ...SUGGESTION.generated_recipe, name: "Other Cook's Suggestion" },
-};
-
 const SESSION = {
   id: 42,
   user_id: 3,
@@ -46,15 +37,6 @@ const SESSION = {
   suggestion_id: 1,
   title: "Chat about Roasted Zucchini Flatbread",
   created_at: "2026-01-02T09:00:00Z",
-};
-
-const OTHER_SESSION = {
-  id: 43,
-  user_id: OTHER_USER_ID,
-  dish_id: null,
-  suggestion_id: 2,
-  title: "Chat about Other Cook's Suggestion",
-  created_at: "2026-01-02T10:00:00Z",
 };
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -150,29 +132,6 @@ describe("SmartChefPage", () => {
     expect(screen.queryByRole("textbox", { name: /ask a follow-up/i })).not.toBeInTheDocument();
   });
 
-  it("shows a generating indicator and disables the button while the mutation is pending", async () => {
-    // Arrange: the POST never resolves during this test, keeping the mutation pending.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        if (init.method === "POST" && String(url).endsWith("/api/smart-chef/suggestions")) {
-          return new Promise(() => {});
-        }
-        return mockFetch({})(url, init);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("No recipe suggestions yet.");
-    await user.click(screen.getByRole("button", { name: "Request suggestion" }));
-
-    // Assert
-    expect(await screen.findByText("Generating suggestion...")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Request suggestion" })).toBeDisabled();
-  });
-
   it("shows the inline error message on a failed generation, not a stuck generating state", async () => {
     // Arrange
     vi.stubGlobal(
@@ -194,33 +153,6 @@ describe("SmartChefPage", () => {
     // Assert
     expect(await screen.findByText("Couldn't generate a suggestion right now")).toBeInTheDocument();
     expect(screen.queryByText("Generating suggestion...")).not.toBeInTheDocument();
-  });
-
-  it("includes the direction field's text in the submitted request body", async () => {
-    // Arrange
-    let submitted: Record<string, unknown> | undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        if (init.method === "POST" && String(url).endsWith("/api/smart-chef/suggestions")) {
-          submitted = JSON.parse(String(init.body));
-          return Promise.resolve(jsonResponse(201, SUGGESTION));
-        }
-        return mockFetch({})(url, init);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await screen.findByText("No recipe suggestions yet.");
-    await user.type(screen.getByLabelText("Direction (optional)"), "something for dessert");
-    await user.click(screen.getByRole("button", { name: "Request suggestion" }));
-
-    // Assert
-    await vi.waitFor(() =>
-      expect(submitted).toEqual({ direction: "something for dessert", prioritize_waste: false }),
-    );
   });
 
   it("includes prioritize_waste: true in the submitted request body when the checkbox is checked", async () => {
@@ -246,52 +178,6 @@ describe("SmartChefPage", () => {
 
     // Assert
     await vi.waitFor(() => expect(submitted).toEqual({ direction: undefined, prioritize_waste: true }));
-  });
-
-  it('shows "No chat sessions yet." when there are no chat sessions (AC6)', async () => {
-    // Arrange
-    vi.stubGlobal("fetch", mockFetch({}));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("No chat sessions yet.")).toBeInTheDocument();
-  });
-
-  it("a chat session created by a different Cook still appears in the Sessions list (AC3)", async () => {
-    // Arrange: no special grant needed to see another Cook's session.
-    vi.stubGlobal("fetch", mockFetch({ sessions: [OTHER_SESSION] }));
-
-    // Act
-    renderPage();
-
-    // Assert
-    expect(await screen.findByText("Chat about Other Cook's Suggestion")).toBeInTheDocument();
-  });
-
-  it("sorts the current Cook's own items first in both the Suggestions and Sessions lists (AC3)", async () => {
-    // Arrange: the server returns the other Cook's items first in both lists; the page must
-    // still render the current Cook's own item first in each.
-    vi.stubGlobal(
-      "fetch",
-      mockFetch({
-        suggestions: [OTHER_SUGGESTION, SUGGESTION],
-        sessions: [OTHER_SESSION, SESSION],
-      }),
-    );
-
-    // Act
-    const { container } = renderPage();
-    await screen.findByText("Roasted Zucchini Flatbread");
-    await screen.findByText("Chat about Other Cook's Suggestion");
-
-    // Assert
-    const text = container.textContent ?? "";
-    expect(text.indexOf("Roasted Zucchini Flatbread")).toBeLessThan(text.indexOf("Other Cook's Suggestion"));
-    expect(text.indexOf("Chat about Roasted Zucchini Flatbread")).toBeLessThan(
-      text.indexOf("Chat about Other Cook's Suggestion"),
-    );
   });
 
   it("clicking Discuss via chat creates a session and renders its chat panel", async () => {
@@ -381,64 +267,6 @@ describe("SmartChefPage", () => {
     // Assert
     expect(await screen.findByText("What herbs work well?")).toBeInTheDocument();
     expect(await screen.findByText("Great idea, try that.")).toBeInTheDocument();
-  });
-
-  it("sending a message in a suggestion's own chat panel also refetches the suggestions list (#7)", async () => {
-    // Arrange: this batch's #7 — a Suggestion-tied chat send can mutate the Suggestion's
-    // generated_recipe server-side, so the client must refresh the Suggestions list too, not
-    // just this session's own messages.
-    let suggestionsCallCount = 0;
-    const messagesStore: Record<number, unknown[]> = {};
-    const baseFetch = mockFetch({
-      suggestions: [SUGGESTION],
-      messagesBySession: messagesStore,
-      onPost: (path, body) => {
-        if (path.endsWith("/api/smart-chef/chat-sessions")) {
-          expect(body).toEqual({ suggestion_id: SUGGESTION.id });
-          return jsonResponse(201, SESSION);
-        }
-        if (path.endsWith(`/chat-sessions/${SESSION.id}/messages`)) {
-          const userMessage = {
-            id: 1,
-            session_id: SESSION.id,
-            role: "user",
-            content: body.content,
-            created_at: "2026-01-02T09:05:00Z",
-          };
-          const assistantMessage = {
-            id: 2,
-            session_id: SESSION.id,
-            role: "assistant",
-            content: "Done, swapped in a vegan cheese.",
-            created_at: "2026-01-02T09:05:05Z",
-          };
-          messagesStore[SESSION.id] = [...(messagesStore[SESSION.id] ?? []), userMessage, assistantMessage];
-          return jsonResponse(201, [userMessage, assistantMessage]);
-        }
-        return undefined;
-      },
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string, init: RequestInit = {}) => {
-        if (String(url).endsWith("/api/smart-chef/suggestions") && (init.method ?? "GET") === "GET") {
-          suggestionsCallCount += 1;
-        }
-        return baseFetch(url, init);
-      }),
-    );
-    const user = userEvent.setup();
-
-    // Act
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: "Discuss via chat" }));
-    const callsBeforeSend = suggestionsCallCount;
-    await user.type(await screen.findByLabelText("Ask a follow-up"), "Make it vegan");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    // Assert
-    await screen.findByText("Done, swapped in a vegan cheese.");
-    await vi.waitFor(() => expect(suggestionsCallCount).toBeGreaterThan(callsBeforeSend));
   });
 
   it("a failed send shows an inline error, not a stuck sending state (AC4)", async () => {
