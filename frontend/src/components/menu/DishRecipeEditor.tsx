@@ -24,10 +24,7 @@ import {
   useRecipeIngredients,
 } from "../../services/menuService";
 import { ApiError } from "../../services/httpClient";
-import type { Dish, RecipeIngredient, Unit } from "../../types/menu";
-
-/** The units a Recipe Ingredient line can be recorded in, mirrors backend/data_models/recipe.py's Unit enum. */
-const UNITS: Unit[] = ["kg", "liter", "piece"];
+import type { Dish, RecipeIngredient } from "../../types/menu";
 
 /**
  * Same wording EmptyRecipeError carries server-side.
@@ -72,7 +69,6 @@ function errorMessage(error: Error): string {
  * @param line - The Recipe Ingredient line this row edits.
  * @param ingredientLabel - The Ingredient's display name.
  * @param onQuantityCommit - Called with a new quantity when the field is committed.
- * @param onUnitChange - Called with a new unit when the unit select changes.
  * @param onRemove - Called when the row's delete action is used.
  * @returns The table row for this line.
  */
@@ -80,13 +76,11 @@ function RecipeLineRow({
   line,
   ingredientLabel,
   onQuantityCommit,
-  onUnitChange,
   onRemove,
 }: {
   line: RecipeIngredient;
   ingredientLabel: string;
   onQuantityCommit: (quantity: string) => void;
-  onUnitChange: (unit: Unit) => void;
   onRemove: () => void;
 }) {
   const [draftQuantity, setDraftQuantity] = useState(line.quantity);
@@ -133,19 +127,7 @@ function RecipeLineRow({
         />
       </TableCell>
       <TableCell>
-        <TextField
-          select
-          size="small"
-          label={`Unit for ${ingredientLabel}`}
-          value={line.unit}
-          onChange={(event) => onUnitChange(event.target.value as Unit)}
-        >
-          {UNITS.map((unit) => (
-            <MenuItem key={unit} value={unit}>
-              {unit}
-            </MenuItem>
-          ))}
-        </TextField>
+        <Typography variant="body2">{line.unit}</Typography>
       </TableCell>
       <TableCell>
         <IconButton aria-label={`Remove ${ingredientLabel}`} size="small" onClick={onRemove}>
@@ -177,7 +159,6 @@ function RecipeLineRow({
 export function DishRecipeEditor({ dish }: { dish: Dish }) {
   const [selectedIngredientId, setSelectedIngredientId] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [unit, setUnit] = useState<Unit>("kg");
 
   const {
     data: lines,
@@ -210,10 +191,20 @@ export function DishRecipeEditor({ dish }: { dish: Dish }) {
       )
     : [];
 
+  // The unit is the Ingredient's own, never a separate choice: stock is held in one unit per
+  // Ingredient, so a line recorded in any other unit would be deducted against a quantity that
+  // does not mean the same thing.
+  const selectedIngredient = ingredients?.find(
+    (ingredient) => String(ingredient.id) === selectedIngredientId,
+  );
+
   const handleAdd = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!selectedIngredient) {
+      return;
+    }
     addMutation.mutate(
-      { ingredient_id: Number(selectedIngredientId), quantity, unit },
+      { ingredient_id: selectedIngredient.id, quantity, unit: selectedIngredient.unit },
       {
         onSuccess: () => {
           setSelectedIngredientId("");
@@ -224,7 +215,7 @@ export function DishRecipeEditor({ dish }: { dish: Dish }) {
   };
 
   const canSubmitNewLine =
-    selectedIngredientId !== "" && quantity !== "" && !addMutation.isPending;
+    selectedIngredient !== undefined && quantity !== "" && !addMutation.isPending;
 
   return (
     <Box sx={{ padding: 2 }}>
@@ -295,12 +286,6 @@ export function DishRecipeEditor({ dish }: { dish: Dish }) {
                     payload: { quantity: newQuantity },
                   })
                 }
-                onUnitChange={(newUnit) =>
-                  updateMutation.mutate({
-                    ingredientId: line.ingredient_id,
-                    payload: { unit: newUnit },
-                  })
-                }
                 onRemove={() => removeMutation.mutate(line.ingredient_id)}
               />
             ))}
@@ -357,19 +342,9 @@ export function DishRecipeEditor({ dish }: { dish: Dish }) {
           slotProps={{ htmlInput: { inputMode: "decimal" } }}
           sx={{ width: 120 }}
         />
-        <TextField
-          select
-          size="small"
-          label="Unit"
-          value={unit}
-          onChange={(event) => setUnit(event.target.value as Unit)}
-        >
-          {UNITS.map((unitOption) => (
-            <MenuItem key={unitOption} value={unitOption}>
-              {unitOption}
-            </MenuItem>
-          ))}
-        </TextField>
+        <Typography variant="body2" color="text.secondary" sx={{ minWidth: 48 }}>
+          {selectedIngredient?.unit ?? "-"}
+        </Typography>
         <Button type="submit" variant="outlined" disabled={!canSubmitNewLine}>
           + Add recipe ingredient
         </Button>

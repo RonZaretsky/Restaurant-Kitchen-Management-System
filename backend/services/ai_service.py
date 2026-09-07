@@ -38,6 +38,12 @@ from exceptions import (
 # Ingredient with stock > 0 sorts ahead of every ratio-based one.
 _ZERO_THRESHOLD_RANK = Decimal("Infinity")
 
+# How many previously generated dish names are listed back to the model as "do not repeat these".
+# Enough to break the model's default mode (left to itself, with an unchanged prompt and the same
+# stock, it converges on the same dish every time), small enough that the exclusion list never
+# crowds out the ingredient list or effectively forbids most of what the stock can produce.
+_RECENT_SUGGESTION_COUNT = 5
+
 
 class AIService:
     """Generates AI Recipe Suggestions from current stock.
@@ -99,6 +105,10 @@ class AIService:
         threshold is the one most plausibly overstocked, not necessarily the one with the largest
         raw quantity.
 
+        The names of the last few suggestions are read back into the prompt as an explicit
+        "do not repeat these" list, so two requests made one after another against unchanged
+        stock return different dishes instead of the same one (see `_build_prompt`).
+
         The parsed response's shape is validated before persisting (`name`/`ingredients`/
         `plating` present with the expected types) — a syntactically valid JSON object missing
         these would otherwise be persisted as a "successful" suggestion and only fail later at
@@ -153,7 +163,8 @@ class AIService:
                 for ingredient in sorted_ingredients
             ]
 
-            prompt = self._build_prompt(snapshot, direction, prioritize_waste)
+            recent_names = await self._recent_suggestion_names(db)
+            prompt = self._build_prompt(snapshot, direction, prioritize_waste, recent_names)
 
             try:
                 generated_recipe = await self._llm_client.generate_recipe(prompt)
@@ -342,8 +353,44 @@ class AIService:
         result = await db.execute(select(Dish.id).where(Dish.source_suggestion_id == suggestion_id))
         return result.scalar_one_or_none()
 
+    @staticmethod
+    async def _recent_suggestion_names(db: AsyncSession) -> list[str]:
+        """Read the dish names of the most recent Recipe Suggestions, newest first.
+
+        Fed back into the prompt as an explicit "do not repeat these" list. Read across every
+        Cook rather than per-requester: two Cooks working the same stock minutes apart should not
+        each be handed the same dish, and the kitchen's recent output is one list, not one per
+        person.
+
+        A malformed or nameless `generated_recipe` is skipped rather than sent as an empty
+        exclusion line. Shape is validated on the way in (`_is_recipe_shape_valid`), so this only
+        guards rows written before that validation existed.
+
+        Args:
+            db: The active database session.
+
+        Returns:
+            Up to `_RECENT_SUGGESTION_COUNT` dish names, newest first. Empty on a fresh database,
+            which the prompt treats as "nothing to avoid".
+        """
+        result = await db.execute(
+            select(AIRecipeSuggestion.generated_recipe)
+            .order_by(AIRecipeSuggestion.id.desc())
+            .limit(_RECENT_SUGGESTION_COUNT)
+        )
+        names = []
+        for recipe in result.scalars().all():
+            name = recipe.get("name") if isinstance(recipe, dict) else None
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+        return names
+
     def _build_prompt(
-        self, snapshot: list[dict[str, str]], direction: str | None, prioritize_waste: bool = False
+        self,
+        snapshot: list[dict[str, str]],
+        direction: str | None,
+        prioritize_waste: bool = False,
+        recent_names: list[str] | None = None,
     ) -> str:
         """Build the generation prompt from a stock snapshot and an optional direction.
 
@@ -355,11 +402,23 @@ class AIService:
         the persisted row regardless, for audit purposes, but only shapes the prompt when the flag
         is set.
 
+        `recent_names` is what keeps two back-to-back requests from returning the same dish.
+        With an unchanged prompt and unchanged stock the model has no reason to answer
+        differently the second time, and empirically it did not (three consecutive suggestions
+        against the same stock all came back as a creamy mushroom pasta). Listing what was
+        already proposed and requiring a different centerpiece, method, and cuisine changes the
+        prompt itself on every request, so the repetition is ruled out by the instructions rather
+        than left to sampling chance. The list is part of `prompt_used` on the persisted row, so
+        why a given suggestion avoided a given dish stays auditable.
+
         Args:
             snapshot: The stock snapshot to list as available ingredients.
             direction: Optional free-text steering hint.
             prioritize_waste: When True, steers the model toward the ingredients listed first in
                 `snapshot` (the most overstocked relative to their own minimum threshold).
+            recent_names: Dish names already suggested recently, newest first, that this
+                suggestion must differ from. None or empty on a fresh database, which adds
+                nothing to the prompt.
 
         Returns:
             The full prompt to send to the LLM client.
@@ -371,6 +430,15 @@ class AIService:
             f'\n\nThe cook additionally asked for this direction: "{direction}". Use it to steer '
             "the suggestion, but never include an ingredient that is not listed above."
             if direction
+            else ""
+        )
+        avoid_text = (
+            "\n\nThese dishes were already suggested recently:\n"
+            + "\n".join(f"- {name}" for name in recent_names)
+            + "\nPropose something clearly different from all of them: a different centerpiece "
+            "ingredient, a different cooking method, and a different cuisine. Do not repeat any "
+            "of them or a close variation of one."
+            if recent_names
             else ""
         )
         priority_text = (
@@ -385,6 +453,9 @@ class AIService:
             "whatever quantity one portion actually needs, never anywhere close to the full "
             f"available stock.{priority_text}\n\n"
             f"Available ingredients:\n{ingredients_text}"
+            # Before direction_text, so an explicit Cook-supplied direction stays the last and
+            # strongest instruction: asked twice for the same thing, a Cook means it.
+            f"{avoid_text}"
             f"{direction_text}\n\n"
             'Respond with only a JSON object of this exact shape: {"name": "<dish name>", '
             '"ingredients": [{"name": "<ingredient name>", "quantity": "<decimal amount followed by '

@@ -25,9 +25,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { Unit } from "../../types/menu";
 import type { AIRecipeSuggestion } from "../../types/ai";
 
-/** The units a Recipe Ingredient line can be recorded in, mirrors DishRecipeEditor.tsx's own list. */
-const UNITS: Unit[] = ["kg", "liter", "piece"];
-
 /** Shown when a request fails for a reason that carries no user-safe message of its own. */
 const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
 
@@ -38,6 +35,12 @@ interface DraftIngredientRow {
   sourceLabel: string;
   ingredientId: string;
   quantity: string;
+  /**
+   * Always the selected Ingredient's own unit, never an independent choice: stock is held in
+   * one unit per Ingredient, so a line recorded in any other unit would be deducted against a
+   * quantity that does not mean the same thing. Set from the Ingredient on every pick, and
+   * displayed read-only, matching DishRecipeEditor's own recipe rows.
+   */
   unit: Unit;
 }
 
@@ -104,10 +107,11 @@ function errorMessage(error: unknown): string {
  * hand afterward; this dialog creates the Dish AND its Recipe Ingredient lines in the same flow).
  *
  * Each suggested ingredient is prefilled with a best-effort match against the real Ingredient
- * list (case-insensitive name match) and a best-effort parsed quantity, but every field stays
- * editable: the AI's `generated_recipe.ingredients` are free-text name/quantity pairs, not
- * validated Ingredient ids or units, so an unmatched or unparseable row is left blank for the
- * Admin to fill in rather than silently guessing.
+ * list (case-insensitive name match) and a best-effort parsed quantity, and both stay editable:
+ * the AI's `generated_recipe.ingredients` are free-text name/quantity pairs, not validated
+ * Ingredient ids, so an unmatched or unparseable row is left blank for the Admin to fill in
+ * rather than silently guessing. The unit is the exception, shown read-only: it belongs to the
+ * chosen Ingredient and follows it, it is never the Admin's own choice here.
  *
  * Composes the two existing endpoints (`POST /api/menu/dishes`, then
  * `POST /api/menu/dishes/{id}/recipe-ingredients` per row) rather than adding a new backend
@@ -196,6 +200,9 @@ export function ConfirmSuggestionDialog({
 
   const ingredientName = (ingredientId: string) =>
     ingredients?.find((candidate) => String(candidate.id) === ingredientId)?.name ?? "";
+
+  const unitOf = (ingredientId: string) =>
+    ingredients?.find((candidate) => String(candidate.id) === ingredientId)?.unit;
 
   const handleConfirm = async () => {
     if (!canSubmit || parsedPrice === null) {
@@ -348,7 +355,12 @@ export function ConfirmSuggestionDialog({
                         select
                         size="small"
                         value={row.ingredientId}
-                        onChange={(event) => updateRow(row.key, { ingredientId: event.target.value })}
+                        onChange={(event) =>
+                          updateRow(row.key, {
+                            ingredientId: event.target.value,
+                            unit: unitOf(event.target.value) ?? row.unit,
+                          })
+                        }
                         sx={{ minWidth: 140 }}
                       >
                         <MenuItem value="">
@@ -371,18 +383,9 @@ export function ConfirmSuggestionDialog({
                       />
                     </TableCell>
                     <TableCell>
-                      <TextField
-                        select
-                        size="small"
-                        value={row.unit}
-                        onChange={(event) => updateRow(row.key, { unit: event.target.value as Unit })}
-                      >
-                        {UNITS.map((unit) => (
-                          <MenuItem key={unit} value={unit}>
-                            {unit}
-                          </MenuItem>
-                        ))}
-                      </TextField>
+                      <Typography variant="body2">
+                        {row.ingredientId === "" ? "-" : row.unit}
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       <IconButton aria-label={`Remove ${row.sourceLabel}`} size="small" onClick={() => removeRow(row.key)}>
