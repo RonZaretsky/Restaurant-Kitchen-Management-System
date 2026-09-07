@@ -167,7 +167,7 @@ class InventoryService:
 
     async def deactivate_ingredient(self, db: AsyncSession, actor: User, ingredient_id: int) -> Ingredient:
         """Deactivate an active Ingredient, blocking new Recipe Ingredient lines and new Stock
-        Movements against it (Story #3/#4).
+        Movements against it.
 
         Mirrors UserService.deactivate_user exactly: a simple flag flip, idempotent (a no-op on
         an already-inactive Ingredient), no row-locking needed (this isn't a numeric
@@ -287,7 +287,7 @@ class InventoryService:
 
         Raises:
             IngredientNotFoundError: If no Ingredient matches ingredient_id.
-            IngredientNotActiveError: If the Ingredient is currently deactivated (Story #3/#4).
+            IngredientNotActiveError: If the Ingredient is currently deactivated.
             StockMovementWouldGoNegativeError: If this movement would drive current_stock below
                 zero.
         """

@@ -25,8 +25,7 @@ DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
 container = Container()
 container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
 
-# Every later story that adds @inject to a new module appends its name here,
-# never replaces the list.
+# A module that newly adds @inject appends its name here, never replaces the list.
 container.wire(
     modules=[
         "api.auth",

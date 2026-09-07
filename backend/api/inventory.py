@@ -259,7 +259,7 @@ async def deactivate_ingredient(
     inventory_service: InventoryService = Depends(Provide[Container.inventory_service]),
 ) -> Ingredient:
     """Deactivate an active Ingredient, blocking new Recipe Ingredient lines and new Stock
-    Movements against it (Story #3/#4).
+    Movements against it.
 
     Args:
         ingredient_id: The id of the Ingredient to deactivate.

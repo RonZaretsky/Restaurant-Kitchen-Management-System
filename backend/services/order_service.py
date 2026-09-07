@@ -83,7 +83,7 @@ class OrderService:
         distinguish the two, and both raise the same error. The Order is only
         inserted, and both writes only committed together, once that UPDATE
         succeeds: a Table left occupied with no Order to show for it (or vice
-        versa) is a state no later story can recover from cleanly.
+        versa) is a state nothing downstream can recover from cleanly.
 
         Args:
             db: The active database session.

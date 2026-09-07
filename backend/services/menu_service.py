@@ -385,9 +385,9 @@ class MenuService:
         Raises:
             DishNotFoundError: If no Dish matches dish_id.
             IngredientNotFoundError: If no Ingredient matches payload.ingredient_id.
-            IngredientNotActiveError: If the Ingredient is currently deactivated (Story #3/#4) —
-                only a *new* line is blocked; an existing line against an Ingredient deactivated
-                later is untouched.
+            IngredientNotActiveError: If the Ingredient is currently deactivated — only a *new*
+                line is blocked; an existing line against an Ingredient deactivated later is
+                untouched.
             UnitMismatchError: If payload.unit differs from the Ingredient's
                 own unit.
             DuplicateRecipeIngredientError: If this Dish already has a line

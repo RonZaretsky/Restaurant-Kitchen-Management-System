@@ -133,12 +133,13 @@ class EmptyRecipeError(ConflictError):
 
 class IngredientNotActiveError(ConflictError):
     """Raised when adding a new Recipe Ingredient line or a new Stock Movement against an
-    Ingredient that is currently deactivated (Story #3/#4's soft-deactivate).
+    Ingredient that is currently deactivated.
 
     Mirrors DishNotAvailableError's shape: a deactivated Ingredient blocks new references to it,
-    the same way an unavailable Dish blocks new Order Items. Deliberately NOT enforced in
-    OrderService.pick_up_item — an Ingredient already baked into a Dish's recipe should not newly
-    block Kitchen operations because of an unrelated, later admin action.
+    the same way an unavailable Dish blocks new Order Items. Not raised by
+    OrderService.pick_up_item, which rejects a deactivated Ingredient as InsufficientStockError
+    instead: to the Kitchen an Ingredient taken out of service reads as one it cannot source,
+    not as a distinct failure mode.
     """
 
     detail = "Rejected, ingredient is deactivated"
