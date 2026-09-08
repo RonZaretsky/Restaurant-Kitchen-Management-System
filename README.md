@@ -17,6 +17,33 @@ A full-stack application for managing restaurant kitchen operations.
 
 ## Run everything with Docker Compose
 
+### Before the first run: configure Smart Chef
+
+The AI features (recipe suggestions and the Smart Assistant chat) call the OpenAI API, so they
+need an API key. Compose reads it from `backend/.env`, which is not part of the repository.
+Create it by duplicating the example file:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Then open `backend/.env` and fill in the two Smart Chef values:
+
+```env
+OPENAI_API_KEY=sk-...      # your own OpenAI API key
+OPENAI_MODEL=gpt-4o-mini   # any chat-capable model; this is the default
+```
+
+Do this **before** `docker compose up`, since the file is read when the backend container starts.
+The same file also holds `JWT_SECRET_KEY`, which is worth setting for the same reason.
+
+Skipping this step is not fatal. The stack still builds and runs, and every screen except Smart
+Chef behaves normally. What happens instead is that the backend logs a warning at startup and
+each Smart Chef request fails with `OPENAI_API_KEY is not configured`. Add the key and restart
+the stack to turn the feature on.
+
+### Start the stack
+
 ```bash
 docker compose up --build
 ```
@@ -34,7 +61,7 @@ backend automatically creates a default Admin:
 
 | Username | Password |
 |---|---|
-| `admin` | `ChangeMe123!` |
+| `admin` | `admin` |
 
 Sign in with these, then immediately create a real Admin account and change or retire this one
 from the Users screen. Set `BOOTSTRAP_ADMIN=false` in `backend/.env` to disable this behavior.

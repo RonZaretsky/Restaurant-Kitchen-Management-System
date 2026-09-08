@@ -20,7 +20,7 @@ DEFAULT_SECRET_KEY = "dev-only-insecure-secret-change-me"
 # Fresh-clone bootstrap only (see _bootstrap_first_admin): a fixed, published default, not a
 # secret. Meant to be changed immediately via the Users screen once logged in.
 DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "ChangeMe123!"
+DEFAULT_ADMIN_PASSWORD = "admin"
 
 container = Container()
 container.config.from_dict(load_config(SETTINGS.CONFIG_PATH))
