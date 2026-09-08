@@ -48,11 +48,22 @@ the stack to turn the feature on.
 docker compose up --build
 ```
 
+That single command brings up all three services: PostgreSQL, the backend, and the frontend.
+The backend waits for Postgres to report healthy, applies any pending Alembic migrations, and
+only then starts the API, so there is no separate migration step to run.
+
 | Service | URL |
 |---|---|
 | Frontend | http://localhost:3000 |
 | Backend API | http://localhost:8000 |
 | API Docs | http://localhost:8000/docs |
+
+Compose publishes Postgres on 5432. If that port is already taken by a native Postgres install,
+stop it before starting the stack:
+
+```bash
+sudo launchctl unload /Library/LaunchDaemons/postgresql-16.plist   # macOS
+```
 
 ### First login
 
@@ -65,6 +76,32 @@ backend automatically creates a default Admin:
 
 Sign in with these, then immediately create a real Admin account and change or retire this one
 from the Users screen. Set `BOOTSTRAP_ADMIN=false` in `backend/.env` to disable this behavior.
+
+### Optional: seed sample ingredients
+
+A fresh database also has no ingredients, so the inventory, recipe, and stock-deduction screens
+start empty. `backend/scripts/seed_ingredients.py` fills them with 20 basic ingredients (produce,
+proteins, staples, dairy) at sensible stock levels. Two of them are seeded below their own minimum
+threshold on purpose, so the low-stock alerts screen has something to show.
+
+Run it after the stack is up and the backend has started at least once, since the script
+attributes what it creates to the bootstrap Admin:
+
+```bash
+# Inside the running backend container
+docker compose exec backend uv run --no-dev python scripts/seed_ingredients.py
+
+# Or from the host, against the Postgres published on 5432
+cd backend && uv run python scripts/seed_ingredients.py
+```
+
+Each ingredient is created through the same service the `POST /inventory/ingredients` endpoint
+uses, so names, units, and thresholds are validated exactly as they would be from the Inventory
+screen. Re-running is safe: an ingredient whose name already exists is skipped rather than
+duplicated or overwritten, and the run reports `created=<n> skipped=<n>` when it finishes.
+
+The script is never run automatically. Seeding stays an explicit choice, the way migrations are
+an explicit step in the container entrypoint.
 
 ---
 
@@ -98,6 +135,9 @@ uv run alembic upgrade head
 
 # Start the server
 uv run python main.py
+
+# (Optional) seed 20 basic ingredients, once the server has run at least once
+uv run python scripts/seed_ingredients.py
 ```
 
 The API will be available at `http://localhost:8000`.  
